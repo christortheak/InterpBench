@@ -129,7 +129,8 @@ def scheduler_timeout() -> float | None:
     return value if value > 0 else None
 
 
-def scheduler_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+def scheduler_run(command: list[str], *, deadline: float | None = None,
+                  **kwargs) -> subprocess.CompletedProcess:
     """``subprocess.run`` for a SCHEDULER binary, with a bounded wait.
 
     **Open-issues §2, root cause.** Every scheduler call here used to run with
@@ -146,17 +147,40 @@ def scheduler_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
     ``poll_state_detailed`` returns ``(None, False)`` (says nothing about the
     job), ``find_job_by_name`` RAISES rather than guessing absence, ``cancel``
     returns False, and ``submit`` raises. None of them may silently treat a
-    timeout as an answer."""
+    timeout as an answer.
+
+    ``deadline`` (a ``time.monotonic()`` instant) bounds the call further,
+    for a read a person or agent is waiting on (``status_observation``): the
+    wait is the smaller of the scheduler timeout and the time left, and a
+    deadline already passed answers as a timed-out command without running
+    anything."""
     timeout = scheduler_timeout()
+    by_deadline = False
+    if deadline is not None:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            binary = os.path.basename(command[0]) if command else "scheduler command"
+            return subprocess.CompletedProcess(
+                args=command, returncode=SCHEDULER_TIMEOUT_EXIT, stdout="",
+                stderr=(f"{binary} was not asked: this read's time ran out "
+                        "first"))
+        if timeout is None or left < timeout:
+            timeout, by_deadline = left, True
     try:
         return subprocess.run(command, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired:
         binary = os.path.basename(command[0]) if command else "scheduler command"
+        if by_deadline:
+            said = (f"{binary} did not answer within this read's time "
+                    "limit — treat as 'scheduler did not answer', never as an "
+                    "answer")
+        else:
+            said = (f"{binary} did not answer within {timeout:g}s and was "
+                    f"abandoned (raise or disable with {SCHEDULER_TIMEOUT_ENV}) "
+                    "— treat as 'scheduler did not answer', never as an answer")
         return subprocess.CompletedProcess(
             args=command, returncode=SCHEDULER_TIMEOUT_EXIT, stdout="",
-            stderr=(f"{binary} did not answer within {timeout:g}s and was "
-                    f"abandoned (raise or disable with {SCHEDULER_TIMEOUT_ENV}) "
-                    "— treat as 'scheduler did not answer', never as an answer"))
+            stderr=said)
 
 
 def _parse_directive_list(raw: str | None) -> list[str]:
@@ -1016,20 +1040,10 @@ class SlurmExecutor:
         if not lines:
             return None
         fields = (lines[0].split("|") + [""] * 5)[:5]
-        state, exit_code, elapsed, timelimit, reason = (f.strip() for f in fields)
-        detail = f"Slurm reported {state or 'UNKNOWN'}"
-        if elapsed:
-            detail += f" after {elapsed}"
-        if timelimit:
-            detail += f" (walltime limit {timelimit}"
-            detail += f", exit {exit_code})" if exit_code else ")"
-        elif exit_code:
-            detail += f" (exit {exit_code})"
-        if reason and reason not in ("None", "None assigned"):
-            detail += f" — scheduler reason: {reason}"
-        return detail
+        return death_sentence(*(f.strip() for f in fields))
 
-    def status_observation(self, slurm_job_id: str) -> "SchedulerStatus":
+    def status_observation(self, slurm_job_id: str, *,
+                           deadline: float | None = None) -> "SchedulerStatus":
         """The scheduler's view of ONE job, as a fixed set of fields
         (issue #7: "is it pending, and why? running, and how far along?
         ended, and how?"). Never a pass-through: only the named columns are
@@ -1037,11 +1051,16 @@ class SlurmExecutor:
 
         - ``sacct -X`` (the allocation row) answers for a job that runs or
           ran: its state, start, end, node list, elapsed time, time limit,
-          exit code, and reason.
+          exit code, and reason. For a job that ended, the same row gives
+          the ``death_detail`` sentence, so no second query is needed.
         - ``squeue`` answers for a job that is still waiting: the pending
           reason (``%r``) and the scheduler's expected start (``%S``). It is
           also the fallback when accounting does not answer at all, for a
           job the queue still shows.
+
+        ``deadline`` (a ``time.monotonic()`` instant) bounds every call: a
+        status read is waited on by a person or an agent, and a scheduler
+        that does not answer in time is reported as such, never waited out.
 
         The binary NAMES are site data (``scheduler_poll_commands``), so a
         site that publishes wrapper commands is asked through them. The id
@@ -1054,10 +1073,11 @@ class SlurmExecutor:
         fields: dict[str, str | None] = {}
         sources: list[str] = []
         failures: list[str] = []
+        timed_out = False
         proc = scheduler_run(
             [sacct, "-j", slurm_job_id, "-n", "-X", "-P",
              "-o", ",".join(_STATUS_SACCT_COLUMNS)],
-            text=True, capture_output=True, check=False)
+            deadline=deadline, text=True, capture_output=True, check=False)
         if proc.returncode == 0:
             lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
             if lines:
@@ -1067,14 +1087,17 @@ class SlurmExecutor:
                           for index, column in enumerate(_STATUS_SACCT_COLUMNS)}
                 sources.append("sacct")
         else:
+            timed_out = proc.returncode == SCHEDULER_TIMEOUT_EXIT
             failures.append(_query_failure("accounting", proc))
         token = _slurm_state_token(fields.get("State"))
         queue: dict[str, str | None] = {}
-        if not fields or token in _SLURM_WAITING_STATES:
+        # A preempted job may be queued again (requeue) or gone: the queue
+        # says which, and its pending reason and expected start if queued.
+        if not fields or token in _SLURM_WAITING_STATES or token == "PREEMPTED":
             q = scheduler_run(
                 [squeue, "-j", slurm_job_id, "-h",
                  "-o", "|".join(code for code, _key in _STATUS_SQUEUE_CODES)],
-                text=True, capture_output=True, check=False)
+                deadline=deadline, text=True, capture_output=True, check=False)
             if q.returncode == 0 and q.stdout.strip():
                 values = (q.stdout.strip().splitlines()[0].split("|")
                           + [""] * len(_STATUS_SQUEUE_CODES))
@@ -1084,18 +1107,26 @@ class SlurmExecutor:
                 sources.append("squeue")
             elif q.returncode != 0 and "invalid job id" not in (
                     (q.stderr or "") + (q.stdout or "")).lower():
+                timed_out = timed_out or q.returncode == SCHEDULER_TIMEOUT_EXIT
                 failures.append(_query_failure("queue", q))
         if not sources:
             return SchedulerStatus(
-                query_ok=not failures, source=None,
+                query_ok=not failures, source=None, timed_out=timed_out,
                 detail=("; ".join(failures) if failures else
                         "the scheduler has no record of this job (it may "
                         "have been purged from accounting)"))
         raw_state = queue.get("state") or fields.get("State")
+        token = _slurm_state_token(raw_state)
         exit_code = fields.get("ExitCode")
         elapsed = fields.get("Elapsed") or queue.get("elapsed")
         time_limit = fields.get("Timelimit") or queue.get("timeLimit")
-        waiting = _slurm_state_token(raw_state) in _SLURM_WAITING_STATES
+        waiting = token in _SLURM_WAITING_STATES
+        death = None
+        if fields and _slurm_state_token(fields.get("State")) in _SLURM_END_STATES:
+            # The existing ``death_detail`` sentence, from this same row.
+            death = death_sentence(*((fields.get(column) or "") for column in
+                                     ("State", "ExitCode", "Elapsed",
+                                      "Timelimit", "Reason")))
         return SchedulerStatus(
             query_ok=True, source="+".join(sources), raw_state=raw_state,
             state=(map_slurm_state(raw_state, exit_code=exit_code)
@@ -1113,7 +1144,25 @@ class SlurmExecutor:
             time_limit=time_limit,
             time_limit_seconds=_parse_slurm_duration(time_limit),
             exit_code=exit_code, outcome=scheduler_outcome(raw_state),
+            death_detail=death, timed_out=timed_out,
             detail=("; ".join(failures) if failures else None))
+
+
+def death_sentence(state: str, exit_code: str, elapsed: str, timelimit: str,
+                   reason: str) -> str:
+    """``death_detail``'s sentence from sacct's
+    ``State,ExitCode,Elapsed,Timelimit,Reason`` columns."""
+    detail = f"Slurm reported {state or 'UNKNOWN'}"
+    if elapsed:
+        detail += f" after {elapsed}"
+    if timelimit:
+        detail += f" (walltime limit {timelimit}"
+        detail += f", exit {exit_code})" if exit_code else ")"
+    elif exit_code:
+        detail += f" (exit {exit_code})"
+    if reason and reason not in ("None", "None assigned"):
+        detail += f" — scheduler reason: {reason}"
+    return detail
 
 
 #: The ``sacct`` columns ``status_observation`` asks for, in order. Fixed.
@@ -1128,14 +1177,19 @@ _STATUS_SQUEUE_CODES = (("%T", "state"), ("%r", "reason"), ("%S", "start"),
                         ("%l", "timeLimit"))
 
 #: Scheduler states in which a job is still waiting to (re)start: the queue
-#: holds its pending reason and expected start.
-_SLURM_WAITING_STATES = frozenset({"PENDING", "REQUEUED", "CONFIGURING",
-                                   "REQUEUE_HOLD", "REQUEUE_FED"})
+#: holds its pending reason and expected start. CONFIGURING is not one: the
+#: job already holds its nodes and its start is real.
+_SLURM_WAITING_STATES = frozenset({"PENDING", "REQUEUED", "REQUEUE_HOLD",
+                                   "REQUEUE_FED"})
 
-#: Scheduler states that mean the SCHEDULER, not the job, decided how it
-#: ended or was interrupted (issue #7). Reported as ``schedulerOutcome``
-#: beside the job's own status: SteerLab's job vocabulary has no "timed
-#: out", and a new field cannot surprise a client that decodes the status.
+#: The scheduler's own words for an ending, or an interruption, that came
+#: from outside the job's code (issue #7): a time limit, memory, a
+#: preemption, a node failure, a node that would not boot, a deadline, or a
+#: cancel (by a person, by SteerLab, or by an administrator). Reported as
+#: ``schedulerOutcome`` beside the job's own status: SteerLab's job
+#: vocabulary has no "timed out", and a new field cannot surprise a client
+#: that decodes the status. PREEMPTED is not always an ending: a requeued
+#: job waits to run again.
 SCHEDULER_OUTCOMES = frozenset({"TIMEOUT", "OUT_OF_MEMORY", "PREEMPTED",
                                 "NODE_FAIL", "CANCELLED", "BOOT_FAIL",
                                 "DEADLINE"})
@@ -1224,15 +1278,23 @@ class SchedulerStatus:
     time_limit_seconds: int | None = None
     exit_code: str | None = None
     outcome: str | None = None
+    #: ``death_detail``'s sentence, for a job that ended.
+    death_detail: str | None = None
+    #: A query was cut off by the read's time limit or the scheduler timeout.
+    timed_out: bool = False
     detail: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         remaining = None
-        if (self.state == "running" and self.elapsed_seconds is not None
+        # Only a job that is RUNNING spends its time limit: a SUSPENDED job
+        # is paused, and one that is COMPLETING is past it.
+        if (_slurm_state_token(self.raw_state) == "RUNNING"
+                and self.elapsed_seconds is not None
                 and self.time_limit_seconds is not None):
             remaining = max(0, self.time_limit_seconds - self.elapsed_seconds)
         return {
             "queryOk": self.query_ok,
+            "timedOut": self.timed_out,
             "source": self.source,
             "rawState": self.raw_state,
             "state": self.state,

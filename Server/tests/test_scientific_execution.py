@@ -104,6 +104,21 @@ def test_slurm_intention_is_durable_before_submit_and_uncertainty_is_visible(set
     assert reloaded.requested_resources['auto_resubmit'] is False and reloaded.finished_at is not None
 
 
+def test_a_submitted_diagnostic_has_not_started(setup, monkeypatch):
+    # Issue #7: a job handed to the scheduler may wait in the queue; its
+    # start is the scheduler's, stamped when the controller sees it run.
+    from dataclasses import replace
+    root, request, profile = setup
+    monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'controller')
+    profile = replace(profile, executor='slurm')
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    monkeypatch.setattr(owner.SlurmExecutor, 'submit', lambda self, bundle, **kwargs: '12345')
+    submitted = owner.submit(request, owner.plan(request, profile)['planSHA256'], profile=profile, jobs=jobs)
+    job = jobs.get(submitted['jobId'])
+    assert job.status == 'submitted' and job.executor_job_id == '12345'
+    assert job.started_at is None and job.created_at is not None
+
+
 def test_local_failure_preserves_job_context(setup, monkeypatch):
     root, request, profile = setup
     jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)

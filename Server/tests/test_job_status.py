@@ -553,3 +553,311 @@ def test_the_capability_snapshot_advertises_both_reads():
     cluster = capability_snapshot()["cluster"]
     assert cluster["jobStatus"] is True
     assert cluster["jobLogTail"] is True
+
+
+# --- review fixes (2026-11-02) ---------------------------------------------------
+
+def test_a_job_first_seen_after_it_ran_still_gets_its_start(
+        tmp_path, fake_slurm):
+    # It ran between ticks (or while no controller watched): the first
+    # observation is already COMPLETED, and its sacct Start is the start.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5801")
+    _scheduler("5801", state="COMPLETED", exit="0:0",
+               start="2026-11-02T09:00:00", end="2026-11-02T10:00:00")
+    manager.poll_slurm()
+    stored = manager.store.load_all()[job.id]
+    assert stored.status == "succeeded"
+    assert stored.started_at == _local("2026-11-02T09:00:00")
+
+
+def test_a_job_cancelled_before_it_ran_gets_no_start(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5802")
+    _scheduler("5802", state="CANCELLED by 0", exit="0:0",
+               start="2026-11-02T09:30:00", end="2026-11-02T09:30:00")
+    manager.poll_slurm()
+    assert manager.store.load_all()[job.id].started_at is None
+
+
+def test_a_waiting_job_gets_no_start_from_the_scheduler(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5803")
+    _scheduler("5803", state="PENDING", queue="PENDING",
+               start="2026-11-02T18:30:00")
+    manager.poll_slurm()
+    assert manager.store.load_all()[job.id].started_at is None
+
+
+def test_the_record_fold_supplies_a_start_the_scheduler_never_gave(
+        tmp_path, fake_slurm):
+    # Accounting never answered while the job was known; the record its own
+    # process wrote says when the run began on the node.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5804")
+    records = job.requested_resources["recordsDirectory"]
+    with open(os.path.join(records, f"{job.id}.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"id": job.id, "status": "succeeded",
+                   "executorJobID": "5804",
+                   "result": {"startedAt": 1_700_000_123.0}}, handle)
+    manager.reconcile(records)
+    assert manager.store.load_all()[job.id].started_at == 1_700_000_123.0
+
+
+def test_a_record_written_by_another_scheduler_job_gives_no_start(
+        tmp_path, fake_slurm):
+    # The first job of a resume chain folds its continuations' records; a
+    # continuation's start is not this job's.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5805")
+    records = job.requested_resources["recordsDirectory"]
+    with open(os.path.join(records, f"{job.id}.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"id": job.id, "status": "succeeded",
+                   "executorJobID": "5899",
+                   "result": {"startedAt": 1_700_000_123.0}}, handle)
+    manager.reconcile(records)
+    assert manager.store.load_all()[job.id].started_at is None
+
+
+def test_a_stale_scheduler_outcome_does_not_survive_into_a_success(
+        tmp_path, fake_slurm):
+    # The first attempt hit its time limit and checkpointed; the resumed
+    # run finished and its record folded onto the chain's first id.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5806", status="checkpointed")
+    job.result = {**job.result, "schedulerOutcome": "TIMEOUT",
+                  "lastSchedulerState": {"state": "failed"}}
+    manager.store.update(job)
+    records = job.requested_resources["recordsDirectory"]
+    with open(os.path.join(records, f"{job.id}.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"id": job.id, "status": "succeeded",
+                   "result": {"runDirectory": "runs/x"}}, handle)
+    manager.reconcile(records)
+    stored = manager.get(job.id)
+    assert stored.status == "succeeded"
+    assert "schedulerOutcome" not in stored.result
+    assert manager.store.load_all()[job.id].result.get(
+        "schedulerOutcome") is None
+
+
+def test_a_fold_that_changes_the_status_drops_the_outcome(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5807", status="failed")
+    job.result = {**job.result, "schedulerOutcome": "OUT_OF_MEMORY"}
+    manager.store.update(job)
+    records = job.requested_resources["recordsDirectory"]
+    with open(os.path.join(records, f"{job.id}.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"id": job.id, "status": "checkpointed", "result": {}},
+                  handle)
+    manager.reconcile(records)
+    assert "schedulerOutcome" not in manager.get(job.id).result
+
+
+def test_a_success_never_reads_with_a_scheduler_outcome(tmp_path, fake_slurm):
+    # A record from before this rule, or any other path, that carries one.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5813", status="succeeded")
+    job.result = {**job.result, "schedulerOutcome": "TIMEOUT"}
+    document = job_status.job_status(manager, job)
+    assert document["schedulerOutcome"] is None
+    assert document["schedulerOutcomeNote"] is None
+
+
+@pytest.mark.parametrize("outcome,cancelled,waiting,expected", [
+    ("TIMEOUT", False, False,
+     "The scheduler recorded TIMEOUT: the job reached its time limit."),
+    ("CANCELLED", True, False,
+     "The scheduler recorded CANCELLED: the job was cancelled through "
+     "SteerLab."),
+    ("CANCELLED", False, False,
+     "The scheduler recorded CANCELLED: the job was cancelled outside "
+     "SteerLab (by a person or an administrator)."),
+    ("PREEMPTED", False, True,
+     "The scheduler recorded PREEMPTED: the scheduler preempted the job, "
+     "which now waits to run again."),
+])
+def test_the_outcome_sentence_says_what_the_scheduler_recorded(
+        outcome, cancelled, waiting, expected):
+    note = job_status.outcome_note(outcome, waiting=waiting,
+                                   cancel_requested=cancelled)
+    assert note == expected
+    assert "ended by the scheduler" not in note
+
+
+def test_a_cancel_through_steerlab_is_named_in_the_status(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5808", status="cancelling")
+    job._cancel.set()
+    _scheduler("5808", state="CANCELLED by 501", exit="0:15",
+               start="2026-11-02T09:00:00", end="2026-11-02T09:10:00")
+    manager.poll_slurm()
+    document = job_status.job_status(manager, manager.get(job.id))
+    assert document["schedulerOutcome"] == "CANCELLED"
+    assert document["schedulerOutcomeNote"] == (
+        "The scheduler recorded CANCELLED: the job was cancelled through "
+        "SteerLab.")
+
+
+def test_a_requeued_job_is_not_said_to_have_ended(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5809", status="running")
+    _scheduler("5809", state="PREEMPTED", queue="PENDING", reason="BeginTime",
+               start="2026-11-02T09:00:00")
+    manager.poll_slurm()
+    document = job_status.job_status(manager, manager.get(job.id))
+    assert document["schedulerOutcome"] == "PREEMPTED"
+    assert "waits to run again" in document["schedulerOutcomeNote"]
+    assert "ended" not in document["schedulerOutcomeNote"]
+
+
+def test_a_configuring_job_is_starting_not_waiting(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5810")
+    _scheduler("5810", state="CONFIGURING", queue="CONFIGURING",
+               start="2026-11-02T17:43:00", node="gpu-node-04",
+               elapsed="00:00:20", timelimit="08:00:00")
+    view = job_status.job_status(manager, job)["scheduler"]
+    assert view["startedAt"] == _local("2026-11-02T17:43:00")
+    assert view["expectedStartAt"] is None
+    assert view["nodeList"] == "gpu-node-04"
+    assert fake_slurm.calls("squeue") == []      # accounting answered
+
+
+def test_a_suspended_job_does_not_count_down(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5811", status="running")
+    _scheduler("5811", state="SUSPENDED", queue="SUSPENDED",
+               start="2026-11-02T17:43:00", elapsed="01:00:00",
+               timelimit="08:00:00")
+    document = job_status.job_status(manager, job)
+    assert document["scheduler"]["walltimeRemainingSeconds"] is None
+    assert any("suspended" in note for note in document["notes"])
+
+
+def test_an_ended_job_asks_accounting_once(tmp_path, fake_slurm):
+    # The death sentence comes from the same accounting row as the rest.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5812", status="failed")
+    _scheduler("5812", state="TIMEOUT", exit="0:1", elapsed="08:00:00",
+               timelimit="08:00:00")
+    document = job_status.job_status(manager, job)
+    assert document["deathDetail"] == (
+        "Slurm reported TIMEOUT after 08:00:00 (walltime limit 08:00:00, "
+        "exit 0:1)")
+    assert len(fake_slurm.calls("sacct")) == 1
+
+
+def test_a_slow_scheduler_is_reported_not_waited_out(tmp_path, fake_slurm,
+                                                     monkeypatch):
+    manager = _manager(tmp_path)
+    shards = [_study_job(manager, tmp_path, f"590{index}", status="running",
+                         name=f"slow-{index}",
+                         extra_rr={"shardIndex": index, "shardCount": 2})
+              for index in range(2)]
+    parent = manager.record_external(
+        "study-submit-bundle", status="running", executor="slurm",
+        requested_resources={"shardChildren": [s.id for s in shards]})
+    for shard in shards:
+        _scheduler(shard.executor_job_id, state="RUNNING", queue="RUNNING")
+    monkeypatch.setenv("FAKE_SACCT_SLEEP", "30")
+
+    began = time.monotonic()
+    document = job_status.job_status(manager, parent, deadline_seconds=1.0)
+    took = time.monotonic() - began
+
+    assert took < 10, took
+    assert [entry["scheduler"]["timedOut"] for entry in document["shards"]] == [
+        True, True]
+    assert all(entry["scheduler"]["queryOk"] is False
+               for entry in document["shards"])
+    assert any("did not hear from the scheduler" in note
+               for note in document["notes"])
+
+
+def test_the_parts_of_a_split_run_are_asked_about_at_once(
+        tmp_path, fake_slurm, monkeypatch):
+    manager = _manager(tmp_path)
+    shards = [_study_job(manager, tmp_path, f"591{index}", status="running",
+                         name=f"part-{index}",
+                         extra_rr={"shardIndex": index, "shardCount": 4})
+              for index in range(4)]
+    parent = manager.record_external(
+        "study-submit-bundle", status="running", executor="slurm",
+        requested_resources={"shardChildren": [s.id for s in shards]})
+    for shard in shards:
+        _scheduler(shard.executor_job_id, state="RUNNING", queue="RUNNING",
+                   node="gpu-node-01")
+    monkeypatch.setenv("FAKE_SACCT_SLEEP", "1.5")
+
+    began = time.monotonic()
+    document = job_status.job_status(manager, parent)
+    took = time.monotonic() - began
+
+    # Four parts at 1.5 seconds each would take 6 seconds one after another.
+    assert took < 5, took
+    assert [entry["scheduler"]["nodeList"] for entry in document["shards"]] == [
+        "gpu-node-01"] * 4
+
+
+def _resume_count(path) -> int:
+    """How many records a resume keeps: ``load_completed`` on a copy (it
+    cuts a torn tail, so never on the file under test)."""
+    import shutil
+    copy = str(path) + ".copy"
+    shutil.copy(path, copy)
+    try:
+        return len(resume_mod.load_completed(copy)[0])
+    finally:
+        os.remove(copy)
+
+
+def test_the_progress_count_matches_a_resumes_as_the_file_grows(
+        tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5920", status="running")
+    run_dir = _run_directory(tmp_path, job, "growing", lines=5, torn=True)
+    path = run_dir / "generations.jsonl"
+
+    first = job_status.job_progress(job)["recordsWritten"]
+    assert first == _resume_count(path) == 5
+
+    # The writer finishes the torn line and appends more, ending torn again.
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write('dex": 5, "text": "answer 5"}\n')
+        for index in range(6, 9):
+            handle.write(json.dumps({"promptIndex": index}) + "\n")
+        handle.write('{"promptIndex": 9')
+    second = job_status.job_progress(job)["recordsWritten"]
+    assert second == _resume_count(path) == 9
+
+    # The file was cut back to four lines: counted afresh.
+    with open(path, "rb") as handle:
+        kept = handle.read().splitlines(keepends=True)[:4]
+    path.write_bytes(b"".join(kept))
+    third = job_status.job_progress(job)["recordsWritten"]
+    assert third == _resume_count(path) == 4
+
+
+def test_a_split_run_takes_the_start_of_its_first_part(tmp_path, fake_slurm):
+    manager = _manager(tmp_path)
+    first = _study_job(manager, tmp_path, "5930", status="running",
+                       name="p0", extra_rr={"shardIndex": 0, "shardCount": 2})
+    second = _study_job(manager, tmp_path, "5931", status="submitted",
+                        name="p1", extra_rr={"shardIndex": 1, "shardCount": 2})
+    parent = manager.record_external(
+        "study-submit-bundle", status="running", executor="slurm",
+        requested_resources={"shardChildren": [first.id, second.id]})
+    parent.started_at = None
+    manager.store.update(parent)
+    _scheduler("5930", state="RUNNING", queue="RUNNING",
+               start="2026-11-02T17:43:00")
+    _scheduler("5931", state="PENDING", queue="PENDING")
+
+    manager.poll_slurm()
+
+    assert manager.store.load_all()[parent.id].started_at == _local(
+        "2026-11-02T17:43:00")

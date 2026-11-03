@@ -329,13 +329,17 @@ class _CompleteLines:
     complete line and ``torn`` says whether anything lies beyond it.
     """
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, start: int = 0) -> None:
         self.path = path
-        self.valid_end = 0
+        #: A byte offset already known to end a complete line (0 for the
+        #: whole file): reading begins there, for a caller that counted the
+        #: lines before it on an earlier pass.
+        self.start = start
+        self.valid_end = start
         self.size = 0
 
     def __iter__(self):
-        self.valid_end = 0
+        self.valid_end = self.start
         try:
             self.size = os.path.getsize(self.path)
             handle = open(self.path, "rb")
@@ -343,6 +347,8 @@ class _CompleteLines:
             self.size = 0
             return
         with handle:
+            if self.start:
+                handle.seek(self.start)
             for raw in handle:
                 if not raw.endswith(b"\n"):
                     break  # no terminator: a torn tail
@@ -462,7 +468,8 @@ def completed_turn_count(turns_path: str) -> int:
     return len(seen)
 
 
-def written_records(run_directory: str) -> dict:
+def written_records(run_directory: str, *,
+                    known: tuple[int, int] | None = None) -> dict:
     """How many complete records a run directory holds RIGHT NOW, for a
     progress report on a job that may still be writing (issue #7).
 
@@ -474,9 +481,18 @@ def written_records(run_directory: str) -> dict:
     ``load_completed`` it never cuts a torn tail: another process may be
     writing that line.
 
-    Returns ``{"unit", "completedRecords", "tornTail", "lastWrittenAt"}``.
-    ``lastWrittenAt`` is the record file's modification time (the newest
-    transcript's, for a panel), None when no record file exists yet.
+    ``known`` is ``(validEnd, completedRecords)`` from an earlier answer for
+    the same file. The writer only appends, and a resume only cuts a torn
+    tail past the last complete line, so the lines before ``validEnd`` are
+    still the ones counted: only the bytes after it are read. It is ignored
+    when the file is now shorter, or the byte before it no longer ends a
+    line.
+
+    Returns ``{"unit", "completedRecords", "tornTail", "lastWrittenAt",
+    "validEnd"}``. ``lastWrittenAt`` is the record file's modification time
+    (the newest transcript's, for a panel), None when no record file exists
+    yet; ``validEnd`` (None for a panel) is the offset just past the last
+    complete line.
     """
     turn_files = panel_turn_files(run_directory)
     if turn_files:
@@ -490,16 +506,33 @@ def written_records(run_directory: str) -> dict:
                 "completedRecords": sum(completed_turn_count(path)
                                         for path in turn_files),
                 "tornTail": False,
-                "lastWrittenAt": max(times) if times else None}
+                "lastWrittenAt": max(times) if times else None,
+                "validEnd": None}
     path = os.path.join(run_directory, GENERATIONS_FILENAME)
     try:
         last = os.path.getmtime(path)
     except OSError:
         last = None
-    scan = _CompleteLines(path)
-    count = sum(1 for _record in scan)
+    start, count = 0, 0
+    if known is not None and _still_a_line_end(path, known[0]):
+        start, count = int(known[0]), int(known[1])
+    scan = _CompleteLines(path, start=start)
+    count += sum(1 for _record in scan)
     return {"unit": "response", "completedRecords": count,
-            "tornTail": scan.torn, "lastWrittenAt": last}
+            "tornTail": scan.torn, "lastWrittenAt": last,
+            "validEnd": scan.valid_end}
+
+
+def _still_a_line_end(path: str, offset: int) -> bool:
+    """Whether ``offset`` is still inside ``path`` and just past a newline."""
+    if offset <= 0:
+        return offset == 0
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(offset - 1)
+            return handle.read(1) == b"\n"
+    except OSError:
+        return False
 
 
 def _recorded_task(run_directory: str) -> str | None:

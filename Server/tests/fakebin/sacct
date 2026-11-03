@@ -13,15 +13,17 @@ entry: ``State`` (state), ``ExitCode`` (exit, default ``0:0``), ``End`` (end),
 not carry prints empty. Without ``-o`` it prints ``State|ExitCode`` (plus
 ``|End`` when the entry carries an ``end`` time, ``2026-07-22T14:03:11``
 scheduler-local). A missing/empty state prints nothing (the caller then falls
-back to squeue).
+back to squeue). ``FAKE_SACCT_SLEEP`` delays every answer by that many
+seconds; ``FAKE_SACCT_FAIL`` makes the command itself fail.
 """
+import json
+import os
+import sys
+import time
 
 COLUMNS = {"state": "state", "exitcode": "exit", "end": "end",
            "start": "start", "nodelist": "node", "elapsed": "elapsed",
            "timelimit": "timelimit", "reason": "reason"}
-import json
-import os
-import sys
 
 
 def main() -> int:
@@ -37,6 +39,10 @@ def main() -> int:
     if log_dir:
         with open(os.path.join(log_dir, "sacct.calls"), "a", encoding="utf-8") as fh:
             fh.write(" ".join(args) + "\n")
+    if os.environ.get("FAKE_SACCT_SLEEP"):
+        # A scheduler that is slow to answer (FAKE_SACCT_SLEEP seconds), for
+        # the reads that must not wait it out.
+        time.sleep(float(os.environ["FAKE_SACCT_SLEEP"]))
     if os.environ.get("FAKE_SACCT_FAIL"):
         # Simulated scheduler-query failure (2026-07-17 session-stop
         # edge): the command itself errors, saying nothing about the job.

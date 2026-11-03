@@ -1587,13 +1587,11 @@ class JobManager:
             status_before = job.status
             already_seen = ((job.result or {}).get("lastSchedulerState") or {})
             # The real start (issue #7): the scheduler's own record of when
-            # the job began running, stamped the first time the controller
-            # sees it running (and again only if a requeue starts it anew).
-            # Before, ``startedAt`` was the submission time, and a job that
-            # waited 65 minutes in the queue read as running all along.
-            scheduler_start = observation.get("startedAt")
-            start_stamped = (state == "running" and scheduler_start is not None
-                             and job.started_at != scheduler_start)
+            # the job began running. Before, ``startedAt`` was the submission
+            # time, and a job that waited 65 minutes in the queue read as
+            # running all along.
+            scheduler_start = self._scheduler_start_to_stamp(job, observation)
+            start_stamped = scheduler_start is not None
             if start_stamped:
                 job.started_at = scheduler_start
             if (state is not None and state != job.status
@@ -1683,14 +1681,17 @@ class JobManager:
                 job.result = {**(job.result or {}),
                               "lastSchedulerState": self._scheduler_stamp(
                                   observation)}
-                # Whether the SCHEDULER decided this ending (a walltime
-                # kill, an out-of-memory kill, a preemption, a node failure,
-                # a cancel). A field beside the status, never a new status
-                # value: the job vocabulary has no "timed out", and clients
-                # that decode the status must not meet a value they do not
-                # know (issue #7). Cleared when a later state is not one.
+                # The scheduler's own word for an ending, or interruption,
+                # that came from outside the job's code: a time limit,
+                # memory, a preemption, a node failure, or a cancel (by a
+                # person, SteerLab, or an administrator). A field beside the
+                # status, never a new status value: the job vocabulary has
+                # no "timed out", and clients that decode the status must
+                # not meet a value they do not know (issue #7). Cleared when
+                # a later state is not one, and never kept on a success.
                 from .executors import scheduler_outcome
-                outcome = scheduler_outcome(observation.get("rawState"))
+                outcome = (scheduler_outcome(observation.get("rawState"))
+                           if job.status != "succeeded" else None)
                 if outcome:
                     job.result = {**(job.result or {}),
                                   "schedulerOutcome": outcome}
@@ -1845,6 +1846,24 @@ class JobManager:
                 return current
             seen.add(child.id)
             current = child
+
+    def _earliest_part_start(self, children: list["Job"]) -> float | None:
+        """The earliest recorded start across a split run's parts and their
+        resume chains, or None while no part has started."""
+        starts = []
+        for child in children:
+            seen = {child.id}
+            current = child
+            while current is not None:
+                if current.started_at is not None:
+                    starts.append(float(current.started_at))
+                next_id = (current.result or {}).get("resubmittedAs")
+                current = self.get(str(next_id)) if next_id else None
+                if current is not None:
+                    if current.id in seen:
+                        break
+                    seen.add(current.id)
+        return min(starts) if starts else None
 
     def _chain_is_live(self, job: "Job") -> bool:
         """Whether ``job`` or any continuation in its resubmit chain is still
@@ -2404,6 +2423,14 @@ class JobManager:
                 self.store.update(parent)
                 return True
             return False
+        if parent.started_at is None:
+            # A split run starts when its first part starts (issue #7): the
+            # parent holds no scheduler job of its own, and its submission
+            # time is ``created_at``.
+            started = self._earliest_part_start(children)
+            if started is not None:
+                parent.started_at = started
+                self.store.update(parent)
         effective = [self._shard_effective(child) for child in children]
         derived = derive_shard_parent_state([state for state, _ in effective])
         if derived == "succeeded":
@@ -3193,6 +3220,38 @@ class JobManager:
                     "rawState": getattr(found, "raw_state", None)}
         return {"state": executor.poll_state(slurm_job_id),
                 "endedAt": None, "startedAt": None, "rawState": None}
+
+    @staticmethod
+    def _scheduler_start_to_stamp(job: "Job", observation: dict) -> float | None:
+        """The scheduler start time to stamp as ``job.started_at`` on this
+        tick, or None to leave it (issue #7).
+
+        - Seen RUNNING: the scheduler's start, whenever it differs from the
+          record's (a record written before this rule carried its
+          submission time; a requeued job that runs again takes its new
+          start).
+        - Seen in any other state that is not waiting (it ran, or is
+          starting, between ticks, or while no controller watched): the
+          scheduler's start, when the record has none yet, or still carries
+          its submission time.
+        - Waiting (PENDING, REQUEUED, …): nothing. A requeued job keeps the
+          start of its previous run until it runs again.
+        - CANCELLED with a start equal to its end: nothing, because it was
+          cancelled before it ran."""
+        from .executors import _slurm_state_token
+        start = observation.get("startedAt")
+        if start is None:
+            return None
+        token = _slurm_state_token(observation.get("rawState"))
+        if token in ("PENDING", "REQUEUED", "REQUEUE_HOLD", "REQUEUE_FED"):
+            return None
+        if observation.get("state") == "running":
+            return start if job.started_at != start else None
+        if token == "CANCELLED" and observation.get("endedAt") == start:
+            return None
+        if job.started_at is None or job.started_at == job.created_at:
+            return start
+        return None
 
     @staticmethod
     def _scheduler_stamp(observation: dict) -> dict:
@@ -4474,10 +4533,29 @@ class JobManager:
                          for key in ("resubmittedAs", "parentJob", "shard",
                                      "lastSchedulerState", "checkpointedAt",
                                      "schedulerOutcome")}
+            status_before_fold = job.status
+            own_scheduler_job = (job.executor_job_id is not None
+                                 and data.get("executorJobID")
+                                 == job.executor_job_id)
             job.status = data.get("status", job.status)
             job.executor = data.get("executor", job.executor)
             job.executor_job_id = data.get("executorJobID", job.executor_job_id)
             job.result = data.get("result", job.result)
+            # The scheduler's word for how a run ended belongs to the state
+            # it was recorded with. A record that folds in a DIFFERENT status
+            # (a resumed run's continuation finishing under the chain's
+            # first id, say) or a success drops it: "succeeded, but the
+            # scheduler recorded TIMEOUT" describes an earlier attempt.
+            if job.status == "succeeded" or job.status != status_before_fold:
+                preserved["schedulerOutcome"] = None
+            if job.started_at is None and own_scheduler_job:
+                # No scheduler start was seen (accounting never answered
+                # while the job was known): the record its own process wrote
+                # says when the run began on the node.
+                child_start = (job.result or {}).get("startedAt")
+                if isinstance(child_start, (int, float)) and not isinstance(
+                        child_start, bool):
+                    job.started_at = float(child_start)
             # Throughput/provenance stamps from the WS2 child-record contract;
             # folded into the result so preflight estimators can read them
             # from the job store without re-opening scratch directories.

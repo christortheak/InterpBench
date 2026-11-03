@@ -311,7 +311,8 @@ def submit(request, expected, *, profile, jobs, registry=None, execution_capsule
             try:
                 job.executor_job_id = executor.submit(bundle, job_name=base['schedulerSubmissionName'])
                 job.status = 'submitted'
-                job.started_at = time.time()
+                # No start yet: the reconciler stamps the scheduler's own
+                # start time when it sees the job run (issue #7).
             except Exception as exc:
                 job.status = 'parked'
                 job.finished_at = time.time()

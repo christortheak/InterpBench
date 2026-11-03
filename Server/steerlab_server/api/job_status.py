@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 
 STATUS_SCHEMA_VERSION = 1
@@ -56,40 +57,78 @@ def tail_line_count(raw) -> int:
 
 # --- status ------------------------------------------------------------------
 
-def job_status(manager, job) -> dict:
+#: How long one status read may spend asking the scheduler, in all. Both
+#: clients give up on a request after 60 seconds, so the read answers well
+#: before that: a part whose scheduler did not answer in time says so, and
+#: the rest of the document is still returned.
+STATUS_READ_DEADLINE_SECONDS = 30.0
+
+#: The most parts of a split run asked about at once.
+STATUS_READ_WORKERS = 8
+
+
+def job_status(manager, job, *,
+               deadline_seconds: float = STATUS_READ_DEADLINE_SECONDS) -> dict:
     """The status document for ``job``: its own record, the scheduler's view
     of it, its records written so far, and, for a job that ended, the
     scheduler's sentence on how. A sharded parent adds one entry per shard
     (each shard's current continuation, when it was resumed) and progress
-    summed across them."""
+    summed across them. The parts are asked about at once, and the whole
+    read is bounded by ``deadline_seconds``."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+
     observed_at = time.time()
+    deadline = time.monotonic() + deadline_seconds
     document = {"schemaVersion": STATUS_SCHEMA_VERSION,
                 "observedAt": observed_at,
-                **_describe(manager, job)}
+                **_describe(manager, job, deadline)}
     shard_ids = [str(x) for x in
                  ((job.requested_resources or {}).get("shardChildren") or [])]
     if shard_ids:
-        shards = []
+        shards: list[dict | None] = [None] * len(shard_ids)
+        carriers = {}
         for index, child_id in enumerate(shard_ids):
             child = manager.get(child_id)
             if child is None:
-                shards.append({
+                shards[index] = {
                     "jobId": child_id, "shardIndex": index, "found": False,
                     "detail": ("this part's job record is not in the "
-                               "server's job store")})
+                               "server's job store")}
                 continue
-            carrier = manager._shard_chain_tail(child)
-            entry = _describe(manager, carrier)
-            entry["found"] = True
-            rr = carrier.requested_resources or {}
-            entry["shardIndex"] = rr.get("shardIndex", index)
-            entry["shardCount"] = rr.get("shardCount", len(shard_ids))
-            if carrier.id != child.id:
-                # The part was resumed: this entry is the job carrying it
-                # now, and ``shardJob`` the part's original record.
-                entry["shardJob"] = child.id
-            shards.append(entry)
+            carriers[index] = (child, manager._shard_chain_tail(child))
+        pool = ThreadPoolExecutor(
+            max_workers=max(1, min(STATUS_READ_WORKERS, len(carriers))))
+        try:
+            futures = {index: pool.submit(_describe, manager, carrier,
+                                          deadline)
+                       for index, (_child, carrier) in carriers.items()}
+            wait(list(futures.values()),
+                 timeout=max(0.0, deadline - time.monotonic()) + 2.0)
+            for index, future in futures.items():
+                child, carrier = carriers[index]
+                if future.done() and future.exception() is None:
+                    entry = future.result()
+                else:
+                    entry = _unanswered(carrier, deadline_seconds)
+                entry["found"] = True
+                rr = carrier.requested_resources or {}
+                entry["shardIndex"] = rr.get("shardIndex", index)
+                entry["shardCount"] = rr.get("shardCount", len(shard_ids))
+                if carrier.id != child.id:
+                    # The part was resumed: this entry is the job carrying
+                    # it now, and ``shardJob`` the part's original record.
+                    entry["shardJob"] = child.id
+                shards[index] = entry
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         document["shards"] = shards
+        late = [entry["jobId"] for entry in shards
+                if (entry.get("scheduler") or {}).get("timedOut")]
+        if late:
+            document["notes"].append(
+                f"{len(late)} of {len(shards)} part(s) did not hear from the "
+                f"scheduler within {deadline_seconds:g} seconds "
+                f"({', '.join(late)}); ask again in a moment")
         combined = _combined_progress(shards)
         if combined["recordsExpected"] is None:
             planned = _preflight_planned_records(job)
@@ -101,7 +140,27 @@ def job_status(manager, job) -> dict:
     return document
 
 
-def _describe(manager, job) -> dict:
+def _unanswered(job, deadline_seconds: float) -> dict:
+    """A part whose whole description did not finish within the read's
+    time: its record, and a scheduler view that says so."""
+    return {
+        "jobId": job.id, "kind": job.kind, "status": job.status,
+        "executor": job.executor, "executorJobID": job.executor_job_id,
+        "createdAt": job.created_at, "startedAt": job.started_at,
+        "finishedAt": job.finished_at,
+        "cancellationRequested": job.cancelled,
+        "continuedAs": (job.result or {}).get("resubmittedAs")
+        if isinstance(job.result, dict) else None,
+        "scheduler": {"queryOk": False, "timedOut": True,
+                      "detail": ("this part was not described within "
+                                 f"{deadline_seconds:g} seconds; ask again "
+                                 "in a moment")},
+        "schedulerOutcome": None, "schedulerOutcomeNote": None,
+        "deathDetail": None, "progress": None, "notes": [],
+    }
+
+
+def _describe(manager, job, deadline: float | None = None) -> dict:
     result = job.result if isinstance(job.result, dict) else {}
     rr = job.requested_resources or {}
     entry = {
@@ -116,7 +175,10 @@ def _describe(manager, job) -> dict:
         "cancellationRequested": job.cancelled,
         "continuedAs": result.get("resubmittedAs"),
         "scheduler": None,
-        "schedulerOutcome": result.get("schedulerOutcome"),
+        # Never beside a success: that word describes an earlier attempt.
+        "schedulerOutcome": (result.get("schedulerOutcome")
+                             if job.status != "succeeded" else None),
+        "schedulerOutcomeNote": None,
         "deathDetail": None,
         "progress": job_progress(job),
         "notes": [],
@@ -130,46 +192,115 @@ def _describe(manager, job) -> dict:
         # A parent holds no scheduler job of its own; its parts do.
         notes.append("this run is split across shard jobs; each one's "
                      "scheduler view is under shards")
-        return entry
+        return _with_outcome_note(entry, waiting=False)
     if job.executor != "slurm":
         notes.append("this job runs on the server itself, not through the "
                      "scheduler, so there is no scheduler view")
-        return entry
+        return _with_outcome_note(entry, waiting=False)
     slurm_id = job.executor_job_id
     if not slurm_id:
         notes.append("no scheduler job id is on record yet (the submission "
                      "may still be in progress, or it was a dry run)")
-        return entry
+        return _with_outcome_note(entry, waiting=False)
     from .executors import is_scheduler_job_id
     if not is_scheduler_job_id(str(slurm_id)):
         notes.append("the scheduler job id on record is not one the scheduler "
                      "could have issued, so the scheduler was not asked")
-        return entry
+        return _with_outcome_note(entry, waiting=False)
     executor = manager._slurm()
     observe = getattr(executor, "status_observation", None)
     if not callable(observe):
         notes.append("this server's scheduler connection cannot report a "
                      "job's scheduler view")
-        return entry
+        return _with_outcome_note(entry, waiting=False)
     try:
-        view = observe(str(slurm_id))
+        view = observe(str(slurm_id), deadline=deadline)
     except Exception as exc:  # noqa: BLE001 - a status read never raises
-        entry["scheduler"] = {"queryOk": False,
+        entry["scheduler"] = {"queryOk": False, "timedOut": False,
                               "detail": f"{type(exc).__name__}: {exc}"}
-        return entry
+        return _with_outcome_note(entry, waiting=False)
     entry["scheduler"] = view.to_dict()
-    if view.outcome and not entry["schedulerOutcome"]:
+    if view.outcome and not entry["schedulerOutcome"] and job.status != "succeeded":
         entry["schedulerOutcome"] = view.outcome
-    from .executors import _SLURM_END_STATES, _slurm_state_token
-    if _slurm_state_token(view.raw_state) in _SLURM_END_STATES:
-        try:
-            entry["deathDetail"] = executor.death_detail(str(slurm_id))
-        except Exception:  # noqa: BLE001 - best-effort forensics
-            entry["deathDetail"] = None
+    entry["deathDetail"] = view.death_detail
+    from .executors import _SLURM_WAITING_STATES, _slurm_state_token
+    token = _slurm_state_token(view.raw_state)
+    if token == "SUSPENDED":
+        notes.append("the scheduler has suspended this job: it is paused, "
+                     "and its time limit is not counting down")
+    return _with_outcome_note(entry, waiting=token in _SLURM_WAITING_STATES)
+
+
+#: What each scheduler word means, in a sentence that follows "The scheduler
+#: recorded <WORD>:".
+_OUTCOME_MEANINGS = {
+    "TIMEOUT": "the job reached its time limit",
+    "OUT_OF_MEMORY": "the job used more memory than it was allocated",
+    "NODE_FAIL": "a node the job ran on failed",
+    "BOOT_FAIL": "the node the job was given failed to start",
+    "DEADLINE": "the job reached its deadline",
+}
+
+
+def outcome_note(outcome: str | None, *, waiting: bool,
+                 cancel_requested: bool) -> str | None:
+    """One sentence on the scheduler's word for how the job stopped, which
+    came from outside the job's code. Never "ended" for a job that waits to
+    run again, and a cancel says whether SteerLab asked for it."""
+    if not outcome:
+        return None
+    if outcome == "CANCELLED":
+        meaning = ("the job was cancelled through SteerLab" if cancel_requested
+                   else "the job was cancelled outside SteerLab (by a person "
+                        "or an administrator)")
+    elif outcome == "PREEMPTED":
+        meaning = ("the scheduler preempted the job, which now waits to run "
+                   "again" if waiting else "the scheduler preempted the job")
+    else:
+        meaning = _OUTCOME_MEANINGS.get(outcome, "")
+    return f"The scheduler recorded {outcome}" + (f": {meaning}." if meaning
+                                                  else ".")
+
+
+def _with_outcome_note(entry: dict, *, waiting: bool) -> dict:
+    entry["schedulerOutcomeNote"] = outcome_note(
+        entry.get("schedulerOutcome"), waiting=waiting,
+        cancel_requested=bool(entry.get("cancellationRequested")))
     return entry
 
 
 # --- progress ----------------------------------------------------------------
+
+#: Earlier counts of a record file, so a status read parses only the lines
+#: written since: ``path -> (device, inode, validEnd, completedRecords)``.
+#: ``resume.written_records`` checks that the boundary still ends a line.
+_COUNTS: dict[str, tuple[int, int, int, int]] = {}
+_COUNTS_LOCK = threading.Lock()
+_COUNTS_LIMIT = 512
+
+
+def _written(directory: str) -> dict:
+    from ..experiment import resume as resume_mod
+    path = os.path.join(directory, resume_mod.GENERATIONS_FILENAME)
+    try:
+        st = os.stat(path)
+        identity = (st.st_dev, st.st_ino)
+    except OSError:
+        identity = None
+    known = None
+    with _COUNTS_LOCK:
+        cached = _COUNTS.get(path)
+    if identity is not None and cached is not None and cached[:2] == identity:
+        known = (cached[2], cached[3])
+    written = resume_mod.written_records(directory, known=known)
+    if identity is not None and written.get("validEnd") is not None:
+        with _COUNTS_LOCK:
+            if len(_COUNTS) >= _COUNTS_LIMIT and path not in _COUNTS:
+                _COUNTS.clear()
+            _COUNTS[path] = (*identity, written["validEnd"],
+                             written["completedRecords"])
+    return written
+
 
 def job_progress(job) -> dict:
     """Records written so far, out of the records this job owns, and when the
@@ -199,9 +330,8 @@ def job_progress(job) -> dict:
         progress["detail"] = ("the run folder on record is not on the "
                               "server's disk")
         return progress
-    from ..experiment import resume as resume_mod
     from ..experiment import sharding as sharding_mod
-    written = resume_mod.written_records(directory)
+    written = _written(directory)
     progress.update({
         "unit": written["unit"],
         "recordsWritten": written["completedRecords"],

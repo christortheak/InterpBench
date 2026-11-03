@@ -901,8 +901,8 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
     parent.status = status
     if dry_run:
         parent.finished_at = time.time()   # "prepared" is terminal at birth
-    else:
-        parent.started_at = parent.started_at or time.time()
+    # No start here: the parent starts when its first part does, which the
+    # reconciler stamps (issue #7). Its submission time is ``created_at``.
     parent.log(log)
     jobs.store.update(parent)
     first = child_bundles[0]
