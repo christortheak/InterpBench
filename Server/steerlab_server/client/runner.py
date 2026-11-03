@@ -255,6 +255,35 @@ def require_declared_seed_policy(staged, verb, capabilities, where: str,
         repair_action=sampling.outdated_engine_repair())
 
 
+def require_prompt_reading(staged, verb, capabilities, where: str,
+                           workspace_root) -> None:
+    """Refuse BEFORE submitting a staged bundle whose study declares a
+    promptReading to an engine that does not advertise
+    ``remoteStudy.promptReading`` (issue #6): it would ignore the
+    declaration and read the prompts its own way.
+
+    Same evidence rule as :func:`require_declared_seed_policy`: the study is
+    read from the local workspace only when the bundle's name and content
+    hash match it. Swift twin: ``ClusterClient.requirePromptReading``."""
+    from ..experiment import prompt_reading
+    from ..experiment.manifest import Manifest
+    name = staged.get("experiment") if isinstance(staged, dict) else None
+    if not workspace_root or not isinstance(name, str) or not name:
+        return
+    try:
+        manifest = Manifest.load(name, workspace_root)
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    if (manifest.content_hash() != staged.get("experimentContentHash")
+            or not prompt_reading.submission_needs_capability(manifest, verb)
+            or prompt_reading.remote_honors(capabilities)):
+        return
+    raise RunnerRefusal(
+        prompt_reading.outdated_engine_reason(where),
+        code=prompt_reading.UNSUPPORTED_CODE,
+        repair_action=prompt_reading.outdated_engine_repair())
+
+
 def confirm_reread(submission, where: str) -> None:
     """Refuse AFTER a submission whose rendered command does not carry the
     re-read: that job analyzes the stored choices, and must not be reported
@@ -852,7 +881,8 @@ class RunnerClient:
 
         ``workspace_root``, when given, is the workspace the bundle's study
         is read from for the declared-seed-policy check
-        (:func:`require_declared_seed_policy`).
+        (:func:`require_declared_seed_policy`) and the declared prompt
+        reading check (:func:`require_prompt_reading`).
 
         ``reread_choices`` (verb ``analyze`` only) asks the analysis to read
         every stored choice again with the runner's current choice parser;
@@ -900,6 +930,8 @@ class RunnerClient:
         if workspace_root:
             require_declared_seed_policy(staged, verb, self.capabilities(),
                                          self.base_url, workspace_root)
+            require_prompt_reading(staged, verb, self.capabilities(),
+                                   self.base_url, workspace_root)
         if expected is not None:
             actual = str(staged.get("bundleSha256") or "")
             if actual != expected:

@@ -34,6 +34,8 @@ same on both clients.
 
 from __future__ import annotations
 
+import re
+
 from . import command_vocabulary as vocabulary
 
 #: The manifest key (cross-engine contract key; Swift twin
@@ -45,6 +47,9 @@ SINGLE_PASS = "singlePass"
 CHUNKED = "chunked"
 MODES = (SINGLE_PASS, CHUNKED)
 RULE_KEYS = ("mode", "chunkTokens", "aboveTokens")
+#: The largest token count either number may hold: far beyond any context
+#: window, and inside a 32-bit integer on every client.
+MAX_RULE_TOKENS = 100_000_000
 
 #: The engine's device defaults, as the shared contract states them. The CUDA
 #: constants are the researcher's, from the test build their frozen 200-record
@@ -106,8 +111,7 @@ def violations(value) -> list[str]:
                         + " — it takes only mode, chunkTokens, and aboveTokens")
     mode = value.get("mode")
     if mode not in MODES:
-        problems.append(f"promptReading mode must be singlePass or chunked "
-                        f"(got {mode!r})")
+        problems.append("promptReading mode must be singlePass or chunked")
         return problems
     if mode == SINGLE_PASS:
         extra = [k for k in ("chunkTokens", "aboveTokens") if k in value]
@@ -118,9 +122,10 @@ def violations(value) -> list[str]:
     for key, minimum in (("chunkTokens", 1), ("aboveTokens", 0)):
         if key not in value:
             problems.append(f"promptReading mode chunked needs {key}")
-        elif not _whole(value[key]) or value[key] < minimum:
-            problems.append(f"promptReading {key} must be a whole number of "
-                            f"at least {minimum} (got {value[key]!r})")
+        elif (not _whole(value[key])
+              or not minimum <= value[key] <= MAX_RULE_TOKENS):
+            problems.append(f"promptReading {key} must be a whole number "
+                            f"from {minimum} to {MAX_RULE_TOKENS:,}")
     return problems
 
 
@@ -285,10 +290,11 @@ def rule_from_flags(*, single_pass: bool, chunk_tokens: str | None,
     for flag, raw, minimum in (("--chunk-tokens", chunk_tokens, 1),
                                ("--above-tokens", above_tokens, 0)):
         text = str(raw).strip()
-        if not text.isdigit() or int(text) < minimum:
+        if (not re.fullmatch(r"[0-9]{1,9}", text)
+                or not minimum <= int(text) <= MAX_RULE_TOKENS):
             raise MeasurementDeclarationError(
-                f"{flag} must be a whole number of at least {minimum} "
-                f"(got {raw!r})", repair=repair)
+                f"{flag} must be a whole number from {minimum} to "
+                f"{MAX_RULE_TOKENS:,}", repair=repair)
         values[flag] = int(text)
     return {"mode": CHUNKED, "chunkTokens": values["--chunk-tokens"],
             "aboveTokens": values["--above-tokens"]}
@@ -309,6 +315,32 @@ def _require_draft(document: dict, name: str) -> None:
                         f"experiment {VERB} {name}-v2 …")
                     + "  (a frozen study is immutable; the duplicate is a "
                       "draft again)"))
+
+
+def echo(name: str, rule: dict | None, *, previous, dry_run: bool) -> str:
+    """The verb's one line, the same on both clients."""
+    prefix = "(dry run, nothing written) would " if dry_run else ""
+    if rule is None:
+        if previous is None:
+            return f"'{name}' declares no prompt reading — nothing to clear"
+        return (f"{prefix}{'clear' if dry_run else 'cleared'} the prompt "
+                f"reading of '{name}'; the engine's device default applies "
+                "again")
+    words = describe(rule)
+    if previous == parse(rule):
+        return f"'{name}' already declares this prompt reading: {words}"
+    return (f"{prefix}{'declare' if dry_run else 'declared'} the prompt "
+            f"reading of '{name}': {words}")
+
+
+def result_payload(name: str, rule: dict | None, *, previous,
+                   written: bool) -> dict:
+    """The verb's flat result keys, the same on both clients."""
+    return {"experiment": name,
+            "promptReading": parse(rule) if rule is not None else None,
+            "previousPromptReading": previous,
+            "reading": describe(rule) if rule is not None else None,
+            "written": written}
 
 
 def declare(name: str, rule: dict | None, *, root: str | None = None,

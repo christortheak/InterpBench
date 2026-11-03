@@ -306,7 +306,7 @@ def test_a_malformed_declaration_refuses_before_anything_is_written(site):
     with pytest.raises(sub.SubmissionRefusal) as caught:
         _submit(site)
     assert caught.value.code == "promptReadingMalformed"
-    assert "chunkTokens must be a whole number of at least 1" in str(caught.value)
+    assert "chunkTokens must be a whole number from 1 to" in str(caught.value)
     assert "aboveTokens" in str(caught.value)
     assert sorted(os.listdir(scratch)) == before
 

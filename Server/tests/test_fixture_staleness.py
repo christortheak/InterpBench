@@ -468,6 +468,11 @@ def test_every_committed_fixture_has_a_staleness_test():
         # run as it stands, with its sentence. Never regenerated; checked
         # inline in test_source_snapshot.py and SourceSnapshotTests.swift.
         "source-snapshot.json",
+        # Hand-authored contract (issue #6): the promptReading block both
+        # clients' set-prompt-reading write, their refusal sentences, and the
+        # rule's chunking decisions. Never regenerated; checked inline in
+        # test_prompt_reading_authoring.py and PromptReadingTests.swift.
+        "prompt-reading.json",
     }
     present = {f for f in os.listdir(FIXTURES) if f.endswith(".json")}
     assert present <= covered, (
