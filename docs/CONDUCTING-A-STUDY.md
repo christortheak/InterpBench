@@ -1354,8 +1354,11 @@ picks the rule in this order:
    frozen, since it is part of the frozen manifest and its hash);
 2. the submission's plan, which the client sends when the default would not
    fit the card you asked for, and says so in an advisory;
-3. the `STEERLAB_PREFILL_CHUNK` setting on the engine, as before (a whole
-   number of tokens per chunk, or 0 for a single pass);
+3. the `STEERLAB_PREFILL_CHUNK` setting, as before (a whole number of
+   tokens per chunk, or 0 for a single pass). It applies only where it is
+   set: a local run, or a job the server runs on its own machine. A Slurm
+   job starts with a bare environment and never sees it, so declare a
+   reading in the study instead when a cluster run must follow it;
 4. the engine's default for the device: on CUDA, prompts over 8,192 tokens in
    chunks of 4,096; on MPS, prompts over 4,096 tokens in chunks of 1,024; on
    CPU, a single pass. Through 0.9.19, CUDA always read in a single pass.
@@ -1386,8 +1389,15 @@ actually happens to the prompts, not how the rule is spelled or where it came
 from, so a declared 4096 above 8192 equals the CUDA default, and a run made by
 0.9.19 on CUDA (a single pass, by that release's rule) resumes on 0.9.20 when
 none of its prompts is longer than 8,192 tokens. The refusal names both
-readings and the repair: finish the run on the engine release that started
-it, or start a new run. A run made before 0.9.20 on MPS is taken as read by
+readings and the repair. Resume through a submission
+(`steerlab-server study submit <study> --verb run --resume runs/<run>`),
+which reads the prompts the way the parked run recorded them, or the way its
+release did; or finish the run on the engine release that started it; or
+start a new run. Replaying a job's original script (`remote resubmit`) reads
+the way that script was first submitted, so it is not the repair.
+A local judge is its own instrument: it always reads by the device default,
+records its reading in the judge report, and a targeted evaluation resume
+(`--resume-from`) refuses when the earlier session's judge read differently. A run made before 0.9.20 on MPS is taken as read by
 that release's default; a `STEERLAB_PREFILL_CHUNK` value set then was not
 recorded and cannot be checked.
 

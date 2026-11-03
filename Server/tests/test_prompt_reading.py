@@ -497,7 +497,11 @@ def test_a_resume_under_a_different_reading_refuses(tmp_path, monkeypatch):
     assert "refusing to mix two prompt readings in one run" in message
     assert refusal.value.gate == "manifestEpoch"
     assert refusal.value.repair_action.startswith(
-        "steerlab-server experiment run reading-resume  (a fresh run")
+        "steerlab-server study submit reading-resume --verb run --resume "
+        f"runs/{os.path.basename(run_dir)}  (resume through a submission, which "
+        "reads the prompts as this run recorded;")
+    assert ("start afresh with steerlab-server experiment run reading-resume, "
+            "without --resume") in refusal.value.repair_action
     assert isinstance(refusal.value, resume_mod.ResumeError)
     assert open(os.path.join(run_dir, "generations.jsonl"), "rb").read() == before
 

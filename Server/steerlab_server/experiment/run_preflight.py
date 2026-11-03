@@ -532,15 +532,23 @@ def _has_records(run_directory) -> bool:
         return False
 
 
-def _prompt_reading_repair(name, shard_stamp) -> str:
+def _prompt_reading_repair(name, shard_stamp, run_directory=None) -> str:
     if shard_stamp is not None:
         return (f"steerlab-server study submit {name} --verb run --executor "
                 f"slurm --parallel {shard_stamp.get('shardCount')}  (a fresh "
                 "fan-out that reads every prompt one way; or finish these "
                 "partials on the engine release that started them)")
-    return (f"steerlab-server experiment run {name}  (a fresh run, without "
-            "--resume; or finish this run on the engine release that started "
-            "it)")
+    # Resuming through a submission is the repair that keeps the run: the
+    # submission carries the parked run's recorded reading (or its release's
+    # rule) as the plan. A rendered script replayed as it was (remote
+    # resubmit) carries only what it was first given, so it is not offered.
+    parked = (f"runs/{os.path.basename(os.path.normpath(run_directory))}"
+              if run_directory else "<run-dir>")
+    return (f"steerlab-server study submit {name} --verb run --resume {parked}  "
+            "(resume through a submission, which reads the prompts as this run "
+            "recorded; or finish it on the engine release that started it; or "
+            f"start afresh with steerlab-server experiment run {name}, without "
+            "--resume)")
 
 
 def prompt_reading_admission(run_directory, *, name, reading, counts=None,
@@ -620,7 +628,7 @@ def prompt_reading_admission(run_directory, *, name, reading, counts=None,
         f"run directory {run_directory} {held}, but this engine reads them as "
         f"{now}: {why} — refusing to mix two prompt readings in one run",
         gate=lifecycle_gates.MANIFEST_EPOCH,
-        repair=_prompt_reading_repair(name, shard_stamp))
+        repair=_prompt_reading_repair(name, shard_stamp, run_directory))
 
 
 def panel_resume_admission(run_directory, *, manifest, shard,
