@@ -544,18 +544,22 @@ def _prompt_reading_repair(name, shard_stamp, run_directory=None) -> str:
     # The guard refuses only when a declaration or an explicit plan would
     # read the parked run's prompts differently (or its reading cannot be
     # established). With neither, a resume continues with the run's own
-    # reading, so the Mac-side Resume (remote resubmit, which replays the
-    # job's own script) is the repair that keeps the run; the engine-side
+    # reading, so resuming the job that started the run (which replays the
+    # job's own script) is the repair that keeps it: Resume in the app, the
+    # Mac CLI's remote resubmit, or the Python client's runner resubmit —
+    # two products, each named by its own command. The engine-side
     # submission carries the same reading as its plan.
     parked = (f"runs/{os.path.basename(os.path.normpath(run_directory))}"
               if run_directory else "<run-dir>")
-    return ("resume it with the reading it was started with: steerlab-cli "
-            "remote resubmit <job-id> (or Resume in the app) on the job that "
-            "started this run continues it with its own reading, as does "
-            f"steerlab-server study submit {name} --verb run --resume {parked} "
-            "on the engine; a job sent a different reading, or a study that "
-            "now declares one, cannot continue this run. Or start afresh, "
-            "without resuming, so every prompt is read one way")
+    return ("resume it with the reading it was started with: resume the job "
+            "that started this run (Resume in the app; steerlab-cli remote "
+            "resubmit <job-id> on the Mac; steerlab runner resubmit <job-id> "
+            "--runner <url> from the Python client), which continues it with "
+            "its own reading, as does steerlab-server study submit "
+            f"{name} --verb run --resume {parked} on the engine; a job sent a "
+            "different reading, or a study that now declares one, cannot "
+            "continue this run. Or start afresh, without resuming, so every "
+            "prompt is read one way")
 
 
 def prompt_reading_admission(run_directory, *, name, reading, counts=None,

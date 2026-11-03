@@ -542,10 +542,13 @@ def test_a_resume_under_a_different_reading_refuses(tmp_path, monkeypatch):
             "would be read differently") in message
     assert "refusing to mix two prompt readings in one run" in message
     assert refusal.value.gate == "manifestEpoch"
-    # The Mac-side repair first, then the engine's.
+    # Resuming the job that started the run, from the app, the Mac CLI, or
+    # the Python client, each by its own name; then the engine's.
     assert refusal.value.repair_action.startswith(
-        "resume it with the reading it was started with: steerlab-cli remote "
-        "resubmit <job-id> (or Resume in the app)")
+        "resume it with the reading it was started with: resume the job that "
+        "started this run (Resume in the app; steerlab-cli remote resubmit "
+        "<job-id> on the Mac; steerlab runner resubmit <job-id> --runner <url> "
+        "from the Python client)")
     assert ("steerlab-server study submit reading-resume --verb run --resume "
             f"runs/{os.path.basename(run_dir)}") in refusal.value.repair_action
     assert isinstance(refusal.value, resume_mod.ResumeError)

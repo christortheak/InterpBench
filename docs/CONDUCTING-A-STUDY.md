@@ -1399,8 +1399,10 @@ when a chunked reading leaves it for its own pass.
 
 **A run never mixes two readings.** A resumed run, or shard, or panel,
 continues with the parked run's own reading unless the study declares, or the
-job was sent, another one, so resuming a parked job from the Mac
-(`steerlab-cli remote resubmit <job-id>`, or Resume in the app) just works,
+job was sent, another one, so resuming a parked job (Resume in the app,
+`steerlab-cli remote resubmit <job-id>` on the Mac, or
+`steerlab runner resubmit <job-id> --runner <url>` from the Python client)
+just works,
 including for a run 0.9.19 parked on CUDA with prompts over 8,192 tokens: it
 continues in a single pass. A resume never rewrites `config.json`, so a run
 made before 0.9.20 still has no `notes.promptReading` record afterwards; its
@@ -1412,9 +1414,10 @@ default and resumed under a plan of 2,048-token chunks. It compares what
 actually happens to the prompts, not how the rule is spelled or where it came
 from, so a declared 4096 above 8192 equals the CUDA default. The refusal
 names both readings and the repair: resume the job that started the run
-(`steerlab-cli remote resubmit`, or Resume in the app; on the engine,
-`steerlab-server study submit <study> --verb run --resume runs/<run>`), or
-start a new run.
+(Resume in the app; `steerlab-cli remote resubmit <job-id>` on the Mac;
+`steerlab runner resubmit <job-id> --runner <url>` from the Python client; on
+the engine, `steerlab-server study submit <study> --verb run --resume
+runs/<run>`), or start a new run.
 A local judge is its own instrument: it always reads by the device default,
 records its reading in the judge report, and a targeted evaluation resume
 (`--resume-from`) refuses when the earlier session's judge read differently. A run made before 0.9.20 on MPS is taken as read by
