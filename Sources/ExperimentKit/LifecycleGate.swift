@@ -322,6 +322,7 @@ public enum RefusalSiteRegistry {
                 "experiment set-system-prompt",
                 "experiment set-parser", "experiment set-instrument-scope",
                 "experiment set-jlens-readout",
+                "experiment set-prompt-reading",
                 "experiment set-evaluation-sampling",
                 "experiment set-primary-outcome",
                 "experiment set-style-taxonomy", "experiment confirm",

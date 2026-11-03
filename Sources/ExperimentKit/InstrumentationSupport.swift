@@ -101,6 +101,28 @@ extension ClusterClient {
         }
     }
 
+    /// Refuse a staged bundle whose study declares a prompt reading, before
+    /// submitting it to an engine without `remoteStudy.promptReading` (issue
+    /// #6). Same evidence rule as `requireDeclaredSeedPolicy`: the study is
+    /// read from the local workspace only when the bundle's name and content
+    /// hash match it. Python twin: `runner.require_prompt_reading`.
+    func requirePromptReading(inspectedBundle inspected: JSONValue, verb: String) async throws {
+        guard case .object(let metadata) = inspected,
+            case .string(let name)? = metadata["experiment"], !name.isEmpty,
+            case .string(let hash)? = metadata["experimentContentHash"],
+            let manifest = try? ExperimentStore.load(name: name),
+            ExperimentStore.manifestHash(manifest) == hash,
+            manifest.promptReading != nil
+        else { return }
+        if let refusal = SubstrateRouting.promptReadingSubmissionRefusal(
+            manifest: manifest, verb: verb, capabilities: try await capabilities(),
+            server: profile.baseURL.absoluteString)
+        {
+            throw ExperimentError.refusing(
+                .missingPrerequisite, refusal, repair: PromptReading.outdatedEngineRepair)
+        }
+    }
+
     func requireStudyInstrumentation(experiment: String) async throws {
         let document = try JSONDecoder().decode(JSONValue.self, from: await experimentManifestBody(name: experiment))
         var required = InstrumentationSupport.requirements(document)

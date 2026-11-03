@@ -134,6 +134,18 @@ public final class StudyBundleSubmissionController {
             note(refusal, severity: .error)
             return .failure(StudyBatchSubmission.Failure(reason: refusal))
         }
+        // Old-server guard (issue #6) — same rule as
+        // UnifiedStudyRunner.submitBundle: a declared prompt reading would be
+        // ignored by a server without remoteStudy.promptReading.
+        if let refusal = SubstrateRouting.promptReadingSubmissionRefusal(
+            manifest: manifest, verb: submissionVerb, capabilities: capabilities,
+            server: transport.origin?.connection.baseURL.absoluteString
+                ?? substrate ?? "the server")
+        {
+            jobs.remoteStatus = refusal
+            note(refusal, severity: .error)
+            return .failure(StudyBatchSubmission.Failure(reason: refusal))
+        }
         // Scope-drift guard (2026-08-06 field incident) — same rule as
         // UnifiedStudyRunner.submitBundle: a stale outcomeInstrumentScope
         // pin refuses at SUBMIT, before packaging/upload, instead of on the

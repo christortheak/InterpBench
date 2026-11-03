@@ -212,6 +212,22 @@ public enum SubstrateRouting {
             + "same seeds for every item. Nothing was submitted."
     }
 
+    /// Old-server guard for a declared prompt reading (issue #6): a study
+    /// that declares `promptReading`, on a verb that loads the model, sent
+    /// to an engine without `remoteStudy.promptReading`, which would ignore
+    /// the declaration and read the prompts its own way. Returns the
+    /// refusal, or nil. Same sentence as the Python client's
+    /// (`prompt_reading.outdated_engine_reason`).
+    public static func promptReadingSubmissionRefusal(
+        manifest: ExperimentManifest, verb: String,
+        capabilities: ClusterCapabilities?, server: String
+    ) -> String? {
+        guard manifest.promptReading != nil, verb != "analyze",
+            capabilities?.supportsPromptReading != true
+        else { return nil }
+        return PromptReading.outdatedEngineReason(server: server)
+    }
+
     /// The repair for `declaredSeedPolicySubmissionRefusal`. Python twin:
     /// `sampling.outdated_engine_repair`.
     public static let declaredSeedPolicyRepair =

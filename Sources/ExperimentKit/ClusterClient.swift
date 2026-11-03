@@ -49,6 +49,11 @@ public struct ClusterCapabilities: Codable, Sendable {
         /// which reuse the fixed seed list for that study shape, so its
         /// submission must refuse there.
         public var declaredSeedPolicy: Bool?
+        /// A study's `promptReading` declaration and a submission's prompt
+        /// reading plan decide how its prompts go through the model (issue
+        /// #6). Absent on older servers, which would read a declaring
+        /// study's prompts their own way, so its submission must refuse.
+        public var promptReading: Bool?
         public var httpTransfer: Bool?
         public var externalTransferRequired: Bool?
         public var stagingRoot: String?
@@ -230,6 +235,16 @@ public struct ClusterCapabilities: Codable, Sendable {
     public var supportsDeclaredSeedPolicy: Bool {
         if let value = remoteStudy?.declaredSeedPolicy { return value }
         if case .bool(let value)? = features?["remoteStudy.declaredSeedPolicy"] {
+            return value
+        }
+        return false
+    }
+
+    /// A declared prompt reading is honoured (`"remoteStudy.promptReading"`,
+    /// issue #6), in either spelling. Python twin: `prompt_reading.remote_honors`.
+    public var supportsPromptReading: Bool {
+        if let value = remoteStudy?.promptReading { return value }
+        if case .bool(let value)? = features?[PromptReading.capabilityKey] {
             return value
         }
         return false
@@ -3097,6 +3112,20 @@ public struct ClusterClient: Sendable {
             throw ExperimentError.refusing(
                 .missingPrerequisite, refusal, repair: SubstrateRouting.declaredSeedPolicyRepair)
         }
+        // A server-resident study that declares a prompt reading an older
+        // engine would ignore (issue #6), refused the same way. An engine
+        // that honours it needs no second look at the manifest.
+        if verb != "analyze", try await !capabilities().supportsPromptReading,
+            let body = try? await experimentManifestBody(name: experiment),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
+            manifest.promptReading != nil,
+            let refusal = SubstrateRouting.promptReadingSubmissionRefusal(
+                manifest: manifest, verb: verb, capabilities: try await capabilities(),
+                server: profile.baseURL.absoluteString)
+        {
+            throw ExperimentError.refusing(
+                .missingPrerequisite, refusal, repair: PromptReading.outdatedEngineRepair)
+        }
         struct Body: Encodable {
             var experiment: String
             var verb: String
@@ -3129,6 +3158,7 @@ public struct ClusterClient: Sendable {
         // An older engine would seed a declared derivedSHA256 at one sample
         // per item with the fixed list: refused before submitting.
         try await requireDeclaredSeedPolicy(inspectedBundle: inspected, verb: verb)
+        try await requirePromptReading(inspectedBundle: inspected, verb: verb)
         // An older engine ignores `rereadChoices`: refused before submitting
         // when its capabilities do not list it.
         if rereadChoices {
