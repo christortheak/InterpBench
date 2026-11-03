@@ -97,8 +97,9 @@ def sweep(name: str, root: str | None = None, dtype: str = "auto",
         manifest = model_resources.pin_model_revision(name, manifest, model, root, log or print)
         # A sweep reads its prompts by the study's rule too (its declaration,
         # else the submission's plan, the environment, or the device default),
-        # so a declared reading governs every generation of the study. Sweep
-        # prompts are short, and the rule is not recorded or compared here.
+        # so a declared reading governs every generation of the study. The
+        # rule rides the sweep's config.json notes; sweep prompts are short,
+        # and a resumed sweep does not compare readings.
         try:
             reading = prompt_reading.for_manifest(
                 manifest, generate._model_device(model), log=log or print)
@@ -318,7 +319,8 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         run_directory = paths.make_unique_run_directory(
             f"exp-{name}-sweep", root)
         run_artifacts.write_config_snapshot(manifest, run_directory, "sweep", model=model,
-                               root=root, log=_log)
+                               root=root, log=_log,
+                               notes=_prompt_reading_notes(model))
         # Persist the sweep's re-derived vectors as first-class extraction
         # artifacts (same helper as extract/validate — never a parallel
         # writer): the sweep run itself then carries recipe-matching
@@ -931,12 +933,23 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
     return run_directory
 
 
+def _prompt_reading_notes(model) -> dict | None:
+    """The sweep's prompt reading for its config.json notes: the rule the
+    sweep resolved (``sweep`` sets it), with the counts left empty, since a
+    sweep's prompts are not measured for it."""
+    reading = prompt_reading.active_reading.get()
+    if reading is None:
+        return None
+    return {prompt_reading.RECORD_KEY: prompt_reading.record(
+        reading, device=generate._model_device(model), counts=None)}
+
+
 def _sweep_impl(name, manifest, model, root, layer_fractions, alphas, prompt,
                 should_cancel, _log) -> str:
     bundles = vector_materialization.extract_all(model, manifest, root)
     run_directory = paths.make_unique_run_directory(f"exp-{name}-sweep", root)
     run_artifacts.write_config_snapshot(manifest, run_directory, "sweep", model=model,
-                           root=root, log=_log)
+                           root=root, log=_log, notes=_prompt_reading_notes(model))
     sweep_prompt = prompt or (manifest.task_description or "Write a short paragraph.")
 
     rows = []

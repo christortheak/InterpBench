@@ -427,6 +427,22 @@ def test_a_sweep_reads_by_the_studys_declaration(tmp_path, monkeypatch):
     assert PR.active_reading.get() is None
 
 
+def test_a_sweep_records_its_reading_in_its_config(tmp_path, monkeypatch):
+    from steerlab_server.experiment import sweep_workflow
+    root = str(tmp_path)
+    _study(root, "reading-sweep-record", promptReading={"mode": "singlePass"})
+    _patch(monkeypatch)
+    # No concepts to sweep: the run directory and its stamp are still written.
+    monkeypatch.setattr(_owner_vector_materialization, "extract_all",
+                        lambda model, manifest, root: {})
+    run_dir = sweep_workflow.sweep("reading-sweep-record", root,
+                                   model_provider=_cuda_model, log=lambda *_: None)
+    entry = _config(run_dir)["notes"]["promptReading"]
+    assert (entry["mode"], entry["source"], entry["device"]) == (
+        "singlePass", "studyDeclaration", "cuda")
+    assert (entry["promptCount"], entry["longestPromptTokens"]) == (None, None)
+
+
 def test_an_unreadable_declaration_refuses_before_any_generation(tmp_path,
                                                                   monkeypatch):
     root = str(tmp_path)
