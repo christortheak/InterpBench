@@ -23,8 +23,10 @@ For categorical outcomes, answer-token/logprob instruments remain temperature-fr
 pass or in chunks. By default CUDA reads prompts over 8,192 tokens 4,096 tokens
 at a time, MPS prompts over 4,096 tokens 1,024 at a time, and CPU every prompt
 in one pass. A study can declare its own rule (the manifest's `promptReading`,
-written by `steerlab experiment set-prompt-reading` before freeze), and a submission may plan
-smaller chunks to fit the requested card, saying so in an advisory. The two
+written by `steerlab experiment set-prompt-reading` before freeze). A submission sends every
+CUDA job a plan: the default when it fits the requested card, smaller chunks
+when it would not (saying so in an advisory), so a cluster run records the
+source `submission`. The two
 readings are not token-identical where two next words are nearly tied, so
 each run records its reading in `config.json`'s `notes.promptReading`. A
 resumed run continues with its own reading (for a run made before 0.9.20,

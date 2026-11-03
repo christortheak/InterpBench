@@ -1352,8 +1352,12 @@ picks the rule in this order:
 1. the study's own declaration, `promptReading` in the manifest, written with
    `experiment set-prompt-reading` (on both clients; refused once the study is
    frozen, since it is part of the frozen manifest and its hash);
-2. the submission's plan, which the client sends when the default would not
-   fit the card you asked for, and says so in an advisory;
+2. the submission's plan. A submission sends one with every CUDA run,
+   sweep, or pipeline job: the CUDA default when it fits the card you asked
+   for, smaller chunks when it would not (said in an advisory), or, for a
+   resumed job, the reading the parked run was started with. A cluster run
+   therefore records the source `submission` and the plan's `basis` even when
+   it reads by the default;
 3. when a run is resumed, the parked run's own reading: the one it recorded,
    or for a run made before 0.9.20, the one that release used on its device
    (a single pass on CUDA and CPU; chunks of 1,024 above 4,096 tokens on
@@ -1398,7 +1402,9 @@ continues with the parked run's own reading unless the study declares, or the
 job was sent, another one, so resuming a parked job from the Mac
 (`steerlab-cli remote resubmit <job-id>`, or Resume in the app) just works,
 including for a run 0.9.19 parked on CUDA with prompts over 8,192 tokens: it
-continues in a single pass, and its `config.json` then records that reading.
+continues in a single pass. A resume never rewrites `config.json`, so a run
+made before 0.9.20 still has no `notes.promptReading` record afterwards; its
+reading is the one that release used on its device.
 A resume, or a merge of a fan-out's shards, still compares how each part
 reads the study's prompts, and refuses when a declaration or a plan would
 read any prompt differently: for example, a run started under the CUDA
