@@ -241,6 +241,9 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
     _require_reread_verb(reread_choices, verb=verb)
+    # A malformed promptReading declaration refuses here, before anything is
+    # written; the engine would otherwise refuse it after the queue wait.
+    declared_plan = _declared_reading_plan(manifest, verb)
     if dependency is not None:
         # Shape-validated here so a typo refuses on the terminal rather than
         # at sbatch, where it costs a round trip and a confusing message — and
@@ -271,13 +274,26 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     # mercy of the job's working directory — the same class of defect as
     # the relative `--source` (ledger 2026-08-21), one level up.
     target = os.path.abspath(target_root or profile.root)
-    command = _bundle_execute_command(
-        run_bundle_path, verb=verb, target_root=target, dtype=dtype,
-        device=device, prompts_path=prompts_path, source_path=source_path,
-        package_evidence=package_evidence, record_path=record_path,
-        resume_from=resume_from, resume_directory=resume_directory,
-        sample_per_condition=sample_per_condition, sample_seed=sample_seed,
-        reread_choices=reread_choices, runtime_requirements=run_bundle.get("runtimeRequirements"))
+
+    def render(plan: dict | None) -> list[str]:
+        return _bundle_execute_command(
+            run_bundle_path, verb=verb, target_root=target, dtype=dtype,
+            device=device, prompts_path=prompts_path, source_path=source_path,
+            package_evidence=package_evidence, record_path=record_path,
+            resume_from=resume_from, resume_directory=resume_directory,
+            sample_per_condition=sample_per_condition, sample_seed=sample_seed,
+            reread_choices=reread_choices,
+            runtime_requirements=run_bundle.get("runtimeRequirements"),
+            prompt_reading_plan=plan)
+
+    # A resumed run continues with the reading it was STARTED with (issue #6);
+    # a fresh one sends the study's declaration, and on Slurm the plan the
+    # memory check chooses below.
+    resumed_run = resume_directory or resume_from
+    command = render(
+        _resumed_reading_plan(resumed_run, target, manifest=manifest, verb=verb,
+                              cuda=_reading_device(None, device) == "cuda")
+        if resumed_run else declared_plan)
 
     # The JUDGE fan-out (a pipeline whose evaluate stage pins foreign local
     # judges) still routes through bundle submission: `--parallel` wires the
@@ -335,13 +351,22 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                                None, None, command, records_dir, submission_dir)
 
     slurm_resources = _resources_from_dict(resources or {}, experiment, verb)
+    prompts_text = _prompts_text_for_study(manifest, prompts_path, root)
     planned = _planned_records(
-        manifest, _prompts_text_for_study(manifest, prompts_path, root),
+        manifest, prompts_text,
         verb=verb, sample_per_condition=sample_per_condition)
     preflight = _preflight_report(manifest=manifest, resources=slurm_resources,
                                   profile=profile, planned_records=planned,
-                                  verb=verb, shard_count=parallel)
+                                  verb=verb, shard_count=parallel,
+                                  prompts_text=prompts_text, device=device)
     overridden = _gate_on_preflight(preflight, dry_run=dry_run, force=force)
+    # ONE reading for every job of this submission, shards included.
+    reading_plan = (
+        _resumed_reading_plan(
+            resumed_run, target, manifest=manifest, verb=verb,
+            cuda=_reading_device(slurm_resources, device) == "cuda")
+        if resumed_run else _reading_plan(preflight, manifest, verb))
+    command = render(reading_plan)
 
     if parallel > 1:
         # Identical machinery to the API's `POST /api/studies/submit-bundle`:
@@ -357,7 +382,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
             slurm_resources=slurm_resources, env=env, preflight=preflight,
             overridden=overridden, parallel=parallel,
             submission_dir=submission_dir, records_dir=records_dir,
-            manifest=manifest, parent_job_id=job_id)
+            manifest=manifest, parent_job_id=job_id,
+            prompt_reading_plan=reading_plan)
         if parallel_note:
             parent = jobs.get(submission.job_id)
             if parent is not None:
@@ -384,7 +410,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     job = jobs.record_external(
         "study-submit", status=status, executor="slurm", executor_job_id=slurm_id,
         requested_resources=_stamped_resources(bundle, manifest, preflight,
-                                               overridden, records_dir=records_dir),
+                                               overridden, records_dir=records_dir,
+                                               prompt_reading_plan=reading_plan),
         job_id=job_id,
         result={"runBundle": run_bundle, "slurmBundle": bundle.to_dict(),
                 "command": command, "recordsDirectory": records_dir,
@@ -467,6 +494,8 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
     _require_reread_verb(reread_choices, verb=verb)
+    # The bundle's own declaration, refused here when malformed (issue #6).
+    declared_plan = _declared_reading_plan(manifest, verb)
 
     submission_dir = paths.make_unique_run_directory(f"submit-bundle-{experiment}-{verb}")
     records_dir = os.path.join(submission_dir, "records")
@@ -479,12 +508,18 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # mercy of the job's working directory — the same class of defect as
     # the relative `--source` (ledger 2026-08-21), one level up.
     target = os.path.abspath(target_root or profile.root)
-    command = _bundle_execute_command(
-        bundle_path, verb=verb, target_root=target, dtype=dtype, device=device,
-        prompts_path=prompts_path, source_path=source_path,
-        package_evidence=package_evidence, record_path=record_path,
-        sample_per_condition=sample_per_condition, sample_seed=sample_seed,
-        reread_choices=reread_choices, runtime_requirements=meta.get("runtimeRequirements"))
+
+    def render(plan: dict | None) -> list[str]:
+        return _bundle_execute_command(
+            bundle_path, verb=verb, target_root=target, dtype=dtype, device=device,
+            prompts_path=prompts_path, source_path=source_path,
+            package_evidence=package_evidence, record_path=record_path,
+            sample_per_condition=sample_per_condition, sample_seed=sample_seed,
+            reread_choices=reread_choices,
+            runtime_requirements=meta.get("runtimeRequirements"),
+            prompt_reading_plan=plan)
+
+    command = render(declared_plan)
     base_result = {"runBundle": meta, "command": command,
                    "recordsDirectory": records_dir,
                    "submissionDirectory": submission_dir}
@@ -530,8 +565,9 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
                                None, None, command, records_dir, submission_dir)
 
     slurm_resources = _resources_from_dict(resources or {}, experiment, verb)
+    prompts_text = _prompts_text_for_bundle(bundle_path, manifest, prompts_path)
     planned = _planned_records(
-        manifest, _prompts_text_for_bundle(bundle_path, manifest, prompts_path),
+        manifest, prompts_text,
         verb=verb, sample_per_condition=sample_per_condition)
     # ONE preflight per submission, sharded or not (the app shows one dialog,
     # not K): each shard needs the same weights+KV memory, and the walltime
@@ -539,8 +575,13 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # of the record matrix — because the requested walltime is per shard job.
     preflight = _preflight_report(manifest=manifest, resources=slurm_resources,
                                   profile=profile, planned_records=planned,
-                                  verb=verb, shard_count=parallel)
+                                  verb=verb, shard_count=parallel,
+                                  prompts_text=prompts_text, device=device)
     overridden = _gate_on_preflight(preflight, dry_run=dry_run, force=force)
+    # ONE reading for every job of this submission, shards included.
+    reading_plan = _reading_plan(preflight, manifest, verb)
+    command = render(reading_plan)
+    base_result["command"] = command
 
     # The judge fan-out needs the sharded-parent machinery even at K=1
     # (2026-07-23): the parent record is what the reconciler drives through
@@ -556,7 +597,8 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
             slurm_resources=slurm_resources, env=env, preflight=preflight,
             overridden=overridden, parallel=parallel,
             submission_dir=submission_dir, records_dir=records_dir,
-            manifest=manifest, parent_job_id=job_id)
+            manifest=manifest, parent_job_id=job_id,
+            prompt_reading_plan=reading_plan)
         if fanout_note is not None:
             parent = jobs.get(submission.job_id)
             if parent is not None:
@@ -583,7 +625,8 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     job = jobs.record_external(
         "study-submit-bundle", status=status, executor="slurm", executor_job_id=slurm_id,
         requested_resources=_stamped_resources(bundle, manifest, preflight,
-                                               overridden, records_dir=records_dir),
+                                               overridden, records_dir=records_dir,
+                                               prompt_reading_plan=reading_plan),
         job_id=job_id,
         result={**base_result, "slurmBundle": bundle.to_dict(),
                 "preflight": preflight,
@@ -760,7 +803,9 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
                            preflight: dict, overridden: bool, parallel: int,
                            submission_dir: str, records_dir: str,
                            manifest: Manifest | None,
-                           parent_job_id: str) -> StudySubmission:
+                           parent_job_id: str,
+                           prompt_reading_plan: dict | None = None
+                           ) -> StudySubmission:
     """One parent job record + K sibling shard sbatch jobs.
 
     Each shard executes the run verb over its contiguous record range
@@ -791,6 +836,11 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
         "bundlePath": bundle_path,
         "submissionDirectory": submission_dir,
     }
+    if prompt_reading_plan is not None:
+        # The continuation after the merge is a job of this submission too,
+        # and reads its prompts the same way (``jobs._submit_pipeline_
+        # continuation`` renders it from this config).
+        merge_config["promptReadingPlan"] = prompt_reading_plan
     parent_resources = dict(slurm_resources.__dict__)
     if manifest is not None:
         parent_resources["modelID"] = manifest.model_id
@@ -829,7 +879,8 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
                 # Shards never package per-partial evidence: the merge packages
                 # evidence for the assembled run, exactly once.
                 package_evidence=False, record_path=record_path,
-                shard=f"{index}/{parallel}", runtime_requirements=meta.get("runtimeRequirements"))
+                shard=f"{index}/{parallel}", runtime_requirements=meta.get("runtimeRequirements"),
+                prompt_reading_plan=prompt_reading_plan)
             slurm_env = dict(env or {})
             slurm_env["STEERLAB_JOB_ID"] = child_id
             bundle = SlurmExecutor(profile).create_bundle(
@@ -848,7 +899,8 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
                 log = (f"submitted shard {index}/{parallel} of "
                        f"{experiment}:{verb} as Slurm job {slurm_id}")
             stamped = _stamped_resources(bundle, manifest, preflight, overridden,
-                                         records_dir=records_dir)
+                                         records_dir=records_dir,
+                                         prompt_reading_plan=prompt_reading_plan)
             stamped.update({"shardIndex": index, "shardCount": parallel,
                             "parentJob": parent_job_id})
             jobs.record_external(
@@ -1194,7 +1246,8 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
                             sample_per_condition: int | None = None,
                             sample_seed: str | None = None,
                             reread_choices: bool = False,
-                            runtime_requirements=None) -> list[str]:
+                            runtime_requirements=None,
+                            prompt_reading_plan: dict | None = None) -> list[str]:
     python = os.environ.get("STEERLAB_PYTHON") or sys.executable or "python"
     command = [
         python, "-m", "steerlab_server.cli", "bundle", "execute", bundle_path,
@@ -1236,6 +1289,12 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
         # Encoded only when asked for, the same rule: an ordinary analysis
         # renders the argv it always did.
         command.append("--reread-choices")
+    if prompt_reading_plan is not None:
+        # Encoded only when the submission resolved a plan; the engine records
+        # it as the run's prompt reading (see generate.resolve_prompt_reading).
+        import json
+        command.extend(["--prompt-reading-plan",
+                        json.dumps(prompt_reading_plan, sort_keys=True, separators=(",", ":"))])
     return command
 
 
@@ -1346,7 +1405,9 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
                       profile: ServerProfile,
                       planned_records: int | None,
                       verb: str = "run",
-                      shard_count: int = 1) -> dict:
+                      shard_count: int = 1,
+                      prompts_text: str | None = None,
+                      device: str | None = None) -> dict:
     checks: list[dict] = []
     if verb in MODEL_FREE_VERBS:
         # Same check ids, honest "not applicable" verdicts: a model-free verb
@@ -1365,7 +1426,8 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
         ("gpuRequest", lambda: model_checks[0] if model_checks
          else _check_gpu_request(resources)),
         ("memoryFit", lambda: model_checks[1] if model_checks
-         else _check_memory_fit(manifest, resources)),
+         else _check_memory_fit(manifest, resources,
+                                prompts_text=prompts_text, device=device)),
         ("walltime", lambda: model_checks[2] if model_checks
          else _check_walltime(manifest, resources, planned_records, profile,
                               verb, shard_count=shard_count)),
@@ -1379,6 +1441,86 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
                 check_id, "warn",
                 f"check could not run ({type(exc).__name__}: {exc})"))
     return {"checks": checks, "verdict": _verdict_of(checks)}
+
+
+def _declared_reading_plan(manifest: Manifest | None, verb: str) -> dict | None:
+    """The study's declaration as a plan (``source: studyDeclaration``), or
+    None. Sent exactly as declared, never changed (issue #6)."""
+    from ..experiment import prompt_reading
+    declared = _declared_reading(manifest)
+    if declared is None or verb in prompt_reading.MODEL_FREE_VERBS:
+        return None
+    return prompt_reading.plan(declared,
+                               source=prompt_reading.SOURCE_DECLARATION,
+                               basis={"declaredBy": "study"})
+
+
+def _reading_plan(preflight: dict | None, manifest: Manifest | None,
+                  verb: str) -> dict | None:
+    """The plan this submission sends to every job: the one the memory check
+    chose, else the study's declaration, else None (the engine's device
+    default, the same for every job of one build)."""
+    from ..experiment import prompt_reading
+    if verb in prompt_reading.MODEL_FREE_VERBS:
+        return None
+    for check in (preflight or {}).get("checks") or []:
+        if check.get("id") == "memoryFit":
+            plan = (check.get("data") or {}).get("promptReadingPlan")
+            if isinstance(plan, dict):
+                return plan
+    return _declared_reading_plan(manifest, verb)
+
+
+def _resumed_reading_plan(run_directory: str | None, target_root: str, *,
+                          manifest: Manifest | None, verb: str,
+                          cuda: bool) -> dict | None:
+    """The reading a resumed run was STARTED with, as a plan — never a new
+    one, so the continuation reads its prompts the way the parked records
+    were read (the engine refuses to resume across a change).
+
+    From the run's ``config.json`` ``promptReading`` record when it has one.
+    A run from before readings were recorded was read by 0.9.19's rule,
+    which on CUDA was always a single pass; that is carried for a CUDA job.
+    Off CUDA the old rule could have been an environment override nobody
+    recorded, so nothing is carried and the engine's own guard decides. A
+    study that declares a reading sends its declaration instead.
+    """
+    from ..experiment import prompt_reading
+    if not run_directory or verb in prompt_reading.MODEL_FREE_VERBS:
+        return None
+    declared = _declared_reading_plan(manifest, verb)
+    if declared is not None:
+        return declared
+    resolved = (run_directory if os.path.isabs(run_directory)
+                else os.path.join(target_root, run_directory))
+    try:
+        with open(os.path.join(resolved, "config.json"), encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(config, dict):
+        return None
+    record = config.get(prompt_reading.DECLARATION_KEY)
+    basis = {"resumedRun": os.path.basename(os.path.normpath(resolved))}
+    if isinstance(record, dict):
+        candidate = record.get("rule") if isinstance(record.get("rule"), dict) else record
+        try:
+            rule = prompt_reading.parse(
+                {k: v for k, v in candidate.items()
+                 if k in prompt_reading.RULE_KEYS})
+        except prompt_reading.RuleError:
+            return None
+        basis["recordedSource"] = record.get("source")
+        return prompt_reading.plan(rule, source=prompt_reading.SOURCE_SUBMISSION,
+                                   basis=basis)
+    if not cuda:
+        return None
+    basis["recordedReading"] = (
+        "none: the run predates recorded readings, and that release read "
+        "every prompt in a single pass on CUDA")
+    return prompt_reading.plan({"mode": prompt_reading.SINGLE_PASS},
+                               source=prompt_reading.SOURCE_SUBMISSION,
+                               basis=basis)
 
 
 class PreflightRejection(ValueError):
@@ -1410,7 +1552,8 @@ def _gate_on_preflight(preflight: dict, *, dry_run: bool, force: bool) -> bool:
 
 
 def _stamped_resources(bundle, manifest: Manifest | None, preflight: dict,
-                       overridden: bool, records_dir: str | None = None) -> dict:
+                       overridden: bool, records_dir: str | None = None,
+                       prompt_reading_plan: dict | None = None) -> dict:
     """The job's durable requested-resources record. The reconciler REPLACES
     ``job.result`` with the child record when a Slurm job finishes, so the
     preflight report, override flag, and model id live here — the one field
@@ -1430,6 +1573,10 @@ def _stamped_resources(bundle, manifest: Manifest | None, preflight: dict,
         stamped["recordsDirectory"] = records_dir
     if overridden:
         stamped["preflightOverridden"] = True
+    if prompt_reading_plan is not None:
+        # Durable beside the script that carries it: a resubmit re-executes
+        # that same script, so the continuation reads its prompts this way.
+        stamped["promptReadingPlan"] = prompt_reading_plan
     return stamped
 
 
@@ -1620,33 +1767,116 @@ def _gb(num_bytes: float) -> float:
 
 
 def _kv_cache_bytes(config: dict, context_tokens: int) -> int | None:
-    """K+V cache bytes for one sequence at bf16: 2 (K and V) × layers ×
-    kv-heads × head-dim × context × 2 bytes. Gemma 3 multimodal configs nest
-    the text model under ``text_config``."""
-    cfg = dict(config)
-    inner = cfg.get("text_config")
-    if isinstance(inner, dict):
-        merged = dict(inner)
-        for key in ("num_hidden_layers", "num_key_value_heads",
-                    "num_attention_heads", "head_dim", "hidden_size"):
-            if key not in merged and key in cfg:
-                merged[key] = cfg[key]
-        cfg = merged
-    layers = cfg.get("num_hidden_layers")
-    heads = cfg.get("num_attention_heads")
-    kv_heads = cfg.get("num_key_value_heads") or heads
-    head_dim = cfg.get("head_dim")
-    if head_dim is None and heads and cfg.get("hidden_size"):
-        head_dim = cfg["hidden_size"] // heads
-    if not (isinstance(layers, int) and isinstance(kv_heads, int)
-            and isinstance(head_dim, int) and layers > 0 and kv_heads > 0
-            and head_dim > 0):
+    """Key-value cache and fixed recurrent state for one sequence, priced by
+    layer type (``prompt_memory.cache_bytes``): full-attention layers for the
+    whole context, sliding layers for at most their window, linear-attention
+    layers their fixed state. Gemma 3 multimodal configs nest the text model
+    under ``text_config``."""
+    from . import prompt_memory
+    priced = prompt_memory.cache_bytes(config, context_tokens)
+    return None if priced is None else priced["bytes"]
+
+
+def _measure_prompts(manifest: Manifest, prompts_text: str | None) -> dict:
+    """The longest prompt's exact token count, measured with the run's own
+    token check (``token_preflight.preflight``) from the model cache only.
+
+    Never raises and never downloads: a controller without this model's
+    tokenizer, a panel (whose prompts are turns that grow with the
+    transcript), or an unreadable prompt file each answer ``measured: False``
+    with the reason in plain words, and the memory check keeps today's
+    2,048-token prompt allowance.
+    """
+    if manifest.study_kind == "multiAgent":
+        return {"measured": False,
+                "reason": ("a panel's prompts are its turns, which grow with "
+                           "the transcript, so they are not measured before "
+                           "the run")}
+    if prompts_text is None:
+        return {"measured": False,
+                "reason": "the study's task prompts could not be read here"}
+    from ..experiment import task_inputs, token_preflight
+    try:
+        prompts = task_inputs.parse_prompts(prompts_text)
+    except Exception as exc:  # noqa: BLE001 - the run's loader refuses loudly
+        return {"measured": False,
+                "reason": f"the task prompts could not be parsed ({exc})"}
+    if not prompts:
+        return {"measured": False, "reason": "the task prompt file is empty"}
+    try:
+        report = token_preflight.preflight(
+            prompts, model_id=manifest.model_id,
+            revision=manifest.model_revision,
+            prompt_mode=manifest.prompt_mode,
+            system_prompt=manifest.system_prompt,
+            qwen_thinking_enabled=manifest.qwen_thinking_enabled,
+            max_tokens=manifest.max_tokens,
+            reasoning_effort=manifest.reasoning_effort,
+            reasoning_max_tokens=manifest.reasoning_max_tokens,
+            local_files_only=True)
+    except Exception as exc:  # noqa: BLE001 - no tokenizer here is not a refusal
+        return {"measured": False,
+                "reason": (f"this server's model cache has no tokenizer for "
+                           f"{manifest.model_id} ({type(exc).__name__})")}
+    counts = [int(item["promptTokens"]) for item in report.get("items") or []]
+    if not counts:
+        return {"measured": False, "reason": "no prompt could be counted"}
+    return {"measured": True, "longestPromptTokens": max(counts),
+            "promptCount": len(counts),
+            "contextWindow": report.get("contextWindow")}
+
+
+def _declared_reading(manifest: Manifest | None) -> dict | None:
+    """The study's declared prompt reading, or None. A malformed declaration
+    refuses the submission here: the engine would refuse it at run start,
+    after the queue wait."""
+    if manifest is None:
         return None
-    return 2 * layers * kv_heads * head_dim * context_tokens * _KV_BYTES_PER_ELEMENT
+    from ..experiment import prompt_reading
+    try:
+        return prompt_reading.declared(manifest)
+    except prompt_reading.RuleError as exc:
+        raise SubmissionRefusal(
+            f"this study's promptReading declaration is malformed: {exc} — "
+            "nothing was submitted",
+            code="promptReadingMalformed",
+            repair_action=(
+                "declare it again with "
+                + prompt_reading.usage(manifest.name).split("  |  ")[0]
+                + " (or --chunk-tokens <n> --above-tokens <m>, or --clear) "
+                "on a draft; a frozen study is duplicated to change it"))
+
+
+def _reading_device(resources: SlurmResources | None, device: str | None) -> str:
+    """The device a Slurm job's model will run on: CUDA when a GPU is
+    requested through gres (the only GPU directive the renderer emits) and no
+    ``--device`` says otherwise; CPU otherwise."""
+    if device:
+        lowered = device.lower()
+        return ("cuda" if lowered.startswith("cuda")
+                else "mps" if lowered.startswith("mps") else "cpu")
+    gpu = housekeeping.parse_gpu_type(resources.gres) if resources else None
+    return "cuda" if gpu else "cpu"
 
 
 def _check_memory_fit(manifest: Manifest | None,
-                      resources: SlurmResources) -> dict:
+                      resources: SlurmResources, *,
+                      prompts_text: str | None = None,
+                      device: str | None = None) -> dict:
+    """Size one GPU against the study (issue #6).
+
+    The context is the longest MEASURED prompt plus ``maxTokens`` plus
+    ``reasoningMaxTokens``; the cache is priced by layer type; the prompt
+    pass's working memory is estimated for the reading the job will use.
+    Refuses (``fail``) only when the weights and the cache for the full
+    context exceed the requested card — the certain part. An estimate over
+    the card is advice (``warn``), never a refusal: the rule
+    ``science_placement.memory_fit`` applies to ``jlens-probe-batch``, with
+    its data shape. On a CUDA job the chosen reading is in
+    ``data.promptReadingPlan``, and the submission sends it to every job.
+    """
+    from ..experiment import prompt_reading
+    from . import prompt_memory
     check_id = "memoryFit"
     if manifest is None:
         return _check(check_id, "warn",
@@ -1662,39 +1892,139 @@ def _check_memory_fit(manifest: Manifest | None,
     weights = info["weightsBytes"]
     config = info.get("config")
     dtype_note = (config or {}).get("torch_dtype")
-    context = manifest.max_tokens + PREFLIGHT_PROMPT_BUDGET_TOKENS
-    kv = _kv_cache_bytes(config, context) if config else None
+    measured = _measure_prompts(manifest, prompts_text)
+    prompt_tokens = (measured["longestPromptTokens"] if measured["measured"]
+                     else PREFLIGHT_PROMPT_BUDGET_TOKENS)
+    reasoning = int(manifest.reasoning_max_tokens or 0)
+    generation = manifest.max_tokens + reasoning
+    context = prompt_tokens + generation
+    declared = _declared_reading(manifest)
+    gpu_type = housekeeping.parse_gpu_type(resources.gres)
+    gpu_count = _gres_gpu_count(resources)
+    reading_device = _reading_device(resources, device)
     data: dict = {
         "modelId": manifest.model_id,
         "snapshotRevision": info.get("revision"),
         "weightsBytes": weights,
         "weightsDtype": dtype_note,
         "contextTokens": context,
-        "kvCacheBytes": kv,
+        "promptLengthMeasured": measured["measured"],
+        "longestPromptTokens": (measured.get("longestPromptTokens")
+                                if measured["measured"] else None),
+        "promptTokensBasis": "measured" if measured["measured"] else "allowance",
+        "maxTokens": manifest.max_tokens,
+        "reasoningMaxTokens": reasoning,
+        "gpuType": gpu_type,
+        "gpuCount": gpu_count,
     }
-    if kv is None:
+    if not measured["measured"]:
+        data["promptLengthNotMeasured"] = measured["reason"]
+        data["promptAllowanceTokens"] = PREFLIGHT_PROMPT_BUDGET_TOKENS
+    unmeasured_note = ("" if measured["measured"] else (
+        f" The prompt length was not measured ({measured['reason']}), so the "
+        f"cache is sized for a {PREFLIGHT_PROMPT_BUDGET_TOKENS:,}-token prompt "
+        "allowance; a longer prompt needs more."))
+    if reading_device == "cuda":
+        choice = prompt_memory.choose_reading(
+            config, weights_bytes=weights, prompt_tokens=prompt_tokens,
+            generation_tokens=generation, declared=declared,
+            gpu_type=gpu_type, vram_table=resources.gpu_vram_gb,
+            model_id=manifest.model_id)
+        rule = choice["rule"]
+    else:
+        default = prompt_reading.DEVICE_DEFAULTS.get(reading_device)
+        rule = declared or default
+        priced = prompt_memory.estimate(
+            config, weights_bytes=weights, prompt_tokens=prompt_tokens,
+            generation_tokens=generation, rule=rule,
+            model_id=manifest.model_id, gpu_type=gpu_type)
+        choice = {"rule": rule, "estimate": priced, "steppedDown": False,
+                  "fit": prompt_memory.fit(priced, gpu_type=gpu_type,
+                                           vram_table=resources.gpu_vram_gb)}
+    priced = choice["estimate"]
+    if priced.get("status") != "estimated":
+        data.update(kvCacheBytes=None)
         return _check(check_id, "warn",
                       f"snapshot {info['snapshotPath']} has no readable "
                       "config.json geometry — KV cache cannot be estimated "
-                      f"(weights alone: {_gb(weights):.1f} GB)", data)
-    estimate = int((weights + kv) * PREFLIGHT_ACTIVATION_HEADROOM)
-    data["estimateBytes"] = estimate
-    gpu_type = housekeeping.parse_gpu_type(resources.gres)
-    gpu_count = _gres_gpu_count(resources)
-    data["gpuType"] = gpu_type
-    data["gpuCount"] = gpu_count
+                      f"(weights alone: {_gb(weights):.1f} GB)" + unmeasured_note,
+                      data)
+    fit = choice["fit"]
+    certain = priced["certainBytes"]
+    estimate = priced["estimatedBytes"]
+    kv = priced["cache"]["bytes"]
+    data.update({
+        "kvCacheBytes": kv,
+        "cache": priced["cache"],
+        "estimateBytes": estimate,
+        "certainBytes": certain,
+        "estimatedBytes": estimate,
+        "estimateBasis": priced.get("estimateBasis"),
+        "formula": priced.get("formula"),
+        "memoryFit": fit.get("memoryFit"),
+        "declaredVRAMGB": fit.get("declaredVRAMGB"),
+        "fittingGPUTypes": fit.get("fittingGPUTypes"),
+        "certainFittingGPUTypes": fit.get("certainFittingGPUTypes"),
+        "limitation": (
+            "The weights and the cache are certain; the prompt pass's working "
+            "memory is an itemized estimate from the cached configuration, "
+            "not a measurement. Another architecture, attention kernel, "
+            "library version, or allocator setting moves it. A model loads "
+            "onto one GPU: this engine does not split a model across GPUs."),
+    })
+    if "workingMemory" in priced:
+        data["workingMemory"] = priced["workingMemory"]
+        data["promptPassPeakBytes"] = priced["promptPassPeakBytes"]
+    reading_words = prompt_reading.describe(rule) if rule else (
+        "every prompt is read in a single pass")
+    data["promptReading"] = {
+        "rule": rule, "device": reading_device,
+        "source": (prompt_reading.SOURCE_DECLARATION if declared is not None
+                   else prompt_reading.SOURCE_SUBMISSION
+                   if reading_device == "cuda" else "engineDefault"),
+        "steppedDown": choice.get("steppedDown", False),
+        "chunkTokensForLongestPrompt": priced.get("chunkTokens"),
+    }
+    if reading_device == "cuda" or declared is not None:
+        basis = {"gpuType": gpu_type, "cardMemoryGB": fit.get("declaredVRAMGB"),
+                 "longestPromptTokens": data["longestPromptTokens"],
+                 "promptLengthMeasured": measured["measured"],
+                 "memoryFit": fit.get("memoryFit")}
+        if choice.get("steppedDown"):
+            basis["steppedDownFrom"] = choice["default"]
+        data["promptReadingPlan"] = prompt_reading.plan(
+            rule, source=(prompt_reading.SOURCE_DECLARATION
+                          if declared is not None
+                          else prompt_reading.SOURCE_SUBMISSION),
+            basis=basis)
+    reading_note = f" Prompt reading: {reading_words}."
+    stepped_note = ""
+    if choice.get("steppedDown"):
+        default = choice["default"]
+        stepped_note = (
+            f" The default reading (chunks of {default['chunkTokens']:,} "
+            f"tokens for prompts over {default['aboveTokens']:,} tokens) is "
+            f"estimated not to fit one {gpu_type}, so this submission reads "
+            f"prompts over {rule['aboveTokens']:,} tokens in chunks of "
+            f"{rule['chunkTokens']:,} tokens. This study's texts will not be "
+            "token-identical to runs that used the default reading.")
+        data["readingAdvisory"] = stepped_note.strip()
+    certain_words = (f"{_gb(certain):.1f} GB for the weights "
+                     f"({_gb(weights):.1f}) and the key-value cache over "
+                     f"{context:,} tokens ({_gb(kv):.1f})")
     if gpu_type is None:
         return _check(check_id, "warn",
-                      f"needs ≈{_gb(estimate):.1f} GB but no GPU type is "
-                      "requested (gres unset) — cannot compare against VRAM",
-                      data)
+                      f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but no "
+                      "GPU type is requested (gres unset) — cannot compare "
+                      "against VRAM" + unmeasured_note, data)
     vram_gb = (resources.gpu_vram_gb or {}).get(gpu_type)
     if vram_gb is None:
         return _check(check_id, "warn",
-                      f"needs ≈{_gb(estimate):.1f} GB but there is no VRAM "
-                      f"entry for {gpu_type} — set STEERLAB_SLURM_GPU_VRAM "
-                      "(e.g. \"A100:80,H100:80,L4:24,P100:16\") or pass "
-                      "resources.gpuVram", data)
+                      f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but "
+                      f"there is no VRAM entry for {gpu_type} — set "
+                      "STEERLAB_SLURM_GPU_VRAM (e.g. \"A100:80,H100:80,L4:24,"
+                      "P100:16\") or pass resources.gpuVram" + unmeasured_note,
+                      data)
     # A MODEL LOADS ONTO ONE GPU. `model_loader.load` supports a `device_map`
     # but no caller passes it, so every load is `.to(device)` — a single model
     # never spans cards. Budgeting `vram_gb * gpu_count` (the arithmetic here
@@ -1707,25 +2037,51 @@ def _check_memory_fit(manifest: Manifest | None,
     budget = int(vram_gb * 1024**3)
     data["vramPerGpuBytes"] = budget
     data["vramBytes"] = budget
-    if estimate > budget:
-        fitting = sorted(
-            (t for t, gb in (resources.gpu_vram_gb or {}).items()
-             if gb * 1024**3 >= estimate),
-            key=lambda t: resources.gpu_vram_gb[t])
+    data["usableBytes"] = fit.get("usableBytes")
+    verdict = fit.get("memoryFit")
+    if verdict == "exceeds":
+        fitting = fit.get("certainFittingGPUTypes") or []
         fix = (f"use gpu:{fitting[0]}:1" if fitting else
-               "no configured GPU type holds it on one card — shrink "
-               "maxTokens or use a smaller model (no device_map sharding "
-               "is wired)")
+               "no configured GPU type holds it on one card — shorten the "
+               "longest prompt, lower maxTokens or reasoningMaxTokens, or use "
+               "a smaller model (this engine does not split a model across "
+               "GPUs)")
+        data["summary"] = (f"The job needs {certain_words} on one GPU; one "
+                           f"{gpu_type} declares {vram_gb} GB, less than the "
+                           "weights and the cache alone.")
         return _check(check_id, "fail",
-                      f"needs ≈{_gb(estimate):.1f} GB (weights "
-                      f"{_gb(weights):.1f} + KV {_gb(kv):.1f} + 20% headroom) "
-                      f"but one {gpu_type} has {vram_gb} GB and a model "
-                      "loads onto a single GPU (extra GPUs host additional "
-                      f"models, not shards) — {fix}", data)
-    return _check(check_id, "ok",
+                      f"needs ≈{certain_words}, but one {gpu_type} has "
+                      f"{vram_gb} GB and a model loads onto a single GPU "
+                      "(extra GPUs host additional models, not shards) — it "
+                      "would fail on the node after the queue wait; "
+                      f"{fix}" + unmeasured_note, data)
+    if verdict == "mayNotFit":
+        others = [t for t in (fit.get("fittingGPUTypes") or []) if t != gpu_type]
+        levers = ((f"request gpu:{others[0]}:1, " if others else "")
+                  + "shorten the longest prompt, or lower maxTokens or "
+                    "reasoningMaxTokens")
+        advisory = ("The memory estimate exceeds the requested GPU. To be "
+                    f"safe, {levers}.")
+        data["advisory"] = advisory
+        data["summary"] = (
+            f"The job needs {certain_words} on one GPU, which one {gpu_type} "
+            f"({vram_gb} GB) holds; reading the prompt is estimated to peak "
+            f"at about {_gb(estimate):.1f} GB, more than the "
+            f"{_gb(fit['usableBytes']):.1f} GB it can use.")
+        return _check(check_id, "warn",
+                      f"may not fit: {data['summary']} The job may run, or "
+                      "may run out of memory on the node after the queue "
+                      f"wait. {advisory}{reading_note}{stepped_note}"
+                      + unmeasured_note, data)
+    data["summary"] = (f"The job needs {certain_words} on one GPU, about "
+                       f"{_gb(estimate):.1f} GB at its peak; one {gpu_type} "
+                       f"declares {vram_gb} GB.")
+    status = "warn" if stepped_note else "ok"
+    return _check(check_id, status,
                   f"fits: ≈{_gb(estimate):.1f} GB of {vram_gb} GB on one "
                   f"{gpu_type} (gpu:{gpu_type}:{gpu_count}; a model occupies "
-                  "one card)", data)
+                  f"one card).{reading_note}{stepped_note}" + unmeasured_note,
+                  data)
 
 
 #: Said in every walltime verdict that carries an estimate. Both directions

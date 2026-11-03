@@ -2667,13 +2667,17 @@ class JobManager:
         resume_mod.write_pointer(
             resume_mod.pointer_path_for_record(record_path), pipeline_dir,
             verb="pipeline", experiment=name)
+        # The submission's prompt reading (issue #6), as the shards ran it:
+        # the continuation is a job of the same submission, never re-planned.
+        plan = merge_cfg.get("promptReadingPlan")
         command = _bundle_execute_command(
             str(merge_cfg.get("bundlePath") or ""), verb="pipeline",
             target_root=target, dtype=str(merge_cfg.get("dtype") or "auto"),
             device=merge_cfg.get("device"),
             prompts_path=merge_cfg.get("promptsPath"), source_path=None,
             package_evidence=bool(merge_cfg.get("packageEvidence", True)),
-            record_path=record_path)
+            record_path=record_path,
+            prompt_reading_plan=plan if isinstance(plan, dict) else None)
         resource_fields = {f.name for f in
                            SlurmResources.__dataclass_fields__.values()}
         resources = SlurmResources(**{k: v for k, v in rr.items()
