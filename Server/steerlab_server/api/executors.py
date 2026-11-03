@@ -1292,7 +1292,12 @@ def render_slurm_script(bundle: JobBundle) -> str:
         "# STEERLAB_* values — exporting them after it would silently no-op",
         "# module loads and conda/venv activation (the classic ordering bug).",
     ])
-    for key, value in sorted(bundle.env.items()):
+    # The CUDA allocator default rides every rendered script, including a
+    # bundle a caller assembled without create_bundle (an optimized-vector
+    # campaign cell builds its own); a value in the bundle's env, the site's
+    # or the caller's, still wins.
+    exported = {CUDA_ALLOCATOR_ENV: CUDA_ALLOCATOR_DEFAULT, **bundle.env}
+    for key, value in sorted(exported.items()):
         lines.append(f"export {key}={shlex.quote(str(value))}")
     lines.extend([
         "",

@@ -499,15 +499,26 @@ def test_a_local_child_starts_with_the_same_allocator_setting(monkeypatch):
     assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "max_split_size_mb:256\n"
 
 
-def test_an_optimized_vector_campaign_cell_defaults_the_allocator(monkeypatch):
-    """The campaign builds its own bundles; it passed the setting only when
-    the site set one."""
+def test_an_optimized_vector_campaign_cell_script_defaults_the_allocator(
+        tmp_path, monkeypatch):
+    """A campaign cell builds its own bundle (render_cell_script, through the
+    shared renderer) and passed the setting only when the site set one."""
+    from steerlab_server.api.executors import JobBundle
     from steerlab_server.api.profile import ServerProfile
     from steerlab_server.experiment import optvec_campaign
+    _clear_site_env(monkeypatch)
+
+    def cell_script():
+        bundle = JobBundle(
+            bundle_dir=str(tmp_path), command=["bash", "-c", "true"],
+            env=optvec_campaign._cell_env(ServerProfile.from_env()),
+            resources=SlurmResources(), stdout_path=str(tmp_path / "o"),
+            stderr_path=str(tmp_path / "e"), script_path=str(tmp_path / "s"),
+            manifest_path=str(tmp_path / "bundle.json"))
+        return render_slurm_script(bundle)
     monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
-    profile = ServerProfile.from_env()
-    assert optvec_campaign._cell_env(profile)["PYTORCH_CUDA_ALLOC_CONF"] \
-        == "expandable_segments:True"
+    assert "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in cell_script()
     monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
-    assert optvec_campaign._cell_env(profile)["PYTORCH_CUDA_ALLOC_CONF"] \
-        == "max_split_size_mb:256"
+    script = cell_script()
+    assert "export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256" in script
+    assert "expandable_segments" not in script
