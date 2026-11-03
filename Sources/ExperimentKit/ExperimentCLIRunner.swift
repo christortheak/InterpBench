@@ -206,7 +206,7 @@ public struct ExperimentCLIRunner: Sendable {
             return !["plan", "install"].contains(verb ?? "")
         case "remote":
             return ![
-                "capabilities", "jobs", "logs", "cancel", "chat", "variants",
+                "capabilities", "jobs", "logs", "status", "cancel", "chat", "variants",
                 "model-plan", "model-install", "model-status", "model-cancel",
             ].contains(verb ?? "")
         default:
@@ -2675,7 +2675,7 @@ public struct ExperimentCLIRunner: Sendable {
         }
         guard let verb = args.first else {
             throw ExperimentError(
-                reason: "usage: remote capabilities|package|upload|submit-bundle|jobs|logs|cancel|resubmit|fetch|import|import-chain|variants|chat (--site <id> | --url <server>)")
+                reason: "usage: remote capabilities|package|upload|submit-bundle|jobs|status|logs|cancel|resubmit|fetch|import|import-chain|variants|chat (--site <id> | --url <server>)")
         }
         if verb == "submit-bundle", flag("--verb")?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             throw ExperimentError.malformed(
@@ -2995,8 +2995,80 @@ public struct ExperimentCLIRunner: Sendable {
         case "jobs":
             let jobs = try await client.jobs()
             return try respond(jobs, message: "\(jobs.count) job(s)")
+        case "status":
+            // Issue #7: one read that returns — the scheduler's view, the
+            // records written so far, and how a finished job ended — so an
+            // agent never needs `ssh`, `squeue`, or `sacct` to answer "is my
+            // job pending, and why? running, and how far along?".
+            guard args.count >= 2 else {
+                throw ExperimentError.malformed(
+                    "remote status needs a job id",
+                    repair: "steerlab-cli remote status <job-id> --site <id> --json")
+            }
+            let statusJobID = try Self.remoteJobID(args[1], verb: "status")
+            try await Self.requireJobRead(
+                client, supported: { $0.supportsJobStatus }, verb: "status",
+                jobID: statusJobID)
+            let statusDocument: JSONValue
+            do {
+                statusDocument = try await client.jobStatus(statusJobID)
+            } catch let ClusterClient.ClientError.badResponse(status, _)
+                where status == 404
+            {
+                throw Self.remoteJobNotFound(statusJobID)
+            }
+            let report = RemoteJobStatusReport.from(statusDocument)
+            if !invocation.json, let report {
+                for line in RemoteJobStatusText.lines(for: report) { sink.out(line) }
+            }
+            var statusPayload: [String: JSONValue] = [
+                "endpoint": .string(url.absoluteString), "jobID": .string(statusJobID),
+                "response": statusDocument,
+            ]
+            if let siteSummary { statusPayload["site"] = .string(siteSummary) }
+            return ExperimentCLIResult(
+                message: report.map(RemoteJobStatusText.message(for:))
+                    ?? "status read for job \(statusJobID)",
+                payload: statusPayload)
         case "logs":
-            guard args.count >= 2 else { throw ExperimentError(reason: "usage: remote logs <job-id>") }
+            guard args.count >= 2 else { throw ExperimentError(reason: "usage: remote logs <job-id> [--tail N]") }
+            if let rawTail = flag("--tail") {
+                // A read that returns: the last N lines of the controller
+                // log and of the job's own scheduler output, then exit. The
+                // stream below stays the default.
+                guard let tail = Int(rawTail), (1...RemoteJobStatusText.maximumTailLines).contains(tail)
+                else {
+                    throw ExperimentError.malformed(
+                        "--tail must be a whole number from 1 to "
+                            + "\(RemoteJobStatusText.maximumTailLines), not '\(rawTail)'",
+                        repair: "steerlab-cli remote logs \(args[1]) --tail 50")
+                }
+                let tailJobID = try Self.remoteJobID(args[1], verb: "logs")
+                try await Self.requireJobRead(
+                    client, supported: { $0.supportsJobLogTail }, verb: "logs --tail",
+                    jobID: tailJobID)
+                let tailDocument: JSONValue
+                do {
+                    tailDocument = try await client.jobLogTail(tailJobID, lines: tail)
+                } catch let ClusterClient.ClientError.badResponse(status, _)
+                    where status == 404
+                {
+                    throw Self.remoteJobNotFound(tailJobID)
+                }
+                let parsed = RemoteJobLogTail.from(tailDocument)
+                if !invocation.json, let parsed {
+                    for line in RemoteJobStatusText.lines(for: parsed) { sink.out(line) }
+                }
+                var tailPayload: [String: JSONValue] = [
+                    "endpoint": .string(url.absoluteString), "jobID": .string(tailJobID),
+                    "tailLines": .number(Double(tail)), "response": tailDocument,
+                ]
+                if let siteSummary { tailPayload["site"] = .string(siteSummary) }
+                return ExperimentCLIResult(
+                    message: "last \(parsed?.lines?.count ?? 0) log line(s) of job "
+                        + "\(tailJobID) [\(parsed?.status ?? "unknown")]",
+                    payload: tailPayload)
+            }
             try await client.streamJobLog(jobID: args[1]) { line in self.sink.out(line) }
             return ExperimentCLIResult(
                 message: "streamed log for job \(args[1])",
