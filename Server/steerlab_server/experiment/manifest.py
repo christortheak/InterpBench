@@ -474,6 +474,15 @@ class Manifest:
     # so every field in it is pinned at freeze and drift is a verify()
     # violation. Absent = no readout, no violation.
     jlens_readout: dict | None = None
+    # Declared prompt reading (cross-engine contract key "promptReading";
+    # issue #6): how the study's prompts go through the model on the Python
+    # engine — {"mode": "singlePass"} or {"mode": "chunked", "chunkTokens":
+    # N, "aboveTokens": M}. Measurement-side: chunking changes the summation
+    # order, so seeded texts can differ at near ties. Part of the content hash
+    # like every other key; a malformed block is a verify() violation. Absent
+    # (or null) = no declaration, and the submission or the engine's device
+    # default decides. Owner: ``prompt_reading``.
+    prompt_reading: dict | None = None
     # Retain the exact sampled token ids on every generation record
     # (cross-engine contract key "recordTokenIDs"; Swift carries it verbatim).
     #
@@ -725,6 +734,7 @@ class Manifest:
             markers_hash=d.get("markersHash"),
             markers_pinned=("markersHash" in d),
             jlens_readout=(d.get("jlensReadout") or None),
+            prompt_reading=d.get("promptReading"),
             record_token_ids=bool(d.get("recordTokenIDs") or False),
             reasoning_style_taxonomy_path=d.get("reasoningStyleTaxonomyPath"),
             reasoning_style_taxonomy_hash=d.get("reasoningStyleTaxonomyHash"),
@@ -1545,6 +1555,14 @@ class Manifest:
             declared_fractions=self.raw.get("validationLayerFractions"))
         if layer_problem:
             violations.append(layer_problem)
+
+        # The declared prompt reading (issue #6) decides how every prompt goes
+        # through the model, so a block outside the contract is a violation,
+        # never a silent fallback to a device default. Kind-agnostic: a panel
+        # reads its turns through the same generation path.
+        if self.prompt_reading is not None:
+            from . import prompt_reading as _prompt_reading
+            violations += _prompt_reading.violations(self.prompt_reading)
 
         # Stochastic sampling policy: samplesPerItem > 1 requires temperature > 0
         # and a deterministic per-record seed derivation.
