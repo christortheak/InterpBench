@@ -267,12 +267,12 @@ class PromptReading:
 def describe_source(reading: PromptReading) -> str:
     """Where a reading came from, in plain words."""
     if reading.historic:
-        return "the rule of the release that made the run"
+        return "by the rule of the release that made the run"
     return {
         STUDY_DECLARATION: "as the study declares",
         SUBMISSION: "as the submission planned",
         ENVIRONMENT: f"as the {PREFILL_CHUNK_ENV} setting asks",
-    }.get(reading.source, "this engine's default for its device")
+    }.get(reading.source, "by this engine's default for its device")
 
 
 def device_kind(device) -> str:

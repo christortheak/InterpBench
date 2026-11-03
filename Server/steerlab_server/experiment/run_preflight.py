@@ -605,7 +605,7 @@ def prompt_reading_admission(run_directory, *, name, reading, counts=None,
             else "cannot show how it read its prompts")
     if note:
         held += f" ({note})"
-    now = f"{reading.describe()} ({prompt_reading.describe_source(reading)})"
+    now = f"{reading.describe()}, {prompt_reading.describe_source(reading)}"
     if differing:
         why = (prompt_reading.describe_difference(differing)
                + ", and chunked and single-pass readings do not give "

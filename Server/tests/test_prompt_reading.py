@@ -488,8 +488,8 @@ def test_a_resume_under_a_different_reading_refuses(tmp_path, monkeypatch):
     assert ("read its prompts as prompts over 8,192 tokens in 4,096-token "
             "chunks (shorter prompts in a single pass), but this engine reads "
             "them as prompts over 8,192 tokens in 2,048-token chunks (shorter "
-            "prompts in a single pass) (as the STEERLAB_PREFILL_CHUNK setting "
-            "asks)") in message
+            "prompts in a single pass), as the STEERLAB_PREFILL_CHUNK setting "
+            "asks:") in message
     assert ("1 prompt length the study renders (the longest 217,230 tokens) "
             "would be read differently") in message
     assert "refusing to mix two prompt readings in one run" in message
