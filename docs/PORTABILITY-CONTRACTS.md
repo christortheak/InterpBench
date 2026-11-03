@@ -755,6 +755,8 @@ invents a wire format makes the engine's tests stop being the client's tests.
 | `cancel_job(id)` | `POST /api/jobs/{id}/cancel` | → `{ok: true}`; a 502 means `scancel` did not confirm and is **not** swallowed |
 | `job_logs(id)` | `GET /api/jobs/{id}` | the `logTail` — bounded, returns at once |
 | `job_logs(id, follow=True)` | `GET /api/jobs/{id}/stream` | SSE, consumed until the runner closes it (terminal status, `prepared` included) |
+| `job_status(id)` | `GET /api/jobs/{id}/status` | added with issue #7 → the scheduler's view in fixed fields, records written so far, how it ended, and a split run's parts; returns at once (capability `cluster.jobStatus`) |
+| `job_log_tail(id, lines)` | `GET /api/jobs/{id}/log-tail?lines=…` | added with issue #7 → the last `lines` controller lines and the tails of the job's own scheduler output files; returns at once (capability `cluster.jobLogTail`) |
 | `download_bundle(…)` | `GET /api/bundles/download?path=…` | streamed to a caller-supplied temp path, hashed as it arrives |
 
 Explicit constructor inputs, and no ambient configuration anywhere in the
@@ -1636,8 +1638,11 @@ mode**, where `auth_mode == "token"` gates every `/api` route regardless of the
 classification. But a runner profile that narrowed a deployment to exactly
 these routes *without* token mode would be serving job logs to whoever can
 reach the socket. Pinned as an observation by
-`test_the_runner_reads_that_carry_no_token_gate_are_the_expected_three`, so a
-fourth one cannot join it quietly.
+`test_the_runner_reads_that_carry_no_token_gate_are_explicitly_censused`, so
+another one cannot join it quietly. The job status and log-tail reads (issue
+#7, `GET /api/jobs/{job_id}/status` and `/log-tail`) joined it deliberately:
+they are the same observation surface as the log stream, answered once
+instead of followed.
 
 ### 11.4 Preserved execution authority
 

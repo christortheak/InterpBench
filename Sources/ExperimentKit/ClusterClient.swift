@@ -145,6 +145,14 @@ public struct ClusterCapabilities: Codable, Sendable {
 
     public var supportsHousekeeping: Bool { flag("housekeeping", direct: housekeeping) }
     public var supportsPreflight: Bool { flag("preflight", direct: preflight) }
+    /// `GET /api/jobs/{id}/status` (`"cluster.jobStatus"`, issue #7): one
+    /// job's scheduler view, records written so far, and how it ended.
+    /// Absent on older servers, where the route would answer 404 and read
+    /// like "no such job".
+    public var supportsJobStatus: Bool { flag("jobStatus", direct: nil) }
+    /// `GET /api/jobs/{id}/log-tail` (`"cluster.jobLogTail"`, issue #7): the
+    /// last lines of a job's controller log and its own scheduler output.
+    public var supportsJobLogTail: Bool { flag("jobLogTail", direct: nil) }
 
     /// The server implements `POST /api/workspace/switch` at all.
     public var supportsWorkspaceSwitch: Bool {
@@ -2640,6 +2648,24 @@ public struct ClusterClient: Sendable {
 
     public func job(_ id: String) async throws -> RemoteJobRecord {
         try await get("/api/jobs/\(id)")
+    }
+
+    /// `GET /api/jobs/{id}/status` (capability `cluster.jobStatus`, issue
+    /// #7): the server's fixed-field status document — the scheduler's view,
+    /// records written so far, and how a finished job ended — kept as the
+    /// server wrote it, so a field this client does not know still reaches
+    /// the caller. `RemoteJobStatusReport` reads the parts a person sees.
+    public func jobStatus(_ id: String) async throws -> JSONValue {
+        try await get("/api/jobs/\(id)/status")
+    }
+
+    /// `GET /api/jobs/{id}/log-tail?lines=N` (capability
+    /// `cluster.jobLogTail`, issue #7): the last `lines` controller lines and
+    /// the tails of the job's own scheduler output files. Returns at once.
+    public func jobLogTail(_ id: String, lines: Int) async throws -> JSONValue {
+        try await get(
+            "/api/jobs/\(id)/log-tail",
+            queryItems: [URLQueryItem(name: "lines", value: String(lines))])
     }
 
     /// `POST /api/jobs/{id}/cancel`. The answer says, for a study run, that

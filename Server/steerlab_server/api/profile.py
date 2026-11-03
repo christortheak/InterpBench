@@ -345,6 +345,14 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # prefill their toggle without hardcoding drift.
             "manualResubmit": True,
             "autoResubmitDefaultLimit": _auto_resubmit_default_limit(),
+            # Issue #7: GET /api/jobs/{id}/status answers a job's scheduler
+            # view, records written so far, and how it ended, in fixed
+            # fields; GET /api/jobs/{id}/log-tail returns the last lines of
+            # its controller log and its own scheduler output, then returns.
+            # Clients check these before calling, so an older server says
+            # "update" rather than a 404 that reads like "no such job".
+            "jobStatus": True,
+            "jobLogTail": True,
         },
         "workspace": {
             # Runtime workspace switching (POST /api/workspace/switch): the

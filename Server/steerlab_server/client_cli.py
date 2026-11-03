@@ -585,10 +585,17 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              boolean_flags=frozenset({"--cancel"}),
              value_flags=_RUNNER_FLAGS,
              required_flags=frozenset({"--runner"})),
-    VerbSpec("runner", "logs", positional="<job-id>",
-             purpose="Read a job's log lines from a runner.",
-             boolean_flags=frozenset({"--follow"}),
+    VerbSpec("runner", "status", positional="<job-id>",
+             purpose="Report one job's scheduler view, records written so "
+                     "far, and how it ended, then exit; a split run reports "
+                     "each part.",
              value_flags=_RUNNER_FLAGS,
+             required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "logs", positional="<job-id>",
+             purpose="Read a job's log lines from a runner; with --tail N, "
+                     "its last N lines and those of its own scheduler output.",
+             boolean_flags=frozenset({"--follow"}),
+             value_flags=_RUNNER_FLAGS | frozenset({"--tail"}),
              required_flags=frozenset({"--runner"})),
     VerbSpec("runner", "evidence", positional="<job-id>",
              purpose="Download a finished job's evidence bundle and verify "
@@ -3774,8 +3781,17 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
                      **({"resumeCommand": resume_command}
                         if resume_command else {})})
 
+    if verb == "status":
+        from .client import job_reads
+        return job_reads.status(client, invocation, common)
+
     if verb == "logs":
         _require(args, 1, spec)
+        if invocation.one("--tail") is not None:
+            # A read that returns (issue #7): the last N lines of the
+            # controller log and of the job's own scheduler output.
+            from .client import job_reads
+            return job_reads.log_tail(client, invocation, common)
         result = client.job_logs(args[0], follow=invocation.has("--follow"))
         for line in result["lines"]:
             print(line)

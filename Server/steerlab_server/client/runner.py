@@ -15,7 +15,9 @@ submit an uploaded bundle    ``POST /api/bundles/inspect`` (the pre-check),
 job get / list / cancel      ``GET  /api/jobs/{id}``, ``GET /api/jobs``,
                              ``POST /api/jobs/{id}/cancel``
 job logs                     ``GET  /api/jobs/{id}`` (``logTail``),
-                             ``GET  /api/jobs/{id}/stream`` (follow)
+                             ``GET  /api/jobs/{id}/stream`` (follow),
+                             ``GET  /api/jobs/{id}/log-tail`` (``--tail``)
+job status                   ``GET  /api/jobs/{id}/status``
 evidence bundle download     ``GET  /api/bundles/download?path=…``
 ===========================  ==================================================
 
@@ -995,6 +997,22 @@ class RunnerClient:
         document = self._json("GET", "/api/jobs")
         listed = document.get("jobs")
         return list(listed) if isinstance(listed, list) else []
+
+    def job_status(self, job_id: str) -> dict:
+        """``GET /api/jobs/{id}/status`` (capability ``cluster.jobStatus``,
+        issue #7) — the job's scheduler view in fixed fields, its records
+        written so far, and how it ended; for a split run, each part. One
+        read that returns."""
+        return self._json(
+            "GET", f"/api/jobs/{quote(str(job_id), safe='')}/status")
+
+    def job_log_tail(self, job_id: str, lines: int) -> dict:
+        """``GET /api/jobs/{id}/log-tail`` (capability ``cluster.jobLogTail``,
+        issue #7) — the last ``lines`` controller lines and the tails of the
+        job's own scheduler output files. Returns at once."""
+        return self._json(
+            "GET", f"/api/jobs/{quote(str(job_id), safe='')}/log-tail",
+            params={"lines": str(int(lines))})
 
     def science_call(self, operation: str, action_id: str, document: dict) -> dict:
         from ..experiment.science_actions import request

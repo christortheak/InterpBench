@@ -543,8 +543,15 @@ public enum ExperimentCLIParser {
             namespace: "remote", verb: "jobs",
             purpose: "List the server's jobs.", valueFlags: remoteConnection),
         .init(
+            namespace: "remote", verb: "status", positional: "<job-id>",
+            purpose: "Report one job's scheduler view, records written so far, "
+                + "and how it ended, then exit; a split run reports each part.",
+            valueFlags: remoteConnection),
+        .init(
             namespace: "remote", verb: "logs", positional: "<job-id>",
-            purpose: "Stream one job's log.", valueFlags: remoteConnection),
+            purpose: "Stream one job's log; with --tail N, print its last N "
+                + "lines and those of its own scheduler output, then exit.",
+            valueFlags: remoteConnection.union(["--tail"])),
         .init(
             namespace: "remote", verb: "cancel", positional: "<job-id>",
             purpose: "Request cancellation of one job.",

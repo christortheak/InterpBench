@@ -136,6 +136,8 @@ its heading (`{{cli}} workspace guide <topic>`) or ask the verb itself
   printed. Watch with `steerlab-cli remote
   jobs --site <id>`. Bring evidence home with `steerlab-cli cluster import
   --site <id>`.
+- Check one job, never with `ssh`: `steerlab-cli remote status <job-id>
+  --site <id>`.
 - `submit-bundle` is not idempotent: look with `remote jobs` before
   submitting again.
 <!-- client: python -->
@@ -143,6 +145,7 @@ its heading (`{{cli}} workspace guide <topic>`) or ask the verb itself
   and imports. A timeout detaches and never cancels.
 - `submitOutcomeUnknown` means look with `steerlab runner jobs --runner
   <url>`. Never submit again blindly.
+- Check one job: `steerlab runner status <job-id> --runner <url>`.
 - A local runner, on macOS or Linux: `steerlab runner serve`
 <!-- client: all -->
 

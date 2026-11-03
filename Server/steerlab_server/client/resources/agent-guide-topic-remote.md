@@ -144,11 +144,67 @@ that. `--executor slurm` asks a runner that is configured for a scheduler to
 submit there; `steerlab runner capabilities --runner <url>` says what the
 runner can do before anything is uploaded.
 
+### Checking on a running job
+
+One call answers "is it waiting, and why? running, and how far along? ended,
+and how?", and returns:
+
+```bash
+steerlab runner status <job-id> --runner <url> --json
+steerlab runner logs <job-id> --tail 50 --runner <url> --json
+```
+
+**`status`** reads the scheduler's own view of the job, through the site's
+configured scheduler commands, in fixed fields under `result.response`:
+
+- `scheduler`: for a job that waits, the scheduler's `reason` (`Priority`,
+  `Resources`, a limit) and `expectedStartAt`; for a job that runs or ran,
+  `startedAt`, `nodeList`, `elapsed`, `timeLimit`, `walltimeRemainingSeconds`,
+  `endedAt`, and `exitCode`. Times are epoch seconds.
+- `progress`: the records written so far, counted the way a resume counts
+  them (`recordsWritten`, `lastRecordAt`), out of `recordsExpected`. The total
+  is exact for a part of a split run (`recordsExpectedSource: "shardStamp"`)
+  and the submission's planning estimate for a whole run
+  (`"preflightEstimate"`). Say which when you report it.
+- `schedulerOutcome`: the scheduler's own word for an ending, or an
+  interruption, that came from outside the job's code: a time limit
+  (`TIMEOUT`), memory (`OUT_OF_MEMORY`), a preemption (`PREEMPTED`), a node
+  failure (`NODE_FAIL`), or a cancel by a person, SteerLab, or an
+  administrator (`CANCELLED`). `schedulerOutcomeNote` says it in a sentence,
+  and says whether SteerLab asked for a cancel. Report it as "the scheduler
+  recorded …". A preempted job that the scheduler queued again is waiting,
+  not ended. The job's `status` keeps its usual words (a job that hit its
+  time limit is `failed`), and `deathDetail` is the scheduler's own sentence
+  on how a job that ended, ended.
+- For a split run, ask about the parent: each part answers under `shards`
+  (the job carrying it now, if it was resumed), and `progress` sums them.
+  The read answers within about 30 seconds: a part whose scheduler did not
+  answer in time says so (`scheduler.timedOut`), so ask again rather than
+  concluding anything from it.
+
+A job's `startedAt` is the scheduler's start time, and stays empty while it
+waits; `createdAt` is when it was submitted. This holds for study runs,
+their parts, and standalone diagnostics. A split run's parent takes the start
+of its first part. A job the scheduler requeued keeps its previous start
+while it waits, and takes the new one when it runs again.
+
+**`logs --tail N`** prints the last N lines (at most 1000) of the controller's
+log and of the job's own scheduler output (`slurm-<id>.out` and `.err`), then
+exits; without `--tail` the verb follows the log until the job ends. A file
+that does not exist yet says so.
+
+Both cover only jobs this server submitted, named by their SteerLab job id,
+never the scheduler's number. **There is no reason to `ssh` in and run
+`squeue` or `sacct`.** If a question needs more than these fields, tell the
+researcher what is missing rather than reaching around the instrument. An
+engine older than these reads refuses with `jobStatusUnsupported`: update the
+engine, and meanwhile `steerlab runner jobs` still lists the job.
+
 ### Reconnect and recover remote jobs
 
 Retain the submission's endpoint, serving root and job ID. Poll
-`steerlab runner jobs <id> --runner <url> --json`; streaming or client timeout
-stops observation, not execution. Use `steerlab runner jobs <id> --cancel`
+`steerlab runner jobs <id> --runner <url> --json`, or `runner status <id>`
+(above); streaming or client timeout stops observation, not execution. Use `steerlab runner jobs <id> --cancel`
 when cancellation is intended. `steerlab runner resubmit <job-id> --runner
 <url> [--walltime <hh:mm:ss>] --json` continues eligible checkpointed or
 cancelled jobs.

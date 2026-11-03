@@ -78,6 +78,7 @@ its heading (`steerlab workspace guide <topic>`) or ask the verb itself
   and imports. A timeout detaches and never cancels.
 - `submitOutcomeUnknown` means look with `steerlab runner jobs --runner
   <url>`. Never submit again blindly.
+- Check one job: `steerlab runner status <job-id> --runner <url>`.
 - A local runner, on macOS or Linux: `steerlab runner serve`
 
 ## Results (`evaluation`)
