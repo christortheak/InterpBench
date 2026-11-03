@@ -280,6 +280,25 @@ def test_a_job_already_running_gets_its_real_start_without_a_transition(
         "2026-11-02T17:43:00")
 
 
+def test_a_start_learned_on_a_quiescent_tick_is_saved(tmp_path, fake_slurm):
+    # A checkpointed record the scheduler still reports in the very state a
+    # previous tick handled takes the quiescent branch, which writes no
+    # transition; the start it learned must reach the store anyway.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5203", status="running")
+    job.status = "checkpointed"
+    job.result = {**job.result, "lastSchedulerState": {"state": "running"}}
+    manager.store.update(job)
+    _scheduler("5203", state="RUNNING", queue="RUNNING",
+               start="2026-11-02T17:43:00")
+
+    manager.poll_slurm()
+
+    reread = manager.store.load_all()[job.id]
+    assert reread.status == "checkpointed"
+    assert reread.started_at == _local("2026-11-02T17:43:00")
+
+
 def test_a_local_job_still_starts_when_it_is_recorded(tmp_path):
     manager = _manager(tmp_path)
     job = manager.record_external("experiment:run", status="running",
