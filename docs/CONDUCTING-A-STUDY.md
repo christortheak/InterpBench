@@ -1374,12 +1374,18 @@ where it came from (`studyDeclaration`, `submission`, `environment`, or
 `engineDefault`), the plan's `basis` when the submission sent one, the device,
 how many of the study's task prompts there are, how many were read in chunks
 under at least one arm's rendering, the longest prompt's token count, and
-`cudaAllocatorConfig`, the CUDA allocator setting in force. A panel records the
-rule and leaves the three counts empty, since its turn prompts grow while it
-runs. On CUDA, `device-memory.json` holds the run's peak allocated and reserved
-GPU memory, and `device-memory.jsonl` the peak of each generated record (beside
-the records, not in them); on other devices the file says the peaks were not
-measured.
+`cudaAllocatorConfig` and `allocatorConfig`, the CUDA allocator settings in
+force under their two names. A panel records the rule and leaves the three
+counts empty, since its turn prompts grow while it runs; a sweep records the
+rule the same way. A scripted-transcript item is counted as the whole
+conversation generation reads, not its display text. On CUDA,
+`device-memory.json` holds the run's peak allocated and reserved GPU memory
+(empty until something is measured) and every card the run used, and
+`device-memory.jsonl` the peak of each generated record and the card it ran on
+(beside the records, not in them; a record generated again after a crash
+counts once, by its last line); on other devices the file says the peaks were
+not measured. A J-lens readout labels the final prompt token `prefill` even
+when a chunked reading leaves it for its own pass.
 
 **A run never mixes two readings.** Resuming a run, or merging a fan-out's
 shards, compares how each part reads the study's prompts, and refuses when
@@ -1403,11 +1409,13 @@ recorded and cannot be checked.
 
 **The GPU allocator setting.** Every GPU job the server starts, and every local
 child, begins with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` unless
-the site sets its own, which wins. Without it, a chunked 217,000-token reading
-failed with 8.7 GiB of GPU memory reserved but too fragmented to use. The
-setting changes where data lives in memory, not what is computed (100 of 100
-seeded texts were identical with and without it), so runs record it but never
-refuse on it.
+the site sets its own allocator setting, which wins: under that name or
+torch's generic `PYTORCH_ALLOC_CONF` (which torch reads first), and even set
+to nothing, which keeps torch's own defaults. Without it, a chunked
+217,000-token reading failed with 8.7 GiB of GPU memory reserved but too
+fragmented to use. The setting changes where data lives in memory, not what
+is computed (100 of 100 seeded texts were identical with and without it), so
+runs record it but never refuse on it.
 
 **Limits.** Answer-token scoring (the `answerTokenLogprob` instrument) still
 reads its prompt in one pass. The rule says how a prompt is read, not whether
