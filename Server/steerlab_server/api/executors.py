@@ -509,6 +509,17 @@ DEFAULT_CANCEL_GRACE_SECONDS = 10.0
 _DRAIN_JOIN_SECONDS = 5.0
 
 
+#: The CUDA allocator setting every job SteerLab starts begins with, unless
+#: the site (its own environment) or the caller sets one: expandable segments
+#: let a long chunked prompt reading find room in memory that is reserved
+#: but fragmented. It changes where tensors live, not what is computed (100
+#: of 100 seeded texts were identical with and without it), so runs record
+#: it (bundle.json's env; a study run's notes.promptReading) and no guard
+#: compares it.
+CUDA_ALLOCATOR_ENV = "PYTORCH_CUDA_ALLOC_CONF"
+CUDA_ALLOCATOR_DEFAULT = "expandable_segments:True"
+
+
 class LocalExecutor:
     def run(self, command: list[str], *, cwd: str | None = None,
             env: dict[str, str] | None = None, log=None,
@@ -551,6 +562,9 @@ class LocalExecutor:
         # its own value from its own allocation, never from inheritance.
         child_env = {**os.environ, **(env or {})}
         child_env.pop("SLURM_JOB_ID", None)
+        # A local GPU child starts with the same allocator setting a rendered
+        # job does; the server's own value (the site's) still wins.
+        child_env.setdefault(CUDA_ALLOCATOR_ENV, CUDA_ALLOCATOR_DEFAULT)
         process = subprocess.Popen(
             command, cwd=cwd, env=child_env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1,
@@ -768,7 +782,7 @@ class SlurmExecutor:
                     "PYTORCH_CUDA_ALLOC_CONF"):
             if os.environ.get(key):
                 env.setdefault(key, os.environ[key])
-        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        env.setdefault(CUDA_ALLOCATOR_ENV, CUDA_ALLOCATOR_DEFAULT)
 
         stdout = os.path.join(bundle_dir, "slurm-%j.out")
         stderr = os.path.join(bundle_dir, "slurm-%j.err")

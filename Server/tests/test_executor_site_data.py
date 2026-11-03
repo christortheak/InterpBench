@@ -483,3 +483,31 @@ def test_the_sites_own_cuda_allocator_setting_still_wins(tmp_path, monkeypatch):
     bundle, _ = _rendered(tmp_path, env={
         "PYTORCH_CUDA_ALLOC_CONF": "garbage_collection_threshold:0.6"})
     assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == "garbage_collection_threshold:0.6"
+
+
+_PRINT_ALLOCATOR = ["python3", "-c",
+                    "import os; print(os.environ.get('PYTORCH_CUDA_ALLOC_CONF'))"]
+
+
+def test_a_local_child_starts_with_the_same_allocator_setting(monkeypatch):
+    """A local GPU child (a study, a managed science operation, a judge) is
+    not rendered, but it reads long prompts on the same allocator."""
+    from steerlab_server.api.executors import LocalExecutor
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "expandable_segments:True\n"
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
+    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "max_split_size_mb:256\n"
+
+
+def test_an_optimized_vector_campaign_cell_defaults_the_allocator(monkeypatch):
+    """The campaign builds its own bundles; it passed the setting only when
+    the site set one."""
+    from steerlab_server.api.profile import ServerProfile
+    from steerlab_server.experiment import optvec_campaign
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    profile = ServerProfile.from_env()
+    assert optvec_campaign._cell_env(profile)["PYTORCH_CUDA_ALLOC_CONF"] \
+        == "expandable_segments:True"
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
+    assert optvec_campaign._cell_env(profile)["PYTORCH_CUDA_ALLOC_CONF"] \
+        == "max_split_size_mb:256"

@@ -827,11 +827,13 @@ def _cell_env(profile: ServerProfile) -> dict[str, str]:
     # training under gradient-checkpointing recompute churn fragments the
     # allocator (observed live 2026-08-11 on a hard-item campaign: ~1 GB
     # reserved-unallocated while a 180 MB request failed), and
-    # expandable_segments is the documented remedy.
+    # expandable_segments is the documented remedy. Unset, it defaults to
+    # that remedy, as every job create_bundle renders does.
     for key in ("HF_HOME", "HF_HUB_OFFLINE", "STEERLAB_NODE_STAGE_DIR",
                 "PYTORCH_CUDA_ALLOC_CONF"):
         if os.environ.get(key):
             env.setdefault(key, os.environ[key])
+    env.setdefault(executors.CUDA_ALLOCATOR_ENV, executors.CUDA_ALLOCATOR_DEFAULT)
     return env
 
 
