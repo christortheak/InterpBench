@@ -72,6 +72,9 @@ _PER_SHARD_FILES = frozenset({
     voice_lint.VOICE_LINT_FILENAME,
     "report.json", SHARD_FILENAME, resume_mod.RESUME_STATE_FILENAME,
     "experiment.json", "experiment-hash.txt", "task.txt", "config.json",
+    # Peak device memory, measured per generation on each shard's own card:
+    # rebuilt over every shard below, never compared.
+    "device-memory.json", "device-memory.jsonl",
     # A shard's own failure/progress record, timestamped and shard-local by
     # nature. Nothing writes it on the success path a merge consumes, so
     # this is not a bug being fixed — it is the class of file that must
@@ -974,6 +977,8 @@ def _assemble(name: str, proven: _ProvenShards, into: str, *, root: str,
     with open(os.path.join(into, "generations.jsonl"), "wb") as handle:
         for blob in proven.shard_blobs:
             handle.write(blob)
+    from . import device_memory
+    device_memory.merge_shards([stamp["_dir"] for stamp in proven.stamps], into)
     if proven.battery_blobs:
         with open(os.path.join(into, "battery.jsonl"), "wb") as handle:
             for blob in proven.battery_blobs:

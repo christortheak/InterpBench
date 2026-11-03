@@ -454,6 +454,12 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     if resuming:
         _log(f"resuming run in {run_directory}: {writer.resumed_count} records "
              "already complete — skipping them")
+    # Peak device memory per generated record and for the run (CUDA only;
+    # elsewhere the file says it was not measured): how close a long prompt
+    # came to the card's limit, beside the records rather than in them.
+    from . import device_memory as _device_memory
+    device_memory_log = _device_memory.DeviceMemoryLog(
+        run_directory, model, resuming=resuming)
     # J-lens readout, resolved at RUN START. A manifest that DECLARES a readout
     # and silently produces none is the exact failure this instrument exists to
     # prevent, so an unusable declaration refuses here rather than being
@@ -480,7 +486,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
                        **({"span_resolutions": span_resolutions} if span_resolutions is not None else {}),
                        numeric_parser=numeric_parser,
                        should_cancel=should_cancel, log=_log,
-                       jlens_trace=jlens_trace)
+                       jlens_trace=jlens_trace,
+                       device_memory=device_memory_log)
     # Study-owned sampling guard (2026-07-21, defense in depth): refuse
     # BEFORE any generation compute if a condition would execute under a
     # sampling policy different from the manifest's declared one.

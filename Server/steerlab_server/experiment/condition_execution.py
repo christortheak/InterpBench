@@ -3,6 +3,7 @@
 This owner never imports the task compatibility facade.
 """
 from __future__ import annotations
+import contextlib
 import os
 import random
 from contextlib import contextmanager
@@ -785,7 +786,8 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                        name, manifest, experiment_hash, wants_choice,
                        wants_sampled, reader_scorers, should_cancel, log,
                        numeric_parser=None, adapter_active: bool = False,
-                       jlens_trace=None, root=None, span_resolutions=None) -> bool:
+                       jlens_trace=None, root=None, span_resolutions=None,
+                       device_memory=None) -> bool:
     """The shared per-item executor — ONE measurement pipeline for every
     condition: prompt-metadata copy, the declared deterministic instruments,
     sampled generation, categorical parsing, reader scores, and consistent
@@ -1024,7 +1026,13 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 run_directory=writer.run_directory, context={'condition': eff.name, 'promptID': prompt['id'], 'sampleIndex': sample_index, 'seed': str(seed), 'experimentHash': experiment_hash},
                 spans=None if span_render is None else policy_spans.ResponseSpans(span_resolutions, prompt['prompt'], span_render))
             if policy is not None: readout_kwargs.setdefault('observers', []).append(policy)
-            with sampling_module.seeded_generation(eff.temperature, seed):
+            # Peak device memory for this generation (CUDA only), into the
+            # run's device-memory files beside the records, never in them.
+            measured = (device_memory.measure(
+                condition=eff.name, promptID=prompt["id"], promptIndex=prompt_index,
+                sampleIndex=sample_index, seed=seed)
+                if device_memory is not None else contextlib.nullcontext())
+            with measured, sampling_module.seeded_generation(eff.temperature, seed):
                 text = generate.generate(
                     model, prompt["prompt"], model_id=manifest.model_id,
                     max_tokens=manifest.max_tokens, temperature=eff.temperature,
