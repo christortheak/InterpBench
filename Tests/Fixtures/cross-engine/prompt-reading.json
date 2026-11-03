@@ -53,6 +53,7 @@
     {"block": {"aboveTokens": 8192, "chunkTokens": 0, "mode": "chunked"}, "violations": ["promptReading chunkTokens must be a whole number from 1 to 100,000,000"]},
     {"block": {"aboveTokens": 8192, "chunkTokens": true, "mode": "chunked"}, "violations": ["promptReading chunkTokens must be a whole number from 1 to 100,000,000"]},
     {"block": {"aboveTokens": 8192, "chunkTokens": 4096.5, "mode": "chunked"}, "violations": ["promptReading chunkTokens must be a whole number from 1 to 100,000,000"]},
+    {"block": {"aboveTokens": 8192, "chunkTokens": 4096.0, "mode": "chunked"}, "violations": ["promptReading chunkTokens must be a whole number from 1 to 100,000,000"]},
     {"block": {"aboveTokens": 8192, "chunkSize": 512, "chunkTokens": 4096, "mode": "chunked"}, "violations": ["promptReading has unknown key(s) chunkSize — it takes only mode, chunkTokens, and aboveTokens"]},
     {"block": {"aboveTokens": 8192, "chunkTokens": 4096, "mode": "chunked"}, "violations": []}
   ]

@@ -64,10 +64,10 @@ import Testing
         return String(decoding: try encoder.encode(try #require(value)), as: UTF8.self)
     }
 
+    /// A fixture value as exact JSON, number spelling kept (`4096.0` stays a
+    /// non-integer, as the Python client reads it).
     func exact(_ object: Any) throws -> ExactJSONValue {
-        let data = try JSONSerialization.data(
-            withJSONObject: object, options: [.fragmentsAllowed])
-        return try JSONDecoder().decode(ExactJSONValue.self, from: data)
+        PromptReading.exactValue(serialized: object)
     }
 
     // MARK: - The contract
@@ -110,7 +110,7 @@ import Testing
 
     @Test func aHandEditedBlockReadsAsTheContractSays() throws {
         let cases = try #require(try contract()["violations"] as? [[String: Any]])
-        #expect(cases.count == 10)
+        #expect(cases.count == 11)
         for entry in cases {
             let raw = try #require(entry["block"])
             let block = try exact(raw)
@@ -231,6 +231,31 @@ import Testing
         #expect(nulled.promptReading == nil)
     }
 
+    /// `JSONDecoder` reads `"chunkTokens": 4096.0` as 4096; verify reads the
+    /// file as written and refuses it with the Python client's sentence, and
+    /// declaring 4096 again rewrites it rather than saying it is already so.
+    @Test func aFractionalSpellingInTheFileIsAVerifyViolation() async throws {
+        try await withTempRoot { root in
+            try draft()
+            _ = await invoke(["set-prompt-reading", "demo", "--chunk-tokens", "4096",
+                              "--above-tokens", "8192"])
+            let url = root.appending(path: "experiments/demo/experiment.json")
+            let text = try String(contentsOf: url, encoding: .utf8)
+            #expect(text.contains("\"chunkTokens\" : 4096"))
+            try text.replacingOccurrences(of: "\"chunkTokens\" : 4096",
+                                          with: "\"chunkTokens\" : 4096.0")
+                .write(to: url, atomically: true, encoding: .utf8)
+            let loaded = try ExperimentStore.load(name: "demo")
+            #expect(ExperimentStore.verify(loaded).contains(
+                "promptReading chunkTokens must be a whole number from 1 to 100,000,000"))
+            let again = await invoke(["set-prompt-reading", "demo", "--chunk-tokens", "4096",
+                                      "--above-tokens", "8192"])
+            #expect(again.envelope.changed)
+            #expect(ExperimentStore.verify(try ExperimentStore.load(name: "demo"))
+                .allSatisfy { !$0.contains("promptReading") })
+        }
+    }
+
     @Test func aMalformedBlockIsAVerifyViolation() async throws {
         try await withTempRoot { _ in
             var manifest = try draft()
@@ -307,10 +332,14 @@ import Testing
                     == PromptReading.outdatedEngineReason(server: "http://runner.invalid"))
             }
         }
-        // A verb that loads no model, a study that declares nothing, and an
+        // A verb whose prompts the declaration does not govern (the engine
+        // refuses a plan for it), a study that declares nothing, and an
         // engine that honours it all proceed.
-        #expect(SubstrateRouting.promptReadingSubmissionRefusal(
-            manifest: manifest, verb: "analyze", capabilities: old, server: "s") == nil)
+        #expect(PromptReading.readingVerbs == ["run", "sweep", "pipeline"])
+        for verb in ["extract", "validate", "evaluate", "verify", "analyze"] {
+            #expect(SubstrateRouting.promptReadingSubmissionRefusal(
+                manifest: manifest, verb: verb, capabilities: old, server: "s") == nil)
+        }
         #expect(SubstrateRouting.promptReadingSubmissionRefusal(
             manifest: ExperimentManifest(name: "x", description: "", modelID: "m"),
             verb: "run", capabilities: old, server: "s") == nil)

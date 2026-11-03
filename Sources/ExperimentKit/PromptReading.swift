@@ -37,6 +37,11 @@ public enum PromptReading {
     /// `remoteStudy.promptReading` in the capability snapshot.
     public static let capabilityKey = "remoteStudy.promptReading"
 
+    /// The verbs whose prompts the declaration governs: the Python engine
+    /// reads by it for a run, a sweep, and a pipeline, and refuses a plan
+    /// for any other verb. Python twin `prompt_reading.READING_VERBS`.
+    public static let readingVerbs: Set<String> = ["run", "sweep", "pipeline"]
+
     /// The rule in canonical form.
     public struct Rule: Equatable, Sendable {
         public var chunkTokens: Int?
@@ -124,6 +129,60 @@ public enum PromptReading {
             }
         }
         return problems
+    }
+
+    /// A `JSONSerialization` value as exact JSON, keeping a number spelled
+    /// with a fraction or an exponent (`4096.0`, `4.096e3`) a non-integer,
+    /// as the Python client reads it. Foundation's `JSONDecoder` reads
+    /// `4096.0` as the integer 4096, so where the spelling decides validity
+    /// the bytes are read this way instead.
+    public static func exactValue(serialized object: Any) -> ExactJSONValue {
+        switch object {
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
+            let type = String(cString: number.objCType)
+            if type == "d" || type == "f" { return .number(number.doubleValue) }
+            if type == "Q", number.int64Value < 0 { return .unsigned(number.uint64Value) }
+            return .integer(number.int64Value)
+        case let text as String:
+            return .string(text)
+        case let values as [Any]:
+            return .array(values.map { exactValue(serialized: $0) })
+        case let object as [String: Any]:
+            return .object(object.mapValues { exactValue(serialized: $0) })
+        default:
+            return .null
+        }
+    }
+
+    /// The study's declaration as its manifest FILE spells it, when that file
+    /// holds the same declaration the loaded manifest does up to number
+    /// spelling; otherwise the loaded value. This is what lets `verify` refuse
+    /// `"chunkTokens": 4096.0` as the Python client does, though the decoder
+    /// read it as 4096.
+    static func declarationAsWritten(_ manifest: ExperimentManifest) -> ExactJSONValue? {
+        guard let loaded = manifest.promptReading else { return nil }
+        guard
+            let data = try? Data(contentsOf: ExperimentStore.manifestURL(manifest.name)),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let written = object[declarationKey]
+        else { return loaded }
+        let spelled = exactValue(serialized: written)
+        return integralNumbersAsIntegers(spelled) == loaded ? spelled : loaded
+    }
+
+    /// `4096.0` → `4096`, the reading `JSONDecoder` gives, for comparison.
+    static func integralNumbersAsIntegers(_ value: ExactJSONValue) -> ExactJSONValue {
+        switch value {
+        case .number(let number) where number.rounded() == number && abs(number) < 9e15:
+            return .integer(Int64(number))
+        case .array(let values):
+            return .array(values.map(integralNumbersAsIntegers))
+        case .object(let object):
+            return .object(object.mapValues(integralNumbersAsIntegers))
+        default:
+            return value
+        }
     }
 
     /// The rule, or nil when `value` is outside the contract.
@@ -296,7 +355,9 @@ public enum PromptReading {
     ) throws -> (previous: ExactJSONValue?, written: Bool) {
         let current = try ExperimentStore.load(name: name)
         try ManifestMutationPolicy.admitDraftEdit(current)
-        let previous = current.promptReading
+        // As the file spells it: a stored `4096.0` is not this declaration
+        // yet (verify refuses it), so declaring 4096 rewrites it.
+        let previous = declarationAsWritten(current)
         let changes = rule.map { previous != $0.jsonValue } ?? (previous != nil)
         guard changes, !dryRun else { return (previous, false) }
         try ExperimentStore.updateDraft(name: name) { manifest in

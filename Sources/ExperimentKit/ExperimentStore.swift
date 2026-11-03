@@ -3723,7 +3723,9 @@ public enum ExperimentStore {
         // contract is a violation, never a silent fallback to a device
         // default. Server twin: Manifest.verify's promptReading block, same
         // sentences (`Tests/Fixtures/cross-engine/prompt-reading.json`).
-        if let declared = manifest.promptReading {
+        // Read as the file spells it, so a fractional spelling such as
+        // `4096.0` is refused here exactly as the Python client refuses it.
+        if let declared = PromptReading.declarationAsWritten(manifest) {
             violations += PromptReading.violations(declared)
         }
         // A PRESERVED researcher-authored preregistration is a frozen

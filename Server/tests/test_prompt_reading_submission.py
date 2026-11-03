@@ -304,6 +304,17 @@ def test_a_local_submission_sends_only_a_declaration(site):
     assert pr.rule_of_plan(plan) == {"mode": "singlePass"}
 
 
+def test_only_the_verbs_the_engine_reads_by_carry_a_plan(site):
+    # bundle execute refuses a plan for any verb but run, sweep, and
+    # pipeline, so an extraction on CUDA, even of a declaring study, must
+    # be sent none; a sweep is sent one.
+    _edit(site, promptReading={"mode": "singlePass"})
+    for verb in ("extract", "validate"):
+        assert _plan_in(_submit(site, verb=verb).command) is None
+    assert pr.rule_of_plan(_plan_in(_submit(site, verb="sweep").command)) == \
+        {"mode": "singlePass"}
+
+
 def test_analyze_loads_no_model_and_carries_no_plan(site):
     _edit(site, promptReading={"mode": "singlePass"})
     submission = _submit(site, verb="analyze")

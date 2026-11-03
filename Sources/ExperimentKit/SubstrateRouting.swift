@@ -213,16 +213,19 @@ public enum SubstrateRouting {
     }
 
     /// Old-server guard for a declared prompt reading (issue #6): a study
-    /// that declares `promptReading`, on a verb that loads the model, sent
-    /// to an engine without `remoteStudy.promptReading`, which would ignore
-    /// the declaration and read the prompts its own way. Returns the
-    /// refusal, or nil. Same sentence as the Python client's
-    /// (`prompt_reading.outdated_engine_reason`).
+    /// that declares `promptReading`, on a verb whose prompts the
+    /// declaration governs (`PromptReading.readingVerbs`: run, sweep,
+    /// pipeline, as the engine applies it), sent to an engine without
+    /// `remoteStudy.promptReading`, which would ignore the declaration and
+    /// read the prompts its own way. Returns the refusal, or nil. Same rule
+    /// and sentence as the Python client's
+    /// (`prompt_reading.submission_needs_capability`,
+    /// `prompt_reading.outdated_engine_reason`).
     public static func promptReadingSubmissionRefusal(
         manifest: ExperimentManifest, verb: String,
         capabilities: ClusterCapabilities?, server: String
     ) -> String? {
-        guard manifest.promptReading != nil, verb != "analyze",
+        guard manifest.promptReading != nil, PromptReading.readingVerbs.contains(verb),
             capabilities?.supportsPromptReading != true
         else { return nil }
         return PromptReading.outdatedEngineReason(server: server)

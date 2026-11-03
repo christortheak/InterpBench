@@ -3115,7 +3115,7 @@ public struct ClusterClient: Sendable {
         // A server-resident study that declares a prompt reading an older
         // engine would ignore (issue #6), refused the same way. The
         // capabilities are asked for only when the study declares one.
-        if verb != "analyze",
+        if PromptReading.readingVerbs.contains(verb),
             let body = try? await experimentManifestBody(name: experiment),
             let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
             manifest.promptReading != nil,
