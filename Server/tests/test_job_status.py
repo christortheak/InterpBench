@@ -861,3 +861,22 @@ def test_a_split_run_takes_the_start_of_its_first_part(tmp_path, fake_slurm):
 
     assert manager.store.load_all()[parent.id].started_at == _local(
         "2026-11-02T17:43:00")
+
+
+def test_one_jobs_slow_scheduler_is_cut_off_at_the_deadline(
+        tmp_path, fake_slurm, monkeypatch):
+    # A single job's read has no outer wait: only the deadline each
+    # scheduler call carries keeps it from waiting the scheduler out.
+    manager = _manager(tmp_path)
+    job = _study_job(manager, tmp_path, "5940", status="running")
+    _scheduler("5940", state="RUNNING", queue="RUNNING")
+    monkeypatch.setenv("FAKE_SACCT_SLEEP", "30")
+
+    began = time.monotonic()
+    document = job_status.job_status(manager, job, deadline_seconds=1.0)
+    took = time.monotonic() - began
+
+    assert took < 10, took
+    assert document["scheduler"]["queryOk"] is False
+    assert document["scheduler"]["timedOut"] is True
+    assert "time limit" in document["scheduler"]["detail"]
