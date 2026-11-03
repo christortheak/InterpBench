@@ -178,3 +178,38 @@ def test_a_single_pass_rule_reads_exactly_as_before():
     assert rendered.prompt_token_count == PROMPT_TOKENS
     _, _, offsets, _, _ = read(model, [], chunk=PROMPT_TOKENS)
     assert offsets == [0, 5, 6]
+
+
+# --- labels: the final prompt token is prompt, even in a one-token pass -------------
+
+def test_the_jlens_readout_labels_the_final_prompt_token_prefill_when_chunked():
+    """A chunked reading leaves the final prompt token for generation's first,
+    one-token pass; labelled by the pass's length it read as a decode step."""
+    from test_jlens_recorder import _hidden, _recorder
+    single = _recorder(6)
+    single.apply(_hidden(6), 0, 0)
+    single.apply(_hidden(1), 0, 6)
+    chunked = _recorder(6)
+    chunked.apply(_hidden(5), 0, 0)   # chunks over positions 0..4
+    chunked.apply(_hidden(1), 0, 5)   # the final prompt token, read alone
+    chunked.apply(_hidden(1), 0, 6)   # the first decode step
+    labels = lambda r: [(o.position, o.passKind, o.predictedIndex) for o in r.observations]
+    assert labels(chunked) == labels(single) == [(5, "prefill", 0), (6, "decode", 1)]
+
+
+def test_the_diagnostic_counts_the_final_prompt_token_as_prompt_when_chunked(monkeypatch):
+    monkeypatch.setenv("STEERLAB_MEMORY_DIAGNOSTIC", "1")
+    model = tiny_llama()  # counting hooks are installed at load, under the variable
+    assert model.hooked.counters is not None
+
+    def counted(chunk):
+        before = dict(model.hooked.counters)
+        read(model, [], chunk=chunk)
+        return {key: model.hooked.counters[key] - before[key]
+                for key in ("forwardPasses", "decodeSteps", "prefillTokens")}
+    single, chunked = counted(None), counted(2)
+    # Three tokens generated: the prompt pass predicts the first, then two
+    # decode steps. Chunked reading adds passes, never decode steps.
+    assert single == {"forwardPasses": 3, "decodeSteps": 2, "prefillTokens": PROMPT_TOKENS}
+    assert chunked == {"forwardPasses": 5, "decodeSteps": 2, "prefillTokens": PROMPT_TOKENS}
+    assert model.hooked.prompt_token_count is None  # the generation's only

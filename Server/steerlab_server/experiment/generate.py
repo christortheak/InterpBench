@@ -537,6 +537,12 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
     sink: list = []
     prefill_chunk = prefill_chunk_size(
         _model_device(model), rendered.prompt_token_count)
+    # Tell the hooks where the prompt ends, so the diagnostic counters count
+    # the final prompt token as prompt, not as a decode step, when a chunked
+    # reading leaves it for generate()'s first pass.
+    hooked = getattr(model, "hooked", None)
+    if hooked is not None:
+        hooked.prompt_token_count = rendered.prompt_token_count
     # ``abandonable=True`` because this session spans the yields below and
     # therefore outlives any consumer that stops iterating: the generation
     # thread keeps firing the hooks while we are suspended, so the arming
@@ -575,6 +581,8 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
         finally:
             stop.set()
             thread.join()
+            if hooked is not None:
+                hooked.prompt_token_count = None  # this generation's only
             if token_ids_out is not None and sink:
                 token_ids_out.extend(
                     generated_token_ids(sink[0], len(rendered.input_ids)))
