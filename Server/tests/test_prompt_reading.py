@@ -518,33 +518,51 @@ def _as_historic(run_dir, device="cuda"):
         json.dump(info, handle)
 
 
+PLAN_2048 = {"schemaVersion": 1, "source": "submission", "mode": "chunked",
+             "chunkTokens": 2048, "aboveTokens": 8192}
+
+
 def test_a_resume_under_a_different_reading_refuses(tmp_path, monkeypatch):
+    """An explicit plan that would read the parked run's prompts differently
+    is refused: the parked run's own reading ranks beneath a plan."""
     root = str(tmp_path)
     prompts, run_dir = _parked(root, "reading-resume", monkeypatch)
     before = open(os.path.join(run_dir, "generations.jsonl"), "rb").read()
-    monkeypatch.setenv(PR.PREFILL_CHUNK_ENV, "2048")
     _patch(monkeypatch)
-    with pytest.raises(resume_mod.ResumeRefusal) as refusal:
+    with PR.plan_scope(PR.parse_plan(PLAN_2048)), \
+            pytest.raises(resume_mod.ResumeRefusal) as refusal:
         tasks.run("reading-resume", prompts, root, model_provider=_cuda_model,
                   log=lambda *_: None, run_directory=run_dir)
     message = str(refusal.value)
     assert ("read its prompts as prompts over 8,192 tokens in 4,096-token "
             "chunks (shorter prompts in a single pass), but this engine reads "
             "them as prompts over 8,192 tokens in 2,048-token chunks (shorter "
-            "prompts in a single pass), as the STEERLAB_PREFILL_CHUNK setting "
-            "asks:") in message
+            "prompts in a single pass), as the submission planned:") in message
     assert ("1 prompt length the study renders (the longest 217,230 tokens) "
             "would be read differently") in message
     assert "refusing to mix two prompt readings in one run" in message
     assert refusal.value.gate == "manifestEpoch"
+    # The Mac-side repair first, then the engine's.
     assert refusal.value.repair_action.startswith(
-        "steerlab-server study submit reading-resume --verb run --resume "
-        f"runs/{os.path.basename(run_dir)}  (resume through a submission, which "
-        "reads the prompts as this run recorded;")
-    assert ("start afresh with steerlab-server experiment run reading-resume, "
-            "without --resume") in refusal.value.repair_action
+        "resume it with the reading it was started with: steerlab-cli remote "
+        "resubmit <job-id> (or Resume in the app)")
+    assert ("steerlab-server study submit reading-resume --verb run --resume "
+            f"runs/{os.path.basename(run_dir)}") in refusal.value.repair_action
     assert isinstance(refusal.value, resume_mod.ResumeError)
     assert open(os.path.join(run_dir, "generations.jsonl"), "rb").read() == before
+
+
+def test_the_environment_override_no_longer_moves_a_resume(tmp_path, monkeypatch):
+    """With no declaration and no plan, a resume continues with the parked
+    run's own reading: STEERLAB_PREFILL_CHUNK ranks beneath it."""
+    root = str(tmp_path)
+    prompts, run_dir = _parked(root, "reading-env", monkeypatch)
+    monkeypatch.setenv(PR.PREFILL_CHUNK_ENV, "2048")
+    seen = []
+    _patch(monkeypatch, seen=seen)
+    assert tasks.run("reading-env", prompts, root, model_provider=_cuda_model,
+                     log=lambda *_: None, run_directory=run_dir) == run_dir
+    assert seen and all(entry == (CUDA_DEFAULT, "resumedRun") for entry in seen)
 
 
 def test_a_resume_under_the_same_rule_from_another_source_continues(
@@ -582,20 +600,106 @@ def test_a_run_from_0919_with_short_prompts_resumes_on_the_cuda_default(
     assert resumed == run_dir
 
 
-def test_a_run_from_0919_with_a_long_prompt_refuses_on_the_cuda_default(
+def test_a_0919_cuda_run_with_a_long_prompt_resumes_through_the_bundle_path_in_one_pass(
         tmp_path, monkeypatch):
+    """A run 0.9.19 parked on CUDA (no record, a 217,230-token prompt) read
+    every prompt in one pass. Resumed through ``bundle execute`` with no plan
+    — what ``remote resubmit`` replays byte for byte — it continues in one
+    pass rather than being refused under the new CUDA default, and its
+    config.json now says how it was read."""
+    import hashlib
     root = str(tmp_path)
-    prompts, run_dir = _parked(root, "reading-old-long", monkeypatch)
+    prompts = _study(root, "reading-old-long")
+    # A bundle carries the agent's artifact file, so it is written and pinned.
+    raw = es.load_raw("reading-old-long", root)
+    variant = raw["variantConditions"][0]
+    artifact_path = os.path.join(root, variant["artifactPath"])
+    _write(artifact_path, json.dumps(variant["artifact"], sort_keys=True))
+    with open(artifact_path, "rb") as handle:
+        variant["artifactHash"] = hashlib.sha256(handle.read()).hexdigest()
+    # And its task prompts, pinned, which the bundle path reads.
+    with open(prompts, "rb") as handle:
+        raw["taskPromptsHash"] = hashlib.sha256(handle.read()).hexdigest()
+    raw["taskPromptsFile"] = os.path.relpath(prompts, root)
+    es.save_raw(raw, root)
+    flag = resume_mod.CheckpointFlag()
+    _patch(monkeypatch, counter=[0], flag=flag, after=1)
+    parked = {}
+    with pytest.raises(resume_mod.CheckpointRequested):
+        tasks.run("reading-old-long", prompts, root, model_provider=_cuda_model,
+                  log=lambda *_: None, checkpoint=flag,
+                  on_run_directory=lambda d: parked.setdefault("dir", d))
+    run_dir = parked["dir"]
+    _as_historic(run_dir)
+    seen = []
+    _patch(monkeypatch, seen=seen)
+    real_run = tasks.run
+    monkeypatch.setattr(tasks, "run", lambda *args, **kwargs: real_run(
+        *args, model_provider=_cuda_model, **kwargs))
+    meta = bundles.package_experiment("reading-old-long", root=root)
+    result = bundles.execute_run_bundle(
+        meta["bundlePath"], verb="run", target_root=root,
+        resume_directory=run_dir, package_evidence_on_complete=False)
+    assert "promptReadingPlan" not in result
+    assert seen and all(entry == ({"mode": "singlePass"}, "resumedRun")
+                        for entry in seen)
+    entry = _config(run_dir)["notes"]["promptReading"]
+    assert (entry["mode"], entry["source"], entry["device"]) == (
+        "singlePass", "resumedRun", "cuda")
+    assert entry["longestPromptTokens"] == 217_230
+    assert "before runs recorded their prompt reading" in \
+        entry["basis"]["recordedReading"]
+
+
+def test_a_0919_run_whose_study_declares_chunks_is_refused(tmp_path, monkeypatch):
+    """The declaration outranks the parked run's own reading, so a study
+    declaring chunks of 4,096 above 8,192 cannot continue a run that read a
+    217,230-token prompt in one pass."""
+    root = str(tmp_path)
+    prompts = _study(root, "reading-old-declared", promptReading=CUDA_DEFAULT)
+    flag = resume_mod.CheckpointFlag()
+    _patch(monkeypatch, counter=[0], flag=flag, after=1)
+    seen = {}
+    with pytest.raises(resume_mod.CheckpointRequested):
+        tasks.run("reading-old-declared", prompts, root, model_provider=_cuda_model,
+                  log=lambda *_: None, checkpoint=flag,
+                  on_run_directory=lambda d: seen.setdefault("dir", d))
+    run_dir = seen["dir"]
     _as_historic(run_dir)
     _patch(monkeypatch)
     with pytest.raises(resume_mod.ResumeRefusal) as refusal:
-        tasks.run("reading-old-long", prompts, root, model_provider=_cuda_model,
+        tasks.run("reading-old-declared", prompts, root, model_provider=_cuda_model,
                   log=lambda *_: None, run_directory=run_dir)
     message = str(refusal.value)
     assert "read its prompts as every prompt in a single pass" in message
-    assert ("it was made before runs recorded their prompt reading, so it is "
-            "taken as read by that release's rule on CUDA") in message
+    assert "as the study declares" in message
     assert "(the longest 217,230 tokens)" in message
+    assert "promptReading" not in _config(run_dir)["notes"]
+
+
+def test_a_0920_chunked_run_resumed_with_no_plan_continues_chunked(
+        tmp_path, monkeypatch):
+    """A run started under a submission's 2,048-token plan, resumed with no
+    plan, continues in 2,048-token chunks, not the CUDA default; its record
+    is the run's birth stamp and stays as it was."""
+    root = str(tmp_path)
+    prompts = _study(root, "reading-stepped")
+    flag = resume_mod.CheckpointFlag()
+    _patch(monkeypatch, counter=[0], flag=flag, after=1)
+    seen = {}
+    with PR.plan_scope(PR.parse_plan(PLAN_2048)), \
+            pytest.raises(resume_mod.CheckpointRequested):
+        tasks.run("reading-stepped", prompts, root, model_provider=_cuda_model,
+                  log=lambda *_: None, checkpoint=flag,
+                  on_run_directory=lambda d: seen.setdefault("dir", d))
+    run_dir = seen["dir"]
+    readings = []
+    _patch(monkeypatch, seen=readings)
+    assert tasks.run("reading-stepped", prompts, root, model_provider=_cuda_model,
+                     log=lambda *_: None, run_directory=run_dir) == run_dir
+    rule = PR.rule_of_plan(PLAN_2048)
+    assert readings and all(entry == (rule, "resumedRun") for entry in readings)
+    assert _config(run_dir)["notes"]["promptReading"]["source"] == "submission"
 
 
 # --- scripted transcripts: the length generation reads is the conversation's -------
@@ -678,7 +782,11 @@ def test_a_0919_transcript_study_with_long_conversations_refuses_to_resume(
     _as_historic(run_dir)
     _patch(monkeypatch)
     monkeypatch.setattr(PR, "rendered_token_counts", REAL_COUNTS)
-    with pytest.raises(resume_mod.ResumeRefusal) as refusal:
+    # A plan of the CUDA default would read the >9,000-token conversation in
+    # chunks; counting the display text would have admitted it.
+    cuda_plan = PR.parse_plan({"schemaVersion": 1, "source": "submission",
+                               **CUDA_DEFAULT})
+    with PR.plan_scope(cuda_plan), pytest.raises(resume_mod.ResumeRefusal) as refusal:
         tasks.run("reading-transcript", prompts, root, model_provider=_transcript_model,
                   log=lambda *_: None, run_directory=run_dir)
     assert "read its prompts as every prompt in a single pass" in str(refusal.value)
@@ -808,15 +916,30 @@ def test_a_parked_panel_refuses_to_resume_under_another_rule(tmp_path, monkeypat
         panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
                                              checkpoint=flag, log=lambda *_: None)
     parked = caught.value.run_directory
-    monkeypatch.setenv(PR.PREFILL_CHUNK_ENV, "0")
-    with pytest.raises(resume_mod.ResumeRefusal) as refusal:
+    single = PR.parse_plan({"schemaVersion": 1, "source": "submission",
+                            "mode": "singlePass"})
+    with PR.plan_scope(single), pytest.raises(resume_mod.ResumeRefusal) as refusal:
         panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
                                              run_directory=parked,
                                              log=lambda *_: None)
     assert ("neither its record nor this engine can show that every prompt "
             "would be read the same way") in str(refusal.value)
-    # Under the rule it started with, it resumes.
-    monkeypatch.delenv(PR.PREFILL_CHUNK_ENV)
+    # With no plan it continues with its own reading, which the environment
+    # override no longer moves.
+    monkeypatch.setenv(PR.PREFILL_CHUNK_ENV, "0")
+    readings = []
+    monkeypatch.setattr(
+        panel_workflow, "_panel_prompt_reading",
+        _recording(panel_workflow._panel_prompt_reading, readings))
     assert panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), run_directory=parked,
         log=lambda *_: None) == parked
+    assert [(r.rule(), r.source) for r in readings] == [(CUDA_DEFAULT, "resumedRun")]
+
+
+def _recording(function, readings):
+    def wrapper(*args, **kwargs):
+        reading, device = function(*args, **kwargs)
+        readings.append(reading)
+        return reading, device
+    return wrapper

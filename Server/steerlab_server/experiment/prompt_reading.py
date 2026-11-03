@@ -62,10 +62,15 @@ MAX_RULE_TOKENS = 100_000_000
 
 STUDY_DECLARATION = "studyDeclaration"
 SUBMISSION = "submission"
+#: A resumed run, its study declaring no reading and its job sent no plan,
+#: continues with the parked run's own reading (recorded, or for a run made
+#: before 0.9.20, that release's rule for its device).
+RESUMED_RUN = "resumedRun"
 ENVIRONMENT = "environment"
 ENGINE_DEFAULT = "engineDefault"
 #: Where a run's rule came from, in resolution order.
-SOURCES = (STUDY_DECLARATION, SUBMISSION, ENVIRONMENT, ENGINE_DEFAULT)
+SOURCES = (STUDY_DECLARATION, SUBMISSION, RESUMED_RUN, ENVIRONMENT,
+           ENGINE_DEFAULT)
 #: What a submission's plan may say about where IT got the rule.
 PLAN_SOURCES = (STUDY_DECLARATION, SUBMISSION)
 
@@ -385,6 +390,7 @@ def describe_source(reading: PromptReading) -> str:
     return {
         STUDY_DECLARATION: "as the study declares",
         SUBMISSION: "as the submission planned",
+        RESUMED_RUN: "as the run being resumed read them",
         ENVIRONMENT: f"as the {PREFILL_CHUNK_ENV} setting asks",
     }.get(reading.source, "by this engine's default for its device")
 
@@ -455,15 +461,21 @@ def declared(manifest) -> dict | None:
 # ------------------------------------------------------------- resolution
 
 def resolve_prompt_reading(device, *, declaration=None, plan=None,
-                           environ=None, log=None) -> PromptReading:
+                           environ=None, log=None,
+                           resumed: "PromptReading | None" = None) -> PromptReading:
     """The effective prompt reading, by the shared resolution order.
 
     1. ``declaration`` (the study's ``promptReading``): source studyDeclaration.
     2. ``plan`` (the submission's ``--prompt-reading-plan``): source submission.
-    3. ``STEERLAB_PREFILL_CHUNK`` on MPS or CUDA: source environment. A whole
+    3. ``resumed`` (the parked run's own reading, when this run resumes one:
+       :func:`parked_reading`): source resumedRun. A resumed run continues as
+       it began unless a declaration or a plan says otherwise, so a rendered
+       script replayed byte for byte (``remote resubmit``, the app's Resume)
+       continues a run made under an earlier release's rule.
+    4. ``STEERLAB_PREFILL_CHUNK`` on MPS or CUDA: source environment. A whole
        number sets the chunk size at the device's threshold, and 0 or less
        reads in a single pass; any other value is ignored, as before.
-    4. The device default: source engineDefault.
+    5. The device default: source engineDefault.
 
     A plan that disagrees with the declaration loses, and ``log`` (when
     given) says so in one line."""
@@ -481,6 +493,8 @@ def resolve_prompt_reading(device, *, declaration=None, plan=None,
     if plan is not None:
         return PromptReading.from_rule(_rule_part(plan), source=SUBMISSION,
                                        basis=plan.get("basis"))
+    if resumed is not None:
+        return resumed
     env = os.environ if environ is None else environ
     kind = device_kind(device)
     raw = str(env.get(PREFILL_CHUNK_ENV, "") or "").strip()
@@ -549,10 +563,15 @@ def current_reading(device) -> PromptReading:
     return resolve_prompt_reading(device, plan=submission_plan.get())
 
 
-def for_manifest(manifest, device, *, log=None) -> PromptReading:
-    """The reading a study's run uses on ``device``."""
-    return resolve_prompt_reading(device, declaration=manifest_declaration(manifest),
-                                  plan=submission_plan.get(), log=log)
+def for_manifest(manifest, device, *, log=None,
+                 resumed_from: str | None = None) -> PromptReading:
+    """The reading a study's run uses on ``device``; when it resumes
+    ``resumed_from``, the parked run's own reading ranks beneath the
+    declaration and the plan (:func:`resolve_prompt_reading`)."""
+    return resolve_prompt_reading(
+        device, declaration=manifest_declaration(manifest),
+        plan=submission_plan.get(), log=log,
+        resumed=parked_reading(resumed_from) if resumed_from else None)
 
 
 # ------------------------------------------------------------- the record
@@ -690,6 +709,59 @@ def run_directory_reading(run_directory: str):
         note += (f" (a {PREFILL_CHUNK_ENV} value set when it ran is not "
                  "recorded and cannot be checked)")
     return reading, None, note
+
+
+def _has_generations(run_directory: str) -> bool:
+    try:
+        return os.path.getsize(os.path.join(run_directory,
+                                            "generations.jsonl")) > 0
+    except OSError:
+        return False
+
+
+def parked_reading(run_directory: str | None) -> PromptReading | None:
+    """The reading a resumed run continues with when neither a declaration
+    nor a plan outranks it: the parked run's own, from its record, or for a
+    run made before 0.9.20, that release's rule for the device it names
+    (:func:`run_directory_reading`), with source resumedRun and a basis that
+    says which.
+
+    None when it cannot be established (an unreadable record, no device
+    named), and for a run with no record that has generated nothing yet: no
+    prompt has been read, so there is no reading to keep. The environment or
+    the device default then applies, and the resume guard decides."""
+    if not run_directory or not os.path.isdir(run_directory):
+        return None
+    then, entry, note = run_directory_reading(run_directory)
+    if then is None or (entry is None and not _has_generations(run_directory)):
+        return None
+    basis = {"resumedRun": os.path.basename(os.path.normpath(run_directory))}
+    if entry is not None:
+        basis["recordedSource"] = entry.get("source")
+    else:
+        basis["recordedReading"] = note
+    return PromptReading.from_rule(then.rule(), source=RESUMED_RUN, basis=basis)
+
+
+def stamp_missing_record(run_directory: str, entry: dict) -> bool:
+    """Add ``notes.promptReading`` to a resumed run's config.json when the
+    run has none (one made before 0.9.20): its continuation was read by the
+    rule the resume guard has just confirmed the parked part was, so the run
+    now says so. Additive only: a run that already records its reading is
+    never rewritten. Returns whether it wrote."""
+    path = os.path.join(run_directory, "config.json")
+    config = _read_json(path)
+    if config is None:
+        return False
+    notes = config.get("notes") if isinstance(config.get("notes"), dict) else {}
+    if notes.get(RECORD_KEY) is not None:
+        return False
+    config["notes"] = {**notes, RECORD_KEY: entry}
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2, sort_keys=True)
+    os.replace(temporary, path)
+    return True
 
 
 # ------------------------------------------------------------- comparison

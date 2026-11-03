@@ -99,10 +99,12 @@ def sweep(name: str, root: str | None = None, dtype: str = "auto",
         # else the submission's plan, the environment, or the device default),
         # so a declared reading governs every generation of the study. The
         # rule rides the sweep's config.json notes; sweep prompts are short,
-        # and a resumed sweep does not compare readings.
+        # and a resumed sweep does not compare readings, but continues with
+        # the parked sweep's own reading when nothing outranks it.
         try:
             reading = prompt_reading.for_manifest(
-                manifest, generate._model_device(model), log=log or print)
+                manifest, generate._model_device(model), log=log or print,
+                resumed_from=run_directory)
         except prompt_reading.PromptReadingError as exc:
             raise lifecycle_gates.refusing(
                 lifecycle_gates.STUDY_DECLARATION,

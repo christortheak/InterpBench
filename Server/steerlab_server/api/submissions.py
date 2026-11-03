@@ -291,8 +291,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     # memory check chooses below.
     resumed_run = resume_directory or resume_from
     command = render(
-        (_resumed_reading_plan(resumed_run, target, manifest=manifest, verb=verb,
-                               cuda=_reading_device(None, device) == "cuda")
+        (_resumed_reading_plan(resumed_run, target, manifest=manifest, verb=verb)
          if resumed_run else None) or declared_plan)
 
     # The JUDGE fan-out (a pipeline whose evaluate stage pins foreign local
@@ -359,8 +358,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     # prices the reading the job is actually sent, and the job record holds
     # that one plan.
     resumed_plan = (_resumed_reading_plan(
-        resumed_run, target, manifest=manifest, verb=verb,
-        cuda=_reading_device(slurm_resources, device) == "cuda")
+        resumed_run, target, manifest=manifest, verb=verb)
         if resumed_run else None)
     preflight = _preflight_report(manifest=manifest, resources=slurm_resources,
                                   profile=profile, planned_records=planned,
@@ -1503,20 +1501,19 @@ def _recorded_run_directory(directory: str, verb: str) -> str | None:
 
 
 def _resumed_reading_plan(run_directory: str | None, target_root: str, *,
-                          manifest: Manifest | None, verb: str,
-                          cuda: bool) -> dict | None:
+                          manifest: Manifest | None, verb: str) -> dict | None:
     """The reading a resumed run was STARTED with, as a plan — never a new
     one, so the continuation reads its prompts the way the parked records
     were read, and the engine's resume guard
     (``run_preflight.prompt_reading_admission``) admits it.
 
-    Read with the engine's own reader (``prompt_reading.run_directory_
-    reading``): the run's ``notes.promptReading`` record, or, for a run made
-    before 0.9.20, the rule that release used on the device the run names
-    (CUDA and CPU a single pass; MPS 1,024-token chunks above 4,096). A
-    historic run that names no device carries 0.9.19's CUDA rule (a single
-    pass) when this job runs on CUDA. A study that declares a reading sends
-    its declaration (the engine applies it first anyway). None — plan as a
+    The engine's own rule (``prompt_reading.parked_reading``, which a resume
+    sent no plan applies by itself): the run's ``notes.promptReading``
+    record, or, for a run made before 0.9.20, the rule that release used on
+    the device the run names (CUDA and CPU a single pass; MPS 1,024-token
+    chunks above 4,096). Sent as the plan so the memory check prices it and
+    the job record states it. A study that declares a reading sends its
+    declaration (the engine applies it first anyway). None — plan as a
     fresh submission does — for a verb that records no reading, a run that
     has generated nothing yet (no prompt has been read, so nothing can mix),
     and a record or device that cannot be established (the engine's guard
@@ -1533,30 +1530,15 @@ def _resumed_reading_plan(run_directory: str | None, target_root: str, *,
     recorded = _recorded_run_directory(resolved, verb)
     if not recorded or not os.path.isdir(recorded):
         return None
-    reading, entry, note = prompt_reading.run_directory_reading(recorded)
-    basis = {"resumedRun": os.path.basename(os.path.normpath(resolved))}
-    if entry is not None:
-        if reading is None:
-            return None
-        basis["recordedSource"] = entry.get("source")
-        return prompt_reading.plan(reading.rule(),
-                                   source=prompt_reading.SUBMISSION, basis=basis)
-    try:
-        generated = os.path.getsize(
-            os.path.join(recorded, "generations.jsonl")) > 0
-    except OSError:
-        generated = False
-    if not generated:
+    # The engine's own rule for what a resume continues with
+    # (``prompt_reading.parked_reading``), sent as the plan so the memory
+    # check prices it and the job record states it.
+    parked = prompt_reading.parked_reading(recorded)
+    if parked is None:
         return None
-    if reading is None:
-        if not cuda:
-            return None
-        reading = prompt_reading.historic_reading("cuda")
-        note = ("it records neither its prompt reading nor the device it ran "
-                "on, and this job runs on CUDA, where that release read every "
-                "prompt in a single pass")
-    basis["recordedReading"] = note
-    return prompt_reading.plan(reading.rule(), source=prompt_reading.SUBMISSION,
+    basis = {**(parked.basis or {}),
+             "resumedRun": os.path.basename(os.path.normpath(resolved))}
+    return prompt_reading.plan(parked.rule(), source=prompt_reading.SUBMISSION,
                                basis=basis)
 
 

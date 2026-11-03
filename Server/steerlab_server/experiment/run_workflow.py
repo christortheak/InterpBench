@@ -174,7 +174,8 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
             run_preflight.resume_admission(run_directory, name=name, manifest=manifest,
                               shard=shard,
                               check_experiment_hash=_epoch_stable,
-                              reading=(_pre_model_prompt_reading(manifest, device)
+                              reading=(_pre_model_prompt_reading(
+                                           manifest, device, run_directory)
                                        if model_provider is None else None))
 
     with model_resources.acquire_model(manifest, dtype, device, model_provider) as model:
@@ -192,13 +193,15 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
                          forward_resolutions=forward_resolutions, shard=shard)
 
 
-def _pre_model_prompt_reading(manifest, device):
+def _pre_model_prompt_reading(manifest, device, resumed_from=None):
     """The prompt reading a run on ``device`` will resolve, before the model
-    loads, for the resume gate's early refusal; None when the declaration
+    loads, for the resume gate's early refusal (the parked run's own reading
+    ranking beneath a declaration and a plan); None when the declaration
     cannot be read (the run refuses on it after the load, in full words)."""
     from ..steering import model_loader
     try:
-        return prompt_reading.for_manifest(manifest, model_loader.resolve_device(device))
+        return prompt_reading.for_manifest(manifest, model_loader.resolve_device(device),
+                                           resumed_from=resumed_from)
     except prompt_reading.PromptReadingError:
         return None
 
@@ -293,11 +296,17 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # single-pass readings do not give token-identical texts, so a run never
     # mixes them.
     reading, reading_counts, reading_record = run_preflight.study_prompt_reading(
-        model, manifest, prompts, root, _log)
+        model, manifest, prompts, root, _log,
+        resumed_from=run_directory if resuming else None)
     if resuming:
         run_preflight.prompt_reading_admission(
             run_directory, name=name, reading=reading, counts=reading_counts,
             shard_stamp=sharding_mod.read_shard_stamp(run_directory), log=_log)
+        # A run made before readings were recorded now says how it was read
+        # (the guard has just confirmed the parked part agrees).
+        if prompt_reading.stamp_missing_record(run_directory, reading_record):
+            _log(f"prompt reading: recorded in the config.json of "
+                 f"{run_directory}, which recorded none")
     prompt_reading.active_reading.set(reading)
     if run_directory is None:
         # Shard partials are visibly partial by name; the merge assembles the

@@ -480,12 +480,14 @@ def seed_rule_admission(run_directory, *, name, manifest,
         gate=lifecycle_gates.MANIFEST_EPOCH, repair=fresh)
 
 
-def study_prompt_reading(model, manifest, prompts, root, _log):
+def study_prompt_reading(model, manifest, prompts, root, _log,
+                         resumed_from=None):
     """``(reading, counts, record)`` for a study run on the loaded model.
 
     ``reading`` is the rule the run reads its prompts by, resolved from the
-    study's declaration, the submission's plan, the environment override,
-    or the device default (``prompt_reading.resolve_prompt_reading``). A
+    study's declaration, the submission's plan, the parked run's own reading
+    when it resumes ``resumed_from``, the environment override, or the
+    device default (``prompt_reading.resolve_prompt_reading``). A
     declaration the engine cannot read refuses the run before any
     generation. ``counts`` are the token counts of every task prompt under
     every arm's rendering (``prompt_reading.rendered_token_counts``), or None
@@ -495,7 +497,8 @@ def study_prompt_reading(model, manifest, prompts, root, _log):
     from . import generate as generate_mod
     device = generate_mod._model_device(model)
     try:
-        reading = prompt_reading.for_manifest(manifest, device, log=_log)
+        reading = prompt_reading.for_manifest(manifest, device, log=_log,
+                                              resumed_from=resumed_from)
     except prompt_reading.PromptReadingError as exc:
         raise lifecycle_gates.refusing(
             lifecycle_gates.STUDY_DECLARATION,
@@ -538,17 +541,21 @@ def _prompt_reading_repair(name, shard_stamp, run_directory=None) -> str:
                 f"slurm --parallel {shard_stamp.get('shardCount')}  (a fresh "
                 "fan-out that reads every prompt one way; or finish these "
                 "partials on the engine release that started them)")
-    # Resuming through a submission is the repair that keeps the run: the
-    # submission carries the parked run's recorded reading (or its release's
-    # rule) as the plan. A rendered script replayed as it was (remote
-    # resubmit) carries only what it was first given, so it is not offered.
+    # The guard refuses only when a declaration or an explicit plan would
+    # read the parked run's prompts differently (or its reading cannot be
+    # established). With neither, a resume continues with the run's own
+    # reading, so the Mac-side Resume (remote resubmit, which replays the
+    # job's own script) is the repair that keeps the run; the engine-side
+    # submission carries the same reading as its plan.
     parked = (f"runs/{os.path.basename(os.path.normpath(run_directory))}"
               if run_directory else "<run-dir>")
-    return (f"steerlab-server study submit {name} --verb run --resume {parked}  "
-            "(resume through a submission, which reads the prompts as this run "
-            "recorded; or finish it on the engine release that started it; or "
-            f"start afresh with steerlab-server experiment run {name}, without "
-            "--resume)")
+    return ("resume it with the reading it was started with: steerlab-cli "
+            "remote resubmit <job-id> (or Resume in the app) on the job that "
+            "started this run continues it with its own reading, as does "
+            f"steerlab-server study submit {name} --verb run --resume {parked} "
+            "on the engine; a job sent a different reading, or a study that "
+            "now declares one, cannot continue this run. Or start afresh, "
+            "without resuming, so every prompt is read one way")
 
 
 def prompt_reading_admission(run_directory, *, name, reading, counts=None,

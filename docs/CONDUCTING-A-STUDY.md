@@ -1354,12 +1354,17 @@ picks the rule in this order:
    frozen, since it is part of the frozen manifest and its hash);
 2. the submission's plan, which the client sends when the default would not
    fit the card you asked for, and says so in an advisory;
-3. the `STEERLAB_PREFILL_CHUNK` setting, as before (a whole number of
+3. when a run is resumed, the parked run's own reading: the one it recorded,
+   or for a run made before 0.9.20, the one that release used on its device
+   (a single pass on CUDA and CPU; chunks of 1,024 above 4,096 tokens on
+   MPS). A resumed run therefore continues the way it began unless the study
+   declares, or the job was sent, a different reading;
+4. the `STEERLAB_PREFILL_CHUNK` setting, as before (a whole number of
    tokens per chunk, or 0 for a single pass). It applies only where it is
    set: a local run, or a job the server runs on its own machine. A Slurm
    job starts with a bare environment and never sees it, so declare a
    reading in the study instead when a cluster run must follow it;
-4. the engine's default for the device: on CUDA, prompts over 8,192 tokens in
+5. the engine's default for the device: on CUDA, prompts over 8,192 tokens in
    chunks of 4,096; on MPS, prompts over 4,096 tokens in chunks of 1,024; on
    CPU, a single pass. Through 0.9.19, CUDA always read in a single pass.
 
@@ -1370,8 +1375,9 @@ did before. Declare a reading when a study must read every prompt one way
 whatever the engine's default, for example to match an earlier study.
 
 **What the run records.** `config.json`'s `notes.promptReading` holds the rule,
-where it came from (`studyDeclaration`, `submission`, `environment`, or
-`engineDefault`), the plan's `basis` when the submission sent one, the device,
+where it came from (`studyDeclaration`, `submission`, `resumedRun`,
+`environment`, or `engineDefault`), the plan's `basis` when the submission
+sent one, the device,
 how many of the study's task prompts there are, how many were read in chunks
 under at least one arm's rendering, the longest prompt's token count, and
 `cudaAllocatorConfig` and `allocatorConfig`, the CUDA allocator settings in
@@ -1387,20 +1393,22 @@ counts once, by its last line); on other devices the file says the peaks were
 not measured. A J-lens readout labels the final prompt token `prefill` even
 when a chunked reading leaves it for its own pass.
 
-**A run never mixes two readings.** Resuming a run, or merging a fan-out's
-shards, compares how each part reads the study's prompts, and refuses when
-any prompt would be read differently: for example, a run started under the
-CUDA default and resumed under a plan of 2,048-token chunks. It compares what
+**A run never mixes two readings.** A resumed run, or shard, or panel,
+continues with the parked run's own reading unless the study declares, or the
+job was sent, another one, so resuming a parked job from the Mac
+(`steerlab-cli remote resubmit <job-id>`, or Resume in the app) just works,
+including for a run 0.9.19 parked on CUDA with prompts over 8,192 tokens: it
+continues in a single pass, and its `config.json` then records that reading.
+A resume, or a merge of a fan-out's shards, still compares how each part
+reads the study's prompts, and refuses when a declaration or a plan would
+read any prompt differently: for example, a run started under the CUDA
+default and resumed under a plan of 2,048-token chunks. It compares what
 actually happens to the prompts, not how the rule is spelled or where it came
-from, so a declared 4096 above 8192 equals the CUDA default, and a run made by
-0.9.19 on CUDA (a single pass, by that release's rule) resumes on 0.9.20 when
-none of its prompts is longer than 8,192 tokens. The refusal names both
-readings and the repair. Resume through a submission
-(`steerlab-server study submit <study> --verb run --resume runs/<run>`),
-which reads the prompts the way the parked run recorded them, or the way its
-release did; or finish the run on the engine release that started it; or
-start a new run. Replaying a job's original script (`remote resubmit`) reads
-the way that script was first submitted, so it is not the repair.
+from, so a declared 4096 above 8192 equals the CUDA default. The refusal
+names both readings and the repair: resume the job that started the run
+(`steerlab-cli remote resubmit`, or Resume in the app; on the engine,
+`steerlab-server study submit <study> --verb run --resume runs/<run>`), or
+start a new run.
 A local judge is its own instrument: it always reads by the device default,
 records its reading in the judge report, and a targeted evaluation resume
 (`--resume-from`) refuses when the earlier session's judge read differently. A run made before 0.9.20 on MPS is taken as read by

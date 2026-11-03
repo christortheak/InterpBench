@@ -28,10 +28,13 @@ in one pass. A study can declare its own rule (the manifest's `promptReading`,
 written by `{{cli}} experiment set-prompt-reading` before freeze), and a submission may plan
 smaller chunks to fit the requested card, saying so in an advisory. The two
 readings are not token-identical where two next words are nearly tied, so
-each run records its reading in `config.json`'s `notes.promptReading`, and a
-resume or shard merge that would mix two readings refuses, naming both. Follow
-its repair: finish on the engine release that started the run, or start a new
-run. On CUDA a run also records its peak GPU memory in `device-memory.json`.
+each run records its reading in `config.json`'s `notes.promptReading`. A
+resumed run continues with its own reading (for a run made before 0.9.20,
+the one that release used), so Resume, or `{{cli}} {{remote}} resubmit`, just works; a
+resume or shard merge that a declaration or a plan would make mix two
+readings refuses, naming both. Follow its repair: resume the job that started
+the run, or start a new run. On CUDA a run also records its peak GPU memory
+in `device-memory.json`.
 
 Activations do not transfer between engines. Vectors must be **re-extracted and
 re-validated on whichever engine a study runs on** — the parity claim is

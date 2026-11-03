@@ -220,16 +220,18 @@ def _park_panel_run(run_directory: str, records: list[dict], log,
         f"resume-state written → exit {resume_mod.CHECKPOINT_EXIT_CODE}")
 
 
-def _panel_prompt_reading(manifest, model, log):
+def _panel_prompt_reading(manifest, model, log, resumed_from=None):
     """``(reading, device)`` for a panel: the device of the loaded model, or
     the one the server's models load on when seats are served from its
-    registry."""
+    registry. A resumed panel continues with the parked run's own reading
+    unless a declaration or a plan says otherwise."""
     from . import generate
     from ..steering import model_loader
     device = (generate._model_device(model) if model is not None
               else model_loader.resolve_device(None))
     try:
-        reading = prompt_reading.for_manifest(manifest, device, log=log)
+        reading = prompt_reading.for_manifest(manifest, device, log=log,
+                                              resumed_from=resumed_from)
     except prompt_reading.PromptReadingError as exc:
         from . import lifecycle_gates
         raise lifecycle_gates.refusing(
@@ -281,7 +283,8 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
     # as it deliberates, so their lengths are not known at the start: the
     # record leaves the counts empty, and a resume compares the two rules
     # themselves (``run_preflight.prompt_reading_admission``).
-    reading, device = _panel_prompt_reading(manifest, model, log)
+    reading, device = _panel_prompt_reading(manifest, model, log,
+                                            resumed_from=run_directory)
     resuming = run_directory is not None
     if not resuming:
         run_directory = paths.make_unique_run_directory(f"exp-{name}-run", root)
@@ -300,6 +303,10 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
         run_preflight.prompt_reading_admission(
             run_directory, name=name, reading=reading,
             shard_stamp=sharding_mod.read_shard_stamp(run_directory), log=log)
+        # A panel made before readings were recorded now says how it was read.
+        prompt_reading.stamp_missing_record(
+            run_directory, prompt_reading.record(reading, device=device,
+                                                 counts=None))
         log(f"resuming panel run in {os.path.basename(run_directory)}")
     prompt_reading.active_reading.set(reading)
     # Snapshot the scenario VERBATIM beside experiment.json, before a single
