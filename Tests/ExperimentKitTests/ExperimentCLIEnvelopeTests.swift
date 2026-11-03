@@ -759,6 +759,11 @@ import Testing
             // forced a hand-rolled scheduler command). A new verb in an
             // existing family; nothing in the lifecycle moved.
             "remote resubmit",
+            // A job's status in one read that returns (issue #7: an agent
+            // reached for `ssh`, `squeue`, and `sacct` to learn why a job
+            // waited and how far it had got). A new read in an existing
+            // family; nothing in the lifecycle moved.
+            "remote status",
             "remote fetch", "remote import", "remote import-chain",
             "remote variants", "remote chat",
             "experiment list", "experiment manifest", "experiment create", "experiment attach",

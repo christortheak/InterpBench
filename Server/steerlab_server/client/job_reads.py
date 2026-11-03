@@ -19,7 +19,7 @@ MAX_TAIL_LINES = 1000
 #: characters. Twin of ``RemoteJobStatusText.isJobID``.
 _JOB_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
-LACKS_JOB_READS_CODE = "runnerLacksJobStatus"
+LACKS_JOB_READS_CODE = "jobStatusUnsupported"
 
 
 def _refusal(**kwargs):

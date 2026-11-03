@@ -118,7 +118,7 @@ public enum CLIReferenceDocument {
                 "remote science-plan", "remote science-submit", "remote recovery", "remote recover", "remote reconcile",
                 "remote model-plan", "remote model-install", "remote model-status", "remote model-cancel",
                 "remote capabilities", "remote package", "remote upload",
-                "remote submit-bundle", "remote jobs", "remote logs",
+                "remote submit-bundle", "remote jobs", "remote status", "remote logs",
                 "remote cancel", "remote resubmit", "remote fetch",
                 "remote import", "remote import-chain", "remote variants",
                 "remote chat",

@@ -84,7 +84,7 @@ def test_runner_status_on_an_older_runner_is_refused(wired_cli, capsys,
                         lambda self: {"cluster": {"manualResubmit": True}})
     code, document, _ = _envelope(["runner", "status", job.id, *RUNNER], capsys)
     assert code == 65, document
-    assert document["error"]["code"] == "runnerLacksJobStatus"
+    assert document["error"]["code"] == "jobStatusUnsupported"
 
 
 def test_runner_logs_tail_returns_the_last_lines(wired_cli, fake_slurm,

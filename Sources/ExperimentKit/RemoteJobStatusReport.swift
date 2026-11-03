@@ -138,7 +138,7 @@ extension ExperimentCLIRunner {
         let capabilities = try await client.capabilities()
         guard supported(capabilities) else {
             throw ExperimentCLIStop(
-                exitCode: 1, state: .refused, code: "serverLacksJobStatus",
+                exitCode: 1, state: .refused, code: "jobStatusUnsupported",
                 reason: "this server's engine predates remote \(verb): it "
                     + "cannot report a job's scheduler view or log tail",
                 repairAction: "update the engine on the server (`steerlab-cli "

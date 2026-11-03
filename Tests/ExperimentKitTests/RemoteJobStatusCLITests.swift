@@ -175,7 +175,7 @@ import Testing
             ["status", "a1b2c3d4e5f6"], capabilities: ["manualResubmit": true],
             routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, Self.pendingStatus)])
         #expect(outcome.envelope.state == .refused)
-        #expect(outcome.envelope.error?.code == "serverLacksJobStatus")
+        #expect(outcome.envelope.error?.code == "jobStatusUnsupported")
         #expect(outcome.envelope.error?.repairAction.contains("cluster push") == true)
         #expect(!outcome.paths.contains("/api/jobs/a1b2c3d4e5f6/status"))
     }
