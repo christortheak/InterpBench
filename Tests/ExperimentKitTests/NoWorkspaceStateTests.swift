@@ -378,8 +378,8 @@ import Testing
                 "authoring prompt", "authoring study",
                 "science list", "science guide",
                 "model plan", "model install",
-                "remote capabilities", "remote jobs", "remote logs", "remote cancel",
-                "remote chat", "remote variants", "remote model-plan",
+                "remote capabilities", "remote jobs", "remote status", "remote logs",
+                "remote cancel", "remote chat", "remote variants", "remote model-plan",
                 "remote model-install", "remote model-status", "remote model-cancel",
             ])
         // And the families that hold study data are never exempt.
