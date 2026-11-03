@@ -120,10 +120,12 @@ import Testing
         #expect(scheduler["reason"] == .string("Priority"))
     }
 
-    @Test func aTimedOutJobSaysTheSchedulerEndedIt() async throws {
+    @Test func aTimedOutJobSaysWhatTheSchedulerRecorded() async throws {
         var ended = Self.pendingStatus
         ended["status"] = "failed"
         ended["schedulerOutcome"] = "TIMEOUT"
+        ended["schedulerOutcomeNote"] =
+            "The scheduler recorded TIMEOUT: the job reached its time limit."
         ended["deathDetail"] =
             "Slurm reported TIMEOUT after 08:00:00 (walltime limit 08:00:00, exit 0:1)"
         ended["scheduler"] = [
@@ -135,10 +137,35 @@ import Testing
         let outcome = try await run(
             ["status", "a1b2c3d4e5f6"],
             routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, ended)])
-        #expect(outcome.stdout.contains("ended by the scheduler: TIMEOUT"))
+        #expect(outcome.stdout.contains(
+            "  The scheduler recorded TIMEOUT: the job reached its time limit."))
         #expect(outcome.stdout.contains(
             "Slurm reported TIMEOUT after 08:00:00 (walltime limit 08:00:00, exit 0:1)"))
-        #expect(outcome.envelope.message.contains("(ended by the scheduler: TIMEOUT)"))
+        #expect(outcome.envelope.message.contains("(the scheduler recorded TIMEOUT)"))
+        #expect(!outcome.stdout.contains("ended by the scheduler"))
+    }
+
+    /// One field of an unexpected type costs that field, never the summary
+    /// (review 2026-11-02: a whole-document decode dropped every line).
+    @Test func anUnexpectedFieldShapeCostsOnlyThatField() async throws {
+        var odd = Self.pendingStatus
+        odd["kind"] = 7
+        odd["notes"] = "not a list"
+        odd["progress"] = [
+            "unit": "response", "recordsWritten": "3", "recordsExpected": 50,
+        ] as [String: Any]
+        odd["scheduler"] = [
+            "queryOk": true, "rawState": "PENDING", "reason": "Priority",
+            "elapsed": 0, "expectedStartAt": "soon",
+        ] as [String: Any]
+        let outcome = try await run(
+            ["status", "a1b2c3d4e5f6"],
+            routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, odd)])
+        #expect(outcome.envelope.exitCode == 0)
+        #expect(outcome.stdout.contains("job a1b2c3d4e5f6 [submitted] — scheduler job 5101"))
+        #expect(outcome.stdout.contains("scheduler: PENDING (Priority)"))
+        #expect(!outcome.stdout.contains("expected to start"))
+        #expect(outcome.envelope.message == "job a1b2c3d4e5f6 is submitted")
     }
 
     @Test func aSplitRunShowsEachPart() async throws {

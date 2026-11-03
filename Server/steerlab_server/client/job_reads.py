@@ -113,7 +113,7 @@ def log_tail(client, invocation, common: dict) -> CLIResult:
 def status_message(document: dict) -> str:
     text = f"job {document.get('jobId')} is {document.get('status') or 'unknown'}"
     if document.get("schedulerOutcome"):
-        text += f" (ended by the scheduler: {document['schedulerOutcome']})"
+        text += f" (the scheduler recorded {document['schedulerOutcome']})"
     records = _records_phrase(document.get("progress"))
     return text + (f"; {records}" if records else "")
 
@@ -177,7 +177,11 @@ def _body(entry: dict, indent: str) -> list[str]:
     if isinstance(view, dict):
         lines.append(f"{indent}scheduler: {_scheduler_phrase(view)}")
     if entry.get("schedulerOutcome"):
-        lines.append(f"{indent}ended by the scheduler: {entry['schedulerOutcome']}")
+        # The runner's sentence names a cancel SteerLab asked for and never
+        # says "ended" of a job that waits to run again.
+        lines.append(indent + (entry.get("schedulerOutcomeNote")
+                               or f"The scheduler recorded "
+                                  f"{entry['schedulerOutcome']}."))
     progress = entry.get("progress") or {}
     records = _records_phrase(progress)
     if records:

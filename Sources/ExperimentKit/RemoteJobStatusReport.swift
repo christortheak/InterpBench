@@ -7,15 +7,66 @@ import Foundation
 // envelope carries the server's document as it arrived (`result.response`),
 // so a field this client does not know still reaches an agent; the types
 // below read only what the plain-text summary shows a person. Every field is
-// optional: a summary never refuses because the server left something out.
+// read on its own: one the server left out, or sent in a shape this client
+// does not expect, is simply absent from the summary and costs nothing else.
 // =============================================================================
 
+/// One JSON object, read field by field. A missing key and a value of an
+/// unexpected type both read as nil.
+struct LenientFields {
+    let object: [String: JSONValue]
+
+    init?(_ value: JSONValue?) {
+        guard case .object(let object)? = value else { return nil }
+        self.object = object
+    }
+
+    func string(_ key: String) -> String? {
+        if case .string(let value)? = object[key] { return value }
+        return nil
+    }
+
+    func double(_ key: String) -> Double? {
+        if case .number(let value)? = object[key], value.isFinite { return value }
+        return nil
+    }
+
+    func int(_ key: String) -> Int? {
+        guard let value = double(key), value.rounded() == value,
+            abs(value) < 1e15
+        else { return nil }
+        return Int(value)
+    }
+
+    func bool(_ key: String) -> Bool? {
+        if case .bool(let value)? = object[key] { return value }
+        return nil
+    }
+
+    func strings(_ key: String) -> [String]? {
+        guard case .array(let items)? = object[key] else { return nil }
+        return items.compactMap { item in
+            if case .string(let value) = item { return value }
+            return nil
+        }
+    }
+
+    func fields(_ key: String) -> LenientFields? { LenientFields(object[key]) }
+
+    func objects(_ key: String) -> [LenientFields]? {
+        guard case .array(let items)? = object[key] else { return nil }
+        return items.compactMap { LenientFields($0) }
+    }
+}
+
 /// `GET /api/jobs/{id}/status`, as far as the plain-text summary reads it.
-public struct RemoteJobStatusReport: Codable, Sendable {
+public struct RemoteJobStatusReport: Sendable {
 
     /// The scheduler's view of the job: fixed `sacct`/`squeue` columns.
-    public struct SchedulerView: Codable, Sendable {
+    public struct SchedulerView: Sendable {
         public var queryOk: Bool?
+        /// A query was cut off by the read's time limit.
+        public var timedOut: Bool?
         public var rawState: String?
         public var state: String?
         public var reason: String?
@@ -29,10 +80,28 @@ public struct RemoteJobStatusReport: Codable, Sendable {
         public var exitCode: String?
         public var schedulerOutcome: String?
         public var detail: String?
+
+        init(_ fields: LenientFields) {
+            queryOk = fields.bool("queryOk")
+            timedOut = fields.bool("timedOut")
+            rawState = fields.string("rawState")
+            state = fields.string("state")
+            reason = fields.string("reason")
+            expectedStartAt = fields.double("expectedStartAt")
+            startedAt = fields.double("startedAt")
+            endedAt = fields.double("endedAt")
+            nodeList = fields.string("nodeList")
+            elapsed = fields.string("elapsed")
+            timeLimit = fields.string("timeLimit")
+            walltimeRemainingSeconds = fields.double("walltimeRemainingSeconds")
+            exitCode = fields.string("exitCode")
+            schedulerOutcome = fields.string("schedulerOutcome")
+            detail = fields.string("detail")
+        }
     }
 
     /// Records written so far, counted the way a resume counts them.
-    public struct Progress: Codable, Sendable {
+    public struct Progress: Sendable {
         public var unit: String?
         public var recordsWritten: Int?
         public var recordsExpected: Int?
@@ -44,6 +113,18 @@ public struct RemoteJobStatusReport: Codable, Sendable {
         public var runID: String?
         public var stage: String?
         public var detail: String?
+
+        init(_ fields: LenientFields) {
+            unit = fields.string("unit")
+            recordsWritten = fields.int("recordsWritten")
+            recordsExpected = fields.int("recordsExpected")
+            recordsExpectedSource = fields.string("recordsExpectedSource")
+            lastRecordAt = fields.double("lastRecordAt")
+            tornTail = fields.bool("tornTail")
+            runID = fields.string("runID")
+            stage = fields.string("stage")
+            detail = fields.string("detail")
+        }
     }
 
     public var schemaVersion: Int?
@@ -55,12 +136,19 @@ public struct RemoteJobStatusReport: Codable, Sendable {
     public var createdAt: Double?
     public var startedAt: Double?
     public var finishedAt: Double?
+    public var cancellationRequested: Bool?
     public var continuedAs: String?
     public var scheduler: SchedulerView?
-    /// Set when the scheduler, not the job, decided how it ended or was
-    /// interrupted (`TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`, `NODE_FAIL`,
-    /// `CANCELLED`, …). Beside the status, never a status value.
+    /// The scheduler's own word for an ending, or interruption, that came
+    /// from outside the job's code: a time limit (`TIMEOUT`), memory
+    /// (`OUT_OF_MEMORY`), a preemption (`PREEMPTED`), a node failure
+    /// (`NODE_FAIL`), or a cancel by a person, SteerLab, or an administrator
+    /// (`CANCELLED`). Beside the status, never a status value.
     public var schedulerOutcome: String?
+    /// The server's sentence on it: "The scheduler recorded TIMEOUT: …",
+    /// naming a cancel SteerLab asked for, and never "ended" for a job that
+    /// waits to run again.
+    public var schedulerOutcomeNote: String?
     public var deathDetail: String?
     public var progress: Progress?
     public var notes: [String]?
@@ -74,17 +162,43 @@ public struct RemoteJobStatusReport: Codable, Sendable {
     public var found: Bool?
     public var detail: String?
 
-    /// Decoded leniently from the server's document: anything it cannot
-    /// read is simply absent from the summary.
+    init(_ fields: LenientFields) {
+        schemaVersion = fields.int("schemaVersion")
+        jobId = fields.string("jobId")
+        kind = fields.string("kind")
+        status = fields.string("status")
+        executor = fields.string("executor")
+        executorJobID = fields.string("executorJobID")
+        createdAt = fields.double("createdAt")
+        startedAt = fields.double("startedAt")
+        finishedAt = fields.double("finishedAt")
+        cancellationRequested = fields.bool("cancellationRequested")
+        continuedAs = fields.string("continuedAs")
+        scheduler = fields.fields("scheduler").map(SchedulerView.init)
+        schedulerOutcome = fields.string("schedulerOutcome")
+        schedulerOutcomeNote = fields.string("schedulerOutcomeNote")
+        deathDetail = fields.string("deathDetail")
+        progress = fields.fields("progress").map(Progress.init)
+        notes = fields.strings("notes")
+        shards = fields.objects("shards")?.map(RemoteJobStatusReport.init)
+        shardIndex = fields.int("shardIndex")
+        shardCount = fields.int("shardCount")
+        shardJob = fields.string("shardJob")
+        found = fields.bool("found")
+        detail = fields.string("detail")
+    }
+
+    /// Read from the server's document field by field: anything missing or
+    /// of an unexpected type is absent from the summary, and nothing else
+    /// is lost. Nil only when the document is not an object.
     public static func from(_ value: JSONValue) -> RemoteJobStatusReport? {
-        guard let data = try? JSONEncoder().encode(value) else { return nil }
-        return try? JSONDecoder().decode(RemoteJobStatusReport.self, from: data)
+        LenientFields(value).map(RemoteJobStatusReport.init)
     }
 }
 
 /// `GET /api/jobs/{id}/log-tail`, as far as the plain-text output reads it.
-public struct RemoteJobLogTail: Codable, Sendable {
-    public struct OutputFile: Codable, Sendable {
+public struct RemoteJobLogTail: Sendable {
+    public struct OutputFile: Sendable {
         public var name: String?
         public var exists: Bool?
         public var lines: [String]?
@@ -92,13 +206,30 @@ public struct RemoteJobLogTail: Codable, Sendable {
         public var sizeBytes: Int?
         public var bytesRead: Int?
         public var detail: String?
+
+        init(_ fields: LenientFields) {
+            name = fields.string("name")
+            exists = fields.bool("exists")
+            lines = fields.strings("lines")
+            truncated = fields.bool("truncated")
+            sizeBytes = fields.int("sizeBytes")
+            bytesRead = fields.int("bytesRead")
+            detail = fields.string("detail")
+        }
     }
 
-    public struct SchedulerOutput: Codable, Sendable {
+    public struct SchedulerOutput: Sendable {
         public var available: Bool?
         public var stdout: OutputFile?
         public var stderr: OutputFile?
         public var detail: String?
+
+        init(_ fields: LenientFields) {
+            available = fields.bool("available")
+            stdout = fields.fields("stdout").map(OutputFile.init)
+            stderr = fields.fields("stderr").map(OutputFile.init)
+            detail = fields.string("detail")
+        }
     }
 
     public var jobId: String?
@@ -108,9 +239,18 @@ public struct RemoteJobLogTail: Codable, Sendable {
     public var schedulerOutput: SchedulerOutput?
     public var notes: [String]?
 
+    init(_ fields: LenientFields) {
+        jobId = fields.string("jobId")
+        status = fields.string("status")
+        lines = fields.strings("lines")
+        truncated = fields.bool("truncated")
+        schedulerOutput = fields.fields("schedulerOutput").map(SchedulerOutput.init)
+        notes = fields.strings("notes")
+    }
+
+    /// Read field by field, as `RemoteJobStatusReport.from` is.
     public static func from(_ value: JSONValue) -> RemoteJobLogTail? {
-        guard let data = try? JSONEncoder().encode(value) else { return nil }
-        return try? JSONDecoder().decode(RemoteJobLogTail.self, from: data)
+        LenientFields(value).map(RemoteJobLogTail.init)
     }
 }
 
@@ -187,7 +327,7 @@ public enum RemoteJobStatusText {
         let id = report.jobId ?? "?"
         var text = "job \(id) is \(report.status ?? "unknown")"
         if let outcome = report.schedulerOutcome {
-            text += " (ended by the scheduler: \(outcome))"
+            text += " (the scheduler recorded \(outcome))"
         }
         if let records = recordsPhrase(report.progress) {
             text += "; \(records)"
@@ -262,7 +402,10 @@ public enum RemoteJobStatusText {
             lines.append(indent + "scheduler: " + schedulerPhrase(view, timeZone: timeZone))
         }
         if let outcome = report.schedulerOutcome {
-            lines.append(indent + "ended by the scheduler: \(outcome)")
+            // The server's sentence names a cancel SteerLab asked for and
+            // never says "ended" of a job that waits to run again.
+            lines.append(indent + (report.schedulerOutcomeNote
+                ?? "The scheduler recorded \(outcome)."))
         }
         if let records = recordsPhrase(report.progress) {
             var line = indent + "records: " + records

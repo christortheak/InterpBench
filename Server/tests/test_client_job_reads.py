@@ -118,3 +118,27 @@ def test_the_plain_logs_verb_is_unchanged(wired_cli, capsys):
     assert code == 0, document
     assert document["result"]["lines"] == ["submitted study as Slurm job 6105"]
     assert document["result"]["followed"] is False
+
+
+def test_the_summary_says_what_the_scheduler_recorded():
+    # Review 2026-11-02: "ended by the scheduler" was wrong for a person's
+    # own cancel and for a preempted job queued again; the runner's sentence
+    # says what the scheduler recorded, and names a SteerLab cancel.
+    from steerlab_server.client import job_reads
+    document = {
+        "jobId": "j1", "status": "cancelled", "executorJobID": "6201",
+        "schedulerOutcome": "CANCELLED",
+        "schedulerOutcomeNote": ("The scheduler recorded CANCELLED: the job "
+                                 "was cancelled through SteerLab."),
+        "notes": [],
+    }
+    lines = job_reads.status_lines(document)
+    assert ("  The scheduler recorded CANCELLED: the job was cancelled "
+            "through SteerLab.") in lines
+    assert job_reads.status_message(document) == (
+        "job j1 is cancelled (the scheduler recorded CANCELLED)")
+    del document["schedulerOutcomeNote"]
+    assert "  The scheduler recorded CANCELLED." in job_reads.status_lines(
+        document)
+    assert not any("ended by the scheduler" in line
+                   for line in job_reads.status_lines(document))
