@@ -364,7 +364,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                                   profile=profile, planned_records=planned,
                                   verb=verb, shard_count=parallel,
                                   prompts_text=prompts_text, device=device,
-                                  fixed_reading_plan=resumed_plan)
+                                  fixed_reading_plan=resumed_plan,
+                                  artifact_root=root or paths.project_root())
     overridden = _gate_on_preflight(preflight, dry_run=dry_run, force=force)
     # ONE reading for every job of this submission, shards included.
     reading_plan = _reading_plan(preflight, manifest, verb) or resumed_plan
@@ -1410,7 +1411,8 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
                       shard_count: int = 1,
                       prompts_text: str | None = None,
                       device: str | None = None,
-                      fixed_reading_plan: dict | None = None) -> dict:
+                      fixed_reading_plan: dict | None = None,
+                      artifact_root: str | None = None) -> dict:
     checks: list[dict] = []
     if verb in MODEL_FREE_VERBS:
         # Same check ids, honest "not applicable" verdicts: a model-free verb
@@ -1431,7 +1433,8 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
         ("memoryFit", lambda: model_checks[1] if model_checks
          else _check_memory_fit(manifest, resources,
                                 prompts_text=prompts_text, device=device,
-                                verb=verb, fixed_plan=fixed_reading_plan)),
+                                verb=verb, fixed_plan=fixed_reading_plan,
+                                artifact_root=artifact_root)),
         ("walltime", lambda: model_checks[2] if model_checks
          else _check_walltime(manifest, resources, planned_records, profile,
                               verb, shard_count=shard_count)),
@@ -1804,9 +1807,23 @@ TASK_PROMPT_VERBS = ("run", "pipeline")
 
 
 def _measure_prompts(manifest: Manifest, prompts_text: str | None,
-                     verb: str = "run") -> dict:
-    """The longest prompt's exact token count, measured with the run's own
-    token check (``token_preflight.preflight``) from the model cache only.
+                     verb: str = "run", *,
+                     artifact_root: str | None = None) -> dict:
+    """The longest prompt's exact token count, counted as the run counts it:
+    every task prompt under every arm's render settings, by the run's own
+    two functions (``condition_execution.run_arm_render_settings`` and
+    ``prompt_reading.rendered_token_counts``), with the tokenizer and the
+    configuration from the model cache only. An agent arm with its own
+    system prompt or prompt mode renders the same item longer or shorter
+    than the study's own arms, and the longest rendering is the one the
+    card must hold.
+
+    ``artifact_root`` is the workspace an agent arm's ``artifactPath``
+    resolves under, as the run resolves it. Without one (a bundle, whose
+    files are not unpacked here) only the agent arms that carry their
+    artifact in the manifest, as attaching an agent writes it, are counted;
+    ``agentArmsNotMeasured`` says how many were not. An agent whose artifact
+    cannot be read is skipped, as the run skips it.
 
     Never raises and never downloads: a controller without this model's
     tokenizer, a panel (whose prompts are turns that grow with the
@@ -1828,7 +1845,7 @@ def _measure_prompts(manifest: Manifest, prompts_text: str | None,
     if prompts_text is None:
         return {"measured": False,
                 "reason": "the study's task prompts could not be read here"}
-    from ..experiment import task_inputs, token_preflight
+    from ..experiment import prompt_reading, task_inputs, token_preflight
     try:
         prompts = task_inputs.parse_prompts(prompts_text)
     except Exception as exc:  # noqa: BLE001 - the run's loader refuses loudly
@@ -1837,26 +1854,53 @@ def _measure_prompts(manifest: Manifest, prompts_text: str | None,
     if not prompts:
         return {"measured": False, "reason": "the task prompt file is empty"}
     try:
-        report = token_preflight.preflight(
-            prompts, model_id=manifest.model_id,
-            revision=manifest.model_revision,
-            prompt_mode=manifest.prompt_mode,
-            system_prompt=manifest.system_prompt,
-            qwen_thinking_enabled=manifest.qwen_thinking_enabled,
-            max_tokens=manifest.max_tokens,
-            reasoning_effort=manifest.reasoning_effort,
-            reasoning_max_tokens=manifest.reasoning_max_tokens,
-            local_files_only=True)
+        tokenizer = token_preflight._tokenizer(
+            manifest.model_id, manifest.model_revision, local_files_only=True)
     except Exception as exc:  # noqa: BLE001 - no tokenizer here is not a refusal
         return {"measured": False,
                 "reason": (f"this server's model cache has no tokenizer for "
                            f"{manifest.model_id} ({type(exc).__name__})")}
-    counts = [int(item["promptTokens"]) for item in report.get("items") or []]
-    if not counts:
+    try:
+        settings, unread = _arm_render_settings(manifest, artifact_root)
+        counts = prompt_reading.rendered_token_counts(
+            tokenizer, manifest.model_id, prompts, settings)
+    except Exception as exc:  # noqa: BLE001 - the run's own check refuses loudly
+        return {"measured": False,
+                "reason": (f"the task prompts could not be rendered here "
+                           f"({type(exc).__name__}: {exc})")}
+    flat = [n for row in counts for n in row]
+    if not flat:
         return {"measured": False, "reason": "no prompt could be counted"}
-    return {"measured": True, "longestPromptTokens": max(counts),
-            "promptCount": len(counts),
-            "contextWindow": report.get("contextWindow")}
+    try:
+        window = token_preflight.context_window(
+            manifest.model_id, manifest.model_revision, local_files_only=True)
+    except Exception:  # noqa: BLE001 - the window is reported, never needed
+        window = None
+    result = {"measured": True, "longestPromptTokens": max(flat),
+              "promptCount": len(counts), "renderings": len(settings),
+              "contextWindow": window}
+    if unread:
+        result["agentArmsNotMeasured"] = unread
+    return result
+
+
+def _arm_render_settings(manifest: Manifest,
+                         artifact_root: str | None) -> tuple[list[dict], int]:
+    """``(settings, unread)``: the render settings of every arm of the run
+    matrix (``condition_execution.run_arm_render_settings``, the run's own),
+    and how many agent arms could not be counted here: one named only by an
+    artifact path when there is no workspace to resolve it under (so nothing
+    is ever read from this process's working directory), and one the study
+    names by promotion, which resolves only when the run starts."""
+    import copy
+
+    from ..experiment import condition_execution
+    known = [vc for vc in manifest.variant_conditions
+             if vc.artifact or (artifact_root is not None and vc.artifact_path)]
+    shown = copy.copy(manifest)
+    shown.variant_conditions = known
+    return (condition_execution.run_arm_render_settings(shown, artifact_root),
+            len(manifest.variant_conditions) - len(known))
 
 
 def _declared_reading(manifest: Manifest | None) -> dict | None:
@@ -1901,7 +1945,8 @@ def _check_memory_fit(manifest: Manifest | None,
                       prompts_text: str | None = None,
                       device: str | None = None,
                       verb: str = "run",
-                      fixed_plan: dict | None = None) -> dict:
+                      fixed_plan: dict | None = None,
+                      artifact_root: str | None = None) -> dict:
     """Size one GPU against the study (issue #6).
 
     The context is the longest MEASURED prompt plus ``maxTokens`` plus
@@ -1979,7 +2024,8 @@ def _check_memory_fit(manifest: Manifest | None,
     weights = info["weightsBytes"]
     config = info.get("config")
     dtype_note = (config or {}).get("torch_dtype")
-    measured = _measure_prompts(manifest, prompts_text, verb)
+    measured = _measure_prompts(manifest, prompts_text, verb,
+                                artifact_root=artifact_root)
     prompt_tokens = (measured["longestPromptTokens"] if measured["measured"]
                      else PREFLIGHT_PROMPT_BUDGET_TOKENS)
     reasoning = int(manifest.reasoning_max_tokens or 0)
@@ -2007,6 +2053,15 @@ def _check_memory_fit(manifest: Manifest | None,
         f" The prompt length was not measured ({measured['reason']}), so the "
         f"cache is sized for a {PREFLIGHT_PROMPT_BUDGET_TOKENS:,}-token prompt "
         "allowance; a longer prompt needs more."))
+    unread_agents = measured.get("agentArmsNotMeasured")
+    if unread_agents:
+        data["agentArmsNotMeasured"] = unread_agents
+        unmeasured_note += (
+            f" {unread_agents} agent arm(s) could not be read here (an "
+            "artifact the manifest names by path only, or an agent chosen "
+            "by promotion when the run starts), so the prompts are measured "
+            "as the study's other arms render them; an agent's own system "
+            "prompt can make them longer.")
     if reading_device == "cuda" and fixed_plan is None \
             and verb in prompt_reading.READING_VERBS:
         choice = prompt_memory.choose_reading(

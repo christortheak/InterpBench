@@ -349,6 +349,92 @@ def test_a_bundle_submission_plans_from_the_bundle_it_carries(site, tmp_path,
     assert _memory(submission)["data"]["longestPromptTokens"] == LONG
 
 
+# --- every arm's rendering, as the run counts it (review, item 5) ------------------
+
+AGENT_WORDS = 3_000
+
+
+def _attach_agent(site, *, inline=True):
+    """An agent arm whose own system prompt adds AGENT_WORDS tokens to every
+    rendering of the study's prompts (the stand-in tokenizer counts words)."""
+    import hashlib
+    artifact = {"schemaVersion": 1, "name": "long-agent", "baseModelID": MODEL,
+                "baseRevision": REVISION, "adapters": [], "injections": [],
+                "bandWidth": 1, "alphaInNormUnits": True,
+                "neutralPCBasisPath": None, "promptMode": "chatAssistant",
+                "qwenThinkingEnabled": False, "temperature": 0.0,
+                "systemPrompt": " ".join(["s"] * AGENT_WORDS)}
+    agents = site["root"] / "agents"
+    agents.mkdir(exist_ok=True)
+    body = json.dumps(artifact, indent=2).encode("utf-8")
+    (agents / "long-agent.json").write_bytes(body)
+    condition = {"name": "long-agent", "artifactPath": "agents/long-agent.json",
+                 "artifactHash": hashlib.sha256(body).hexdigest()}
+    if inline:
+        condition["artifact"] = artifact
+    _edit(site, variantConditions=[condition])
+
+
+def test_an_agent_arm_with_its_own_system_prompt_is_measured_as_the_run_counts_it(
+        site):
+    """The run's record counts every arm's rendering
+    (``condition_execution.run_arm_render_settings``); the memory check now
+    counts the same, so an agent's longer rendering sizes the cache."""
+    from steerlab_server.experiment import condition_execution, task_inputs
+    from steerlab_server.experiment.manifest import Manifest
+    _attach_agent(site)
+    data = _memory(_submit(site))["data"]
+    assert data["promptLengthMeasured"] is True
+    assert data["longestPromptTokens"] == LONG + AGENT_WORDS
+    assert data["contextTokens"] == LONG + AGENT_WORDS + 8192
+    assert "agentArmsNotMeasured" not in data
+    # The run's own count, by the functions its record uses.
+    manifest = Manifest.from_dict(json.loads(site["path"].read_text(encoding="utf-8")))
+    prompts = task_inputs.parse_prompts(
+        (site["root"] / "prompts" / "tasks" / "t.jsonl").read_text(encoding="utf-8"))
+    counts = pr.rendered_token_counts(
+        _Tok(), MODEL, prompts,
+        condition_execution.run_arm_render_settings(manifest, str(site["root"])))
+    assert max(n for row in counts for n in row) == data["longestPromptTokens"]
+
+
+def test_an_agent_named_by_path_is_read_from_the_workspace(site):
+    _attach_agent(site, inline=False)
+    data = _memory(_submit(site))["data"]
+    assert data["longestPromptTokens"] == LONG + AGENT_WORDS
+    assert "agentArmsNotMeasured" not in data
+
+
+def test_a_bundle_measures_its_carried_agents_and_names_the_rest(site, tmp_path,
+                                                                 monkeypatch):
+    """A bundle is not unpacked here: an agent the manifest carries is
+    measured, one named by path only is said to be unmeasured, and nothing
+    is read from the server's own workspace."""
+    def bundle_memory(name):
+        meta = bundles.package_experiment("long-study", root=str(site["root"]))
+        empty = tmp_path / name
+        empty.mkdir()
+        with monkeypatch.context() as scoped:
+            scoped.setenv("STEERLAB_ROOT", str(empty))
+            submission = sub.submit_run_bundle(
+                meta["bundlePath"], verb="run",
+                jobs=_jobs(tmp_path, f"{name}.sqlite"), executor="slurm",
+                dry_run=True,
+                resources={"gres": "gpu:A100:1", "walltime": "10:00:00",
+                           "gpuVram": {"A100": 80}})
+        return _memory(submission)
+
+    _attach_agent(site)
+    carried = bundle_memory("carried")["data"]
+    assert carried["longestPromptTokens"] == LONG + AGENT_WORDS
+    assert "agentArmsNotMeasured" not in carried
+    _attach_agent(site, inline=False)
+    by_path = bundle_memory("by-path")
+    assert by_path["data"]["longestPromptTokens"] == LONG
+    assert by_path["data"]["agentArmsNotMeasured"] == 1
+    assert ("1 agent arm(s) could not be read here" in by_path["message"])
+
+
 # --- what the check may refuse on, and the plan it always carries (review) ---------
 
 def _config(site, config):

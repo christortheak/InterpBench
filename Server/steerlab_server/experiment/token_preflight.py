@@ -99,9 +99,14 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
     context window (matches ``generate._stream_rendered``'s outer bound).
 
     ``local_files_only`` reads the tokenizer and config from the model cache
-    alone. The submission's memory check counts prompts with this same
-    function, so its count and the run's cannot disagree, and it must never
-    start a download on the controller.
+    alone, never the network. The counts here are the study's own rendering
+    only (its prompt mode, system prompt, and thinking setting), for the
+    context verdict. The submission's memory check does not use them: it
+    counts every arm's rendering as the run's prompt-reading record does
+    (``submissions._measure_prompts``, through
+    ``condition_execution.run_arm_render_settings`` and
+    ``prompt_reading.rendered_token_counts``), so an agent with its own
+    system prompt is sized by its own, longer, rendering.
     """
     if local_files_only:
         tokenizer = _tokenizer(model_id, revision, local_files_only=True)
