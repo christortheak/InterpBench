@@ -59,6 +59,14 @@ when prefill is single-chunk, and silently mis-sited when it is not. The
 descriptor prints a different `positions` sentence in that case rather than
 letting a chunked run be reported as a prompt-end injection.
 
+**Chunked reading is not MPS-only.** MPS reads prompts over 4,096 tokens in
+chunks, CUDA (from 0.9.20) prompts over 8,192, and a study can declare its own
+rule (CONDUCTING-A-STUDY.md §7.5). The positions on this page hold on every
+reading: `tests/test_chunked_reading_steering.py` runs the additive path, span
+policies (a span across a chunk boundary, inside one chunk, and ending on the
+final prompt token), and a probe-gated policy through a forced chunked reading
+and finds the same positions moved by the same amounts as a single pass.
+
 **Claim limit.** *Adds a fixed offset at these positions and nowhere else. A
 behavioural change shows the offset moved this model's output here; it does not
 locate the concept, and equal residual-norm doses are not equal potency across

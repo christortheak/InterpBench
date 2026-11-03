@@ -21,6 +21,18 @@ lives in the source repository and ships with neither client; without it, treat
 repeatability across backends as unqualified.
 For categorical outcomes, answer-token/logprob instruments remain temperature-free.
 
+**How a long prompt is read.** The Python engine reads a prompt in a single
+pass or in chunks. By default CUDA reads prompts over 8,192 tokens 4,096 tokens
+at a time, MPS prompts over 4,096 tokens 1,024 at a time, and CPU every prompt
+in one pass. A study can declare its own rule (the manifest's `promptReading`,
+written by the authoring client before freeze), and a submission may plan
+smaller chunks to fit the requested card, saying so in an advisory. The two
+readings are not token-identical where two next words are nearly tied, so
+each run records its reading in `config.json`'s `notes.promptReading`, and a
+resume or shard merge that would mix two readings refuses, naming both. Follow
+its repair: finish on the engine release that started the run, or start a new
+run. On CUDA a run also records its peak GPU memory in `device-memory.json`.
+
 Activations do not transfer between engines. Vectors must be **re-extracted and
 re-validated on whichever engine a study runs on** — the parity claim is
 structural, not byte identity. Stimulus and corpus SHA-256 hashes *are*

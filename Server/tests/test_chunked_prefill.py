@@ -1,11 +1,14 @@
-"""Chunked prefill: the MPS long-prompt path must be INVISIBLE to the science.
+"""Chunked prefill: the long-prompt path must read and steer as a single pass does.
 
 Three contracts, mirroring the Swift engine's chunked-prefill test suite
 (where chunking has been native from day one, and where steering a chunk's
 mid-prompt tail is the classic silent-near-null bug this guards against):
 
-1. The device policy is a pure table — CUDA and CPU never chunk, so the
-   science arm takes the exact single-pass path it always took.
+1. The device defaults are a pure table: MPS chunks prompts over 4,096
+   tokens, CUDA prompts over 8,192, and CPU never; a prompt at or below its
+   threshold takes the exact single-pass path it always took. (Chunked and
+   single-pass readings are not token-identical at near-ties, so a run
+   records its reading: see test_prompt_reading.py.)
 2. Chunked and unchunked prefill produce the same model behavior: same
    next-token logits at the prompt end, same greedy continuation.
 3. Injection gating: intermediate chunks are BIT-IDENTICAL to baseline

@@ -1320,7 +1320,89 @@ and disagreement between them is an **advisory** written to the run's
 `advisories.txt`, never a refusal: a queued job must not die because an index
 moved, and a submitted study must not change meaning mid-flight. The policy
 throughout is **continue loudly and stamp**, so read `advisories.txt` when you
-read the results.
+read the results. A study run also stamps how it read its prompts, and its peak
+GPU memory (§7.5).
+
+### 7.5 Long prompts: how a prompt is read
+
+Before the model writes its first token, it reads the whole prompt. It can read
+it in a **single pass**, or **in chunks**: a few thousand tokens at a time,
+each chunk adding to the model's memory of what came before, with the last
+prompt token left for the first step of the answer. Every token still sees
+every earlier token. A single pass over a very long prompt can need far more
+GPU memory than the finished reading keeps: a 27B model ran out of an 80 GB
+card on an 82,000-token prompt whose finished reading needed under 6 GiB.
+Reading in chunks keeps that working memory bounded, which is what lets a
+217,000-token prompt run on one 80 GB card.
+
+**The two readings do not give token-identical texts.** Only the order in which
+numbers are added changes, so the texts differ only where two next words were
+nearly tied: in a greedy check of 8 prompts of about 10,000 tokens, every
+chunked text matched its single-pass twin for 0 to 513 tokens and then split
+at a near-tie between two wordings, and all 8 reached the same conclusion. Chunked runs repeat exactly from job to job (100
+of 100 seeded texts). So a study must not mix the two, and every run says which
+one it used.
+
+**The rule.** One object, `{"mode": "singlePass"}` or
+`{"mode": "chunked", "chunkTokens": 4096, "aboveTokens": 8192}`. A prompt of `n`
+tokens is read in chunks of `chunkTokens` when `n` is greater than both
+`aboveTokens` and `chunkTokens`, and in a single pass otherwise. The engine
+picks the rule in this order:
+
+1. the study's own declaration, `promptReading` in the manifest, written with
+   `experiment set-prompt-reading` (on both clients; refused once the study is
+   frozen, since it is part of the frozen manifest and its hash);
+2. the submission's plan, which the client sends when the default would not
+   fit the card you asked for, and says so in an advisory;
+3. the `STEERLAB_PREFILL_CHUNK` setting on the engine, as before (a whole
+   number of tokens per chunk, or 0 for a single pass);
+4. the engine's default for the device: on CUDA, prompts over 8,192 tokens in
+   chunks of 4,096; on MPS, prompts over 4,096 tokens in chunks of 1,024; on
+   CPU, a single pass. Through 0.9.19, CUDA always read in a single pass.
+
+The CUDA default is the same on every card, so one study reads its prompts the
+same way on an A100, an H100, or a larger card; a 4,096-token chunk already
+keeps a large GPU busy. Prompts at or below the threshold read exactly as they
+did before. Declare a reading when a study must read every prompt one way
+whatever the engine's default, for example to match an earlier study.
+
+**What the run records.** `config.json`'s `notes.promptReading` holds the rule,
+where it came from (`studyDeclaration`, `submission`, `environment`, or
+`engineDefault`), the plan's `basis` when the submission sent one, the device,
+how many of the study's task prompts there are, how many were read in chunks
+under at least one arm's rendering, the longest prompt's token count, and
+`cudaAllocatorConfig`, the CUDA allocator setting in force. A panel records the
+rule and leaves the three counts empty, since its turn prompts grow while it
+runs. On CUDA, `device-memory.json` holds the run's peak allocated and reserved
+GPU memory, and `device-memory.jsonl` the peak of each generated record (beside
+the records, not in them); on other devices the file says the peaks were not
+measured.
+
+**A run never mixes two readings.** Resuming a run, or merging a fan-out's
+shards, compares how each part reads the study's prompts, and refuses when
+any prompt would be read differently: for example, a run started under the
+CUDA default and resumed under a plan of 2,048-token chunks. It compares what
+actually happens to the prompts, not how the rule is spelled or where it came
+from, so a declared 4096 above 8192 equals the CUDA default, and a run made by
+0.9.19 on CUDA (a single pass, by that release's rule) resumes on 0.9.20 when
+none of its prompts is longer than 8,192 tokens. The refusal names both
+readings and the repair: finish the run on the engine release that started
+it, or start a new run. A run made before 0.9.20 on MPS is taken as read by
+that release's default; a `STEERLAB_PREFILL_CHUNK` value set then was not
+recorded and cannot be checked.
+
+**The GPU allocator setting.** Every GPU job the server starts, and every local
+child, begins with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` unless
+the site sets its own, which wins. Without it, a chunked 217,000-token reading
+failed with 8.7 GiB of GPU memory reserved but too fragmented to use. The
+setting changes where data lives in memory, not what is computed (100 of 100
+seeded texts were identical with and without it), so runs record it but never
+refuse on it.
+
+**Limits.** Answer-token scoring (the `answerTokenLogprob` instrument) still
+reads its prompt in one pass. The rule says how a prompt is read, not whether
+it fits: the submission's memory check sizes that, and the chunk size a plan
+chooses is recorded in its `basis`.
 
 ---
 

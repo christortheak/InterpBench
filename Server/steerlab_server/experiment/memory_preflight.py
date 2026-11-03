@@ -21,12 +21,16 @@ What this module claims and refuses to claim:
   worst-case bound (every prior routed turn charged its full max tokens).
   The advisory names the first turn projected past the budget and the
   levers; the researcher may know their machine better.
-* It is silent off MPS. On CUDA the transient term is absent by algorithm
-  (sdpa dispatches tiled flash/mem-efficient kernels), weights-fit is
-  already refused by the loader's GPU-capacity gate, and the KV term at
-  panel scale is small — and CUDA remains UNMEASURED by the reproduction
-  script, so an advisory there would be a guess wearing numbers. Revisit
-  after the script runs on the cluster.
+* It is silent off MPS, because the transient it models is MPS's eager
+  attention. On CUDA, sdpa's tiled flash and memory-efficient kernels keep
+  attention itself linear, but a single pass over a long prompt is not free
+  there: every layer's MLP, and a hybrid model's linear-attention layers on
+  the float32 fallback, hold whole-prompt transients (a 27B hybrid model ran
+  out of an 80 GB card on an 82,000-token single pass). That is why CUDA now
+  reads prompts over 8,192 tokens in chunks (``prompt_reading``), and why a
+  CUDA estimate belongs to the submission's memory check rather than to this
+  advisory. CUDA remains UNMEASURED by the reproduction script, so an
+  advisory here would be a guess wearing numbers.
 
 The transient constant is per-model: 16 GiB at a 10K-token prompt was
 calibrated on the 4B (8 query heads). The score matrices scale with the
