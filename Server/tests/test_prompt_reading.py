@@ -391,6 +391,24 @@ def test_the_studys_declaration_outranks_the_plan(tmp_path, monkeypatch):
     assert [line for line in lines if "the study's declaration wins" in line]
 
 
+def test_a_sweep_reads_by_the_studys_declaration(tmp_path, monkeypatch):
+    from steerlab_server.experiment import sweep_workflow
+    root = str(tmp_path)
+    _study(root, "reading-sweep", promptReading={"mode": "singlePass"})
+    _patch(monkeypatch)
+    seen = []
+
+    def sweep_impl(name, manifest, model, root, *args):
+        reading = PR.active_reading.get()
+        seen.append((reading.rule(), reading.source))
+        return "swept"
+    monkeypatch.setattr(sweep_workflow, "_sweep_impl", sweep_impl)
+    assert sweep_workflow.sweep("reading-sweep", root, model_provider=_cuda_model,
+                                log=lambda *_: None) == "swept"
+    assert seen == [({"mode": "singlePass"}, "studyDeclaration")]
+    assert PR.active_reading.get() is None
+
+
 def test_an_unreadable_declaration_refuses_before_any_generation(tmp_path,
                                                                   monkeypatch):
     root = str(tmp_path)

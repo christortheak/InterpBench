@@ -19,6 +19,7 @@ from . import generate
 from . import layer_resolution
 from . import manifest as manifest_module
 from . import model_resources
+from . import prompt_reading
 from ..steering import stimulus_set
 from . import rubric_inputs
 from . import run_artifacts
@@ -94,6 +95,19 @@ def sweep(name: str, root: str | None = None, dtype: str = "auto",
     with model_resources.acquire_model(manifest, dtype, device, model_provider) as model, \
             ExitStack() as judge_stack:
         manifest = model_resources.pin_model_revision(name, manifest, model, root, log or print)
+        # A sweep reads its prompts by the study's rule too (its declaration,
+        # else the submission's plan, the environment, or the device default),
+        # so a declared reading governs every generation of the study. Sweep
+        # prompts are short, and the rule is not recorded or compared here.
+        try:
+            reading = prompt_reading.for_manifest(
+                manifest, generate._model_device(model), log=log or print)
+        except prompt_reading.PromptReadingError as exc:
+            raise lifecycle_gates.refusing(
+                lifecycle_gates.STUDY_DECLARATION,
+                f"the study's promptReading declaration cannot be read: {exc}",
+                repair=exc.repair_action) from exc
+        judge_stack.enter_context(prompt_reading.reading_scope(reading))
         if spec is not None:
             return _sweep_with_spec(name, manifest, model, root, spec,
                                     criterion, objective, model_provider,
