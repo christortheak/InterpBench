@@ -1700,9 +1700,11 @@ class JobManager:
                                   if key != "schedulerOutcome"}
                 self.store.update(job)
                 changed += 1
-            elif start_stamped:
-                # No transition this tick, but the start became known (a job
-                # that was already running when this controller took it on).
+                start_stamped = False   # persisted with the transition
+            if start_stamped:
+                # No transition was written this tick, but the start became
+                # known (a job already running when this controller took it
+                # on).
                 self.store.update(job)
             if job.status == "checkpointed" and status_before != "checkpointed":
                 # THIS instance saw the record become checkpointed (a sacct
