@@ -158,6 +158,17 @@ def test_an_unmeasured_prompt_keeps_the_allowance_and_says_so(site, monkeypatch)
     assert "The prompt length was not measured" in memory["message"]
 
 
+def test_a_step_that_never_reads_the_task_prompts_is_not_sized_by_them(site):
+    # 217,230-token task prompts would put the certain part over a 64 GB
+    # card; an extraction never reads them, so it is sized as before.
+    memory = _memory(_submit(site, vram=64, verb="extract"))
+    assert memory["data"]["promptLengthMeasured"] is False
+    assert memory["data"]["contextTokens"] == 2048 + 8192
+    assert "the extract step does not read the study's task prompts" in \
+        memory["data"]["promptLengthNotMeasured"]
+    assert memory["status"] != "fail"
+
+
 def test_the_measurement_never_reaches_the_network(site, monkeypatch):
     seen = {}
 

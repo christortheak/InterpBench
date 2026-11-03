@@ -1427,7 +1427,8 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
          else _check_gpu_request(resources)),
         ("memoryFit", lambda: model_checks[1] if model_checks
          else _check_memory_fit(manifest, resources,
-                                prompts_text=prompts_text, device=device)),
+                                prompts_text=prompts_text, device=device,
+                                verb=verb)),
         ("walltime", lambda: model_checks[2] if model_checks
          else _check_walltime(manifest, resources, planned_records, profile,
                               verb, shard_count=shard_count)),
@@ -1777,7 +1778,13 @@ def _kv_cache_bytes(config: dict, context_tokens: int) -> int | None:
     return None if priced is None else priced["bytes"]
 
 
-def _measure_prompts(manifest: Manifest, prompts_text: str | None) -> dict:
+#: The verbs whose jobs generate from the study's task prompts, and so are
+#: sized by the longest of them.
+TASK_PROMPT_VERBS = ("run", "pipeline")
+
+
+def _measure_prompts(manifest: Manifest, prompts_text: str | None,
+                     verb: str = "run") -> dict:
     """The longest prompt's exact token count, measured with the run's own
     token check (``token_preflight.preflight``) from the model cache only.
 
@@ -1787,6 +1794,12 @@ def _measure_prompts(manifest: Manifest, prompts_text: str | None) -> dict:
     with the reason in plain words, and the memory check keeps today's
     2,048-token prompt allowance.
     """
+    if verb not in TASK_PROMPT_VERBS:
+        # Extraction, validation, a sweep's development prompts, and judging
+        # never read the study's task prompts; sizing them by the task
+        # prompts would refuse a job for prompts it never sees.
+        return {"measured": False,
+                "reason": f"the {verb} step does not read the study's task prompts"}
     if manifest.study_kind == "multiAgent":
         return {"measured": False,
                 "reason": ("a panel's prompts are its turns, which grow with "
@@ -1862,7 +1875,8 @@ def _reading_device(resources: SlurmResources | None, device: str | None) -> str
 def _check_memory_fit(manifest: Manifest | None,
                       resources: SlurmResources, *,
                       prompts_text: str | None = None,
-                      device: str | None = None) -> dict:
+                      device: str | None = None,
+                      verb: str = "run") -> dict:
     """Size one GPU against the study (issue #6).
 
     The context is the longest MEASURED prompt plus ``maxTokens`` plus
@@ -1892,7 +1906,7 @@ def _check_memory_fit(manifest: Manifest | None,
     weights = info["weightsBytes"]
     config = info.get("config")
     dtype_note = (config or {}).get("torch_dtype")
-    measured = _measure_prompts(manifest, prompts_text)
+    measured = _measure_prompts(manifest, prompts_text, verb)
     prompt_tokens = (measured["longestPromptTokens"] if measured["measured"]
                      else PREFLIGHT_PROMPT_BUDGET_TOKENS)
     reasoning = int(manifest.reasoning_max_tokens or 0)
