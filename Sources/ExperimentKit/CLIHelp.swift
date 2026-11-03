@@ -129,6 +129,7 @@ public enum CLIFlagVocabulary {
         "--source": "<run-dir>",
         "--squeue": "<command>",
         "--system": "<text>",
+        "--tail": "<n>",
         "--target": "<rung>",
         "--template-id": "<id>",
         "--temperature": "<t>",
@@ -388,6 +389,9 @@ public enum CLIFlagVocabulary {
         "--shape": "Which reader contrast the rows carry: content pair or single stimulus.",
         "--strip": "Strip the variant's interventions before generating.",
         "--system": "System text prepended to the turn.",
+        "--tail":
+            "Print the job's last N log lines (1 to 1000) and the tails of its "
+            + "own scheduler output, then exit, instead of following the log.",
         "--target": "The lifecycle rung to reach (default connected).",
         "--template-id": "The task template the reader fit will use; every row declares it.",
         "--temperature": "Sampling temperature.",

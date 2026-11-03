@@ -2483,7 +2483,7 @@ steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <serv
 steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--reread-choices] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] --verb <verb> [--walltime <hh:mm:ss>]
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote status <job-id> [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote logs <job-id> [--site <id>] [--tail <value>] [--token <token>] [--url <server>]
+steerlab-cli remote logs <job-id> [--site <id>] [--tail <n>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote resubmit <job-id> [--site <id>] [--token <token>] [--url <server>] [--walltime <hh:mm:ss>]
 steerlab-cli remote fetch <artifact-path> [--out <dir>] [--path <server-path>] [--site <id>] [--token <token>] [--url <server>]
