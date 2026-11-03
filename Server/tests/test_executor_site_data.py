@@ -452,6 +452,11 @@ def test_undeclared_scratch_gres_leaves_the_header_byte_identical(tmp_path, monk
 
 # --- the CUDA allocator setting every rendered job starts with ----------------------
 
+def _clear_allocator_env(monkeypatch):
+    for name in ("PYTORCH_CUDA_ALLOC_CONF", "PYTORCH_ALLOC_CONF"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _rendered(tmp_path, env=None):
     bundle = SlurmExecutor().create_bundle(
         str(tmp_path / "bundle"), ["python", "-c", "pass"], env=env,
@@ -467,7 +472,7 @@ def test_a_rendered_job_defaults_the_cuda_allocator_to_expandable_segments(
     8.7 GiB reserved but unallocated. Every rendered job now starts with
     expandable segments."""
     _clear_site_env(monkeypatch)
-    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    _clear_allocator_env(monkeypatch)
     bundle, script = _rendered(tmp_path)
     assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in script
@@ -475,6 +480,7 @@ def test_a_rendered_job_defaults_the_cuda_allocator_to_expandable_segments(
 
 def test_the_sites_own_cuda_allocator_setting_still_wins(tmp_path, monkeypatch):
     _clear_site_env(monkeypatch)
+    _clear_allocator_env(monkeypatch)
     monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
     bundle, script = _rendered(tmp_path)
     assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == "max_split_size_mb:256"
@@ -485,28 +491,60 @@ def test_the_sites_own_cuda_allocator_setting_still_wins(tmp_path, monkeypatch):
     assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == "garbage_collection_threshold:0.6"
 
 
+def test_a_sites_explicitly_empty_allocator_setting_is_respected(tmp_path, monkeypatch):
+    """Set to nothing is a site's choice of torch's own defaults, not an
+    absent setting to fill in."""
+    _clear_site_env(monkeypatch)
+    _clear_allocator_env(monkeypatch)
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "")
+    bundle, script = _rendered(tmp_path)
+    assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == ""
+    assert "export PYTORCH_CUDA_ALLOC_CONF=''" in script
+    assert "expandable_segments" not in script
+
+
+def test_a_sites_generic_allocator_setting_is_inherited_without_the_cuda_default(
+        tmp_path, monkeypatch):
+    """torch's headers name PYTORCH_ALLOC_CONF the primary variable; a site that
+    sets it gets it, and no CUDA default beside it to compete with it."""
+    _clear_site_env(monkeypatch)
+    _clear_allocator_env(monkeypatch)
+    monkeypatch.setenv("PYTORCH_ALLOC_CONF", "max_split_size_mb:128")
+    bundle, script = _rendered(tmp_path)
+    assert bundle.env["PYTORCH_ALLOC_CONF"] == "max_split_size_mb:128"
+    assert "PYTORCH_CUDA_ALLOC_CONF" not in bundle.env
+    assert "export PYTORCH_ALLOC_CONF=max_split_size_mb:128" in script
+    assert "expandable_segments" not in script
+
+
 _PRINT_ALLOCATOR = ["python3", "-c",
-                    "import os; print(os.environ.get('PYTORCH_CUDA_ALLOC_CONF'))"]
+                    "import os; print(repr(os.environ.get('PYTORCH_CUDA_ALLOC_CONF')))"]
 
 
 def test_a_local_child_starts_with_the_same_allocator_setting(monkeypatch):
     """A local GPU child (a study, a managed science operation, a judge) is
     not rendered, but it reads long prompts on the same allocator."""
     from steerlab_server.api.executors import LocalExecutor
-    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
-    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "expandable_segments:True\n"
+    _clear_allocator_env(monkeypatch)
+    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "'expandable_segments:True'\n"
     monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
-    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "max_split_size_mb:256\n"
+    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "'max_split_size_mb:256'\n"
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "")
+    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "''\n"
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF")
+    monkeypatch.setenv("PYTORCH_ALLOC_CONF", "max_split_size_mb:128")
+    assert LocalExecutor().run(_PRINT_ALLOCATOR).stdout == "None\n"
 
 
 def test_an_optimized_vector_campaign_cell_script_defaults_the_allocator(
         tmp_path, monkeypatch):
     """A campaign cell builds its own bundle (render_cell_script, through the
-    shared renderer) and passed the setting only when the site set one."""
+    shared renderer) and passes the CUDA setting only when it is non-empty."""
     from steerlab_server.api.executors import JobBundle
     from steerlab_server.api.profile import ServerProfile
     from steerlab_server.experiment import optvec_campaign
     _clear_site_env(monkeypatch)
+    _clear_allocator_env(monkeypatch)
 
     def cell_script():
         bundle = JobBundle(
@@ -516,9 +554,17 @@ def test_an_optimized_vector_campaign_cell_script_defaults_the_allocator(
             stderr_path=str(tmp_path / "e"), script_path=str(tmp_path / "s"),
             manifest_path=str(tmp_path / "bundle.json"))
         return render_slurm_script(bundle)
-    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
     assert "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in cell_script()
     monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
     script = cell_script()
     assert "export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256" in script
     assert "expandable_segments" not in script
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "")
+    script = cell_script()
+    assert "export PYTORCH_CUDA_ALLOC_CONF=''" in script
+    assert "expandable_segments" not in script
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF")
+    monkeypatch.setenv("PYTORCH_ALLOC_CONF", "max_split_size_mb:128")
+    script = cell_script()
+    assert "export PYTORCH_ALLOC_CONF=max_split_size_mb:128" in script
+    assert "PYTORCH_CUDA_ALLOC_CONF" not in script

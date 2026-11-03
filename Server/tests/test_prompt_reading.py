@@ -352,10 +352,26 @@ def test_a_study_run_records_how_it_read_its_prompts(tmp_path, monkeypatch):
         "promptCount": 2, "chunkedPromptCount": 1,
         "longestPromptTokens": 217_230,
         "cudaAllocatorConfig": "expandable_segments:True",
+        "allocatorConfig": None,
     }
     # Every generation ran under that reading, and the scope ended with the run.
     assert seen == [(CUDA_DEFAULT, "engineDefault")] * 4
     assert PR.active_reading.get() is None
+
+
+def test_the_record_states_both_allocator_settings_as_set():
+    """An empty value is recorded as empty (a site's choice of torch's
+    defaults), and torch's generic name is recorded beside the CUDA one."""
+    reading = PR.resolve_prompt_reading("cuda")
+    entry = PR.record(reading, device="cuda", counts=[[10]], environ={
+        "PYTORCH_CUDA_ALLOC_CONF": "", "PYTORCH_ALLOC_CONF": "max_split_size_mb:128"})
+    assert (entry["cudaAllocatorConfig"], entry["allocatorConfig"]) == (
+        "", "max_split_size_mb:128")
+    unset = PR.record(reading, device="cuda", counts=[[10]], environ={})
+    assert (unset["cudaAllocatorConfig"], unset["allocatorConfig"]) == (None, None)
+    off_cuda = PR.record(PR.resolve_prompt_reading("mps"), device="mps", counts=[[10]],
+                         environ={"PYTORCH_ALLOC_CONF": "x"})
+    assert (off_cuda["cudaAllocatorConfig"], off_cuda["allocatorConfig"]) == (None, None)
 
 
 def test_a_submission_plan_reaches_the_record_with_its_basis(tmp_path, monkeypatch):
