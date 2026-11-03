@@ -711,14 +711,6 @@ def run_directory_reading(run_directory: str):
     return reading, None, note
 
 
-def _has_generations(run_directory: str) -> bool:
-    try:
-        return os.path.getsize(os.path.join(run_directory,
-                                            "generations.jsonl")) > 0
-    except OSError:
-        return False
-
-
 def parked_reading(run_directory: str | None) -> PromptReading | None:
     """The reading a resumed run continues with when neither a declaration
     nor a plan outranks it: the parked run's own, from its record, or for a
@@ -726,14 +718,20 @@ def parked_reading(run_directory: str | None) -> PromptReading | None:
     (:func:`run_directory_reading`), with source resumedRun and a basis that
     says which.
 
-    None when it cannot be established (an unreadable record, no device
-    named), and for a run with no record that has generated nothing yet: no
-    prompt has been read, so there is no reading to keep. The environment or
-    the device default then applies, and the resume guard decides."""
+    Always the parked run's reading whenever it can be established, even
+    for a run checkpointed before its first record or a panel whose turns
+    are not yet flattened: the resume guard compares with the same reading
+    (``run_preflight.prompt_reading_admission``), so the continuation and
+    the run it continues can never disagree, and a resume replayed from the
+    same script is never refused for the reading it would have chosen.
+
+    None only when it cannot be established (an unreadable record, no
+    device named); the environment or the device default then applies, and
+    the resume guard decides."""
     if not run_directory or not os.path.isdir(run_directory):
         return None
     then, entry, note = run_directory_reading(run_directory)
-    if then is None or (entry is None and not _has_generations(run_directory)):
+    if then is None:
         return None
     basis = {"resumedRun": os.path.basename(os.path.normpath(run_directory))}
     if entry is not None:

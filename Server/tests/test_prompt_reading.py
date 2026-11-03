@@ -651,6 +651,30 @@ def test_a_0919_cuda_run_with_a_long_prompt_resumes_through_the_bundle_path_in_o
     assert "promptReading" not in _config(run_dir)["notes"]
 
 
+def test_a_0919_cuda_run_checkpointed_before_its_first_record_resumes_in_one_pass(
+        tmp_path, monkeypatch):
+    """Review, item 1(a): parked by 0.9.19 on CUDA before any record was
+    written (resume-state, an empty generations.jsonl, a 217,230-token
+    prompt). Its reading is still that release's single pass; resumed with
+    no plan it continues so, instead of being refused for the CUDA default
+    with a repair that replays the same script."""
+    root = str(tmp_path)
+    prompts, run_dir = _parked(root, "reading-before-first", monkeypatch)
+    assert os.path.exists(os.path.join(run_dir, "resume-state.json"))
+    with open(os.path.join(run_dir, "generations.jsonl"), "w", encoding="utf-8"):
+        pass
+    _as_historic(run_dir)
+    before = open(os.path.join(run_dir, "config.json"), "rb").read()
+    readings = []
+    _patch(monkeypatch, seen=readings)
+    assert tasks.run("reading-before-first", prompts, root, model_provider=_cuda_model,
+                     log=lambda *_: None, run_directory=run_dir) == run_dir
+    assert readings and all(entry == ({"mode": "singlePass"}, "resumedRun")
+                            for entry in readings)
+    assert len([r for r in _records(run_dir) if "output" in r]) == 4
+    assert open(os.path.join(run_dir, "config.json"), "rb").read() == before
+
+
 def test_a_0919_run_whose_study_declares_chunks_is_refused(tmp_path, monkeypatch):
     """The declaration outranks the parked run's own reading, so a study
     declaring chunks of 4,096 above 8,192 cannot continue a run that read a
@@ -935,6 +959,40 @@ def test_a_parked_panel_refuses_to_resume_under_another_rule(tmp_path, monkeypat
         "panel", manifest, model, str(root), run_directory=parked,
         log=lambda *_: None) == parked
     assert [(r.rule(), r.source) for r in readings] == [(CUDA_DEFAULT, "resumedRun")]
+
+
+def test_a_0919_cuda_panel_with_turns_but_no_generations_resumes_in_one_pass(
+        tmp_path, monkeypatch):
+    """Review, item 1(b): a panel 0.9.19 left on a CUDA node (its platform
+    says so), with no promptReading record and no flattened
+    generations.jsonl. Its reading is that release's single pass, and it
+    resumes with it rather than being refused for the CUDA default."""
+    from steerlab_server.experiment import panel_workflow
+    root, manifest = _real_panel_workspace(tmp_path, monkeypatch)
+    model = SimpleNamespace(model_id="m", revision="r", device="cuda")
+    flag = resume_mod.CheckpointFlag()
+    flag.request()
+    with pytest.raises(resume_mod.CheckpointRequested) as caught:
+        panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
+                                             checkpoint=flag, log=lambda *_: None)
+    parked = caught.value.run_directory
+    config = _config(parked)
+    config["notes"].pop("promptReading")
+    config["platform"] = "Linux-6.1-x86_64"
+    with open(os.path.join(parked, "config.json"), "w", encoding="utf-8") as handle:
+        json.dump(config, handle)
+    flattened = os.path.join(parked, "generations.jsonl")
+    if os.path.exists(flattened):
+        os.remove(flattened)
+    readings = []
+    monkeypatch.setattr(
+        panel_workflow, "_panel_prompt_reading",
+        _recording(panel_workflow._panel_prompt_reading, readings))
+    assert panel_workflow.run_multi_agent_study(
+        "panel", manifest, model, str(root), run_directory=parked,
+        log=lambda *_: None) == parked
+    assert [(r.rule(), r.source) for r in readings] == [
+        ({"mode": "singlePass"}, "resumedRun")]
 
 
 def _recording(function, readings):

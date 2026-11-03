@@ -1479,10 +1479,12 @@ def _reading_plan(preflight: dict | None, manifest: Manifest | None,
 
 
 #: The verbs whose run directory records the reading it was started with
-#: (``config.json`` ``notes.promptReading``) and whose resume the engine
-#: guards against a different one. A sweep neither records nor compares its
-#: reading, so a resumed sweep is planned again from the same inputs.
-_RECORDED_READING_VERBS = ("run", "pipeline")
+#: (``config.json`` ``notes.promptReading``), so a resume of one continues
+#: with that reading. A run's and a pipeline's resume is also guarded
+#: against a different one; a sweep records its reading but its resume
+#: compares none, so carrying the sweep's own reading is what keeps a
+#: resumed sweep from being read by a fresh plan.
+_RECORDED_READING_VERBS = ("run", "pipeline", "sweep")
 
 
 def _recorded_run_directory(directory: str, verb: str) -> str | None:
@@ -1514,10 +1516,10 @@ def _resumed_reading_plan(run_directory: str | None, target_root: str, *,
     chunks above 4,096). Sent as the plan so the memory check prices it and
     the job record states it. A study that declares a reading sends its
     declaration (the engine applies it first anyway). None — plan as a
-    fresh submission does — for a verb that records no reading, a run that
-    has generated nothing yet (no prompt has been read, so nothing can mix),
-    and a record or device that cannot be established (the engine's guard
-    then says why).
+    fresh submission does — for a verb that records no reading, and a record
+    or device that cannot be established (the engine's guard then says why).
+    A run checkpointed before its first record still carries its reading:
+    the guard compares with that same reading.
     """
     from ..experiment import prompt_reading
     if not run_directory or verb not in _RECORDED_READING_VERBS:

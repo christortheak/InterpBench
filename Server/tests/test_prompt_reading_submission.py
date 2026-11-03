@@ -538,21 +538,41 @@ def test_a_historic_mps_run_resumes_locally_with_that_releases_mps_rule(site):
     assert pr.rule_of_plan(_plan_in(submission.command)) == pr.MPS_DEFAULT
 
 
-def test_a_run_that_generated_nothing_is_planned_afresh(site):
-    # No prompt has been read yet, so there is no reading to keep: the
-    # submission plans as a fresh one does (here, the CUDA default).
-    run = _parked_run(site, "empty", device=None)
+def test_a_0919_run_checkpointed_before_its_first_record_carries_its_reading(site):
+    # Review, item 1(a): 0.9.19 on CUDA, checkpointed before any record was
+    # written, with prompts over 8,192 tokens. Its reading is still that
+    # release's single pass, and the guard compares with exactly that, so
+    # the submission carries it rather than the CUDA default it would refuse.
+    run = _parked_run(site, "before-first", device=None, config={
+        "runType": "run", "platform": "Linux-6.1-x86_64"})
+    (site["root"] / run / "generations.jsonl").write_text("", encoding="utf-8")
+    plan = _plan_in(_submit(site, resume_directory=run,
+                            target_root=str(site["root"])).command)
+    assert pr.rule_of_plan(plan) == {"mode": "singlePass"}
+    assert plan["basis"]["resumedRun"] == "before-first"
+    _admit(site, run, _engine_reading(plan))
+
+
+def test_a_run_whose_device_cannot_be_established_is_planned_afresh(site):
+    # Neither a record nor a device: the reading cannot be established, so
+    # the submission plans as a fresh one does and the engine's guard says
+    # what it cannot show.
+    run = _parked_run(site, "unknown", device=None)
     plan = _plan_in(_submit(site, resume_directory=run,
                             target_root=str(site["root"])).command)
     assert pr.rule_of_plan(plan) == pr.CUDA_DEFAULT
     assert "resumedRun" not in plan["basis"]
 
 
-def test_a_resumed_sweep_is_planned_afresh(site):
-    # A sweep records no reading and its resume is not guarded, so a parked
-    # sweep is never mistaken for a run from before readings were recorded.
-    run = _parked_run(site, "sweep", config={"runType": "sweep",
-                                             "platform": "Linux-6.1-x86_64"})
+def test_a_resumed_sweep_carries_its_own_reading(site):
+    # A sweep records its reading; its resume compares none, so the
+    # submission carries the sweep's own reading rather than a fresh plan.
+    recorded = pr.record(pr.PromptReading.chunked(1024, 8192, source="submission"),
+                         device="cuda:0", counts=None, environ={})
+    run = _parked_run(site, "sweep", record=recorded,
+                      config={"runType": "sweep"})
     plan = _plan_in(_submit(site, verb="sweep", resume_directory=run,
                             target_root=str(site["root"])).command)
-    assert "resumedRun" not in (plan or {}).get("basis", {})
+    assert pr.rule_of_plan(plan) == {"mode": "chunked", "chunkTokens": 1024,
+                                     "aboveTokens": 8192}
+    assert plan["basis"]["resumedRun"] == "sweep"
