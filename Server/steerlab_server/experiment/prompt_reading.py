@@ -26,9 +26,11 @@ manifest's verify, the authoring verb, the engine's plan and declaration
 parsing, and the run record.
 
 Resolution order (:func:`resolve_prompt_reading`): the study's declaration,
-else the submission's plan, else the ``STEERLAB_PREFILL_CHUNK`` environment
-override, else the device default (MPS chunked 1024 above 4096; CUDA chunked
-4096 above 8192; CPU single pass).
+else the submission's plan, else, for a resumed run, the parked run's own
+reading (source ``resumedRun``: its record, or for a run made before 0.9.20
+the rule that release used on its device; :func:`parked_reading`), else the
+``STEERLAB_PREFILL_CHUNK`` environment override, else the device default
+(MPS chunked 1024 above 4096; CUDA chunked 4096 above 8192; CPU single pass).
 
 The module has four parts: the rule; the engine's resolution, run scopes,
 record, and resume/merge comparison; the capability the engine advertises
@@ -114,7 +116,8 @@ CUDA_PREFILL_CHUNK_THRESHOLD = 8192
 PREFILL_CHUNK_ENV = "STEERLAB_PREFILL_CHUNK"
 #: The CUDA allocator setting a run records (never guards on: the setting
 #: changes where tensors live, not what is computed; 100 of 100 seeded texts
-#: were identical with and without it).
+#: were identical with and without it). The one definition of both names:
+#: ``api.executors`` sets the job default under them.
 CUDA_ALLOCATOR_ENV = "PYTORCH_CUDA_ALLOC_CONF"
 #: torch's device-generic name for the allocator settings (read first).
 ALLOCATOR_ENV = "PYTORCH_ALLOC_CONF"

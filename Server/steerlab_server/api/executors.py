@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from ..experiment.prompt_reading import ALLOCATOR_ENV, CUDA_ALLOCATOR_ENV
 from ..experiment.resume import CHECKPOINT_EXIT_CODE
 from .profile import ServerProfile
 from .site_environment import (
@@ -539,14 +540,13 @@ _DRAIN_JOIN_SECONDS = 5.0
 #: but fragmented. It changes where tensors live, not what is computed (100
 #: of 100 seeded texts were identical with and without it), so runs record
 #: it (bundle.json's env; a study run's notes.promptReading) and no guard
-#: compares it.
-CUDA_ALLOCATOR_ENV = "PYTORCH_CUDA_ALLOC_CONF"
+#: compares it. The two variable names are defined once, beside the run
+#: record that reads them (``prompt_reading``).
 CUDA_ALLOCATOR_DEFAULT = "expandable_segments:True"
-#: torch's device-generic name for the same settings. Its headers (2.13,
+#: torch's device-generic name first: its headers (2.13,
 #: c10/core/AllocatorConfig.h) name it the primary variable, with
 #: PYTORCH_CUDA_ALLOC_CONF read at lower priority for backward
 #: compatibility, so a site that sets it gets no CUDA default beside it.
-ALLOCATOR_ENV = "PYTORCH_ALLOC_CONF"
 ALLOCATOR_ENVS = (ALLOCATOR_ENV, CUDA_ALLOCATOR_ENV)
 
 
