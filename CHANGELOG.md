@@ -12,6 +12,70 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A very long prompt now fits on one CUDA GPU, and a study that cannot fit
+  is refused before the queue** (public issue #6). A 27-billion-parameter
+  hybrid model ran out of an 80 GB card on an 82,000-token prompt, although
+  its finished cache needed under 6 GB: the engine read every CUDA prompt in
+  one pass, and that pass's working memory, not the cache, ran out. CUDA now
+  reads a prompt over 8,192 tokens in 4,096-token chunks, which fill the
+  key-value cache in turn and leave the final prompt token to generation, as
+  the Mac's MPS path already did; every token still attends to every earlier
+  one, and a 217,000-token prompt fits the same card. Prompts of 8,192 tokens
+  or fewer are read exactly as before. Chunked and single-pass reading round
+  differently, so seeded texts can part at a near-tie; each run therefore
+  records how it read its prompts in `config.json` (`notes.promptReading`:
+  the rule, where it came from, the device, how many prompts were chunked,
+  and the CUDA memory setting in force), and a resume or shard merge never
+  mixes two readings. A resumed run that declares nothing keeps the reading
+  it started with, so a run parked under 0.9.19 continues in one pass when
+  `remote resubmit` replays it; a study's declaration or a submission's plan
+  that would read the parked prompts differently is refused with a repair.
+  A study can declare its own reading with `experiment set-prompt-reading`
+  on either client (`--single-pass`, or `--chunk-tokens N --above-tokens M`);
+  the declaration is frozen with the study, applies to the Python engine,
+  and gets one advisory on the Mac's MLX engine, which reads in its own
+  512-token steps. Servers advertise `remoteStudy.promptReading` and describe
+  how they read long prompts on each device (and that they never split a
+  model across GPUs); both clients refuse to send a declaring study's run,
+  sweep, or pipeline to an older server, which would ignore it. Local judges
+  read their prompts by the device's default rule whatever the study
+  declares, record it beside their dtype, and a targeted evaluation resume
+  refuses to mix two judge readings. The submission's memory check now sizes
+  a run by its longest prompt, counted as the run counts it (from the
+  controller's cached tokenizer; it says so when it cannot), plus the answer
+  and reasoning budgets, and prices the cache by layer type (full, sliding
+  window, or linear attention). It refuses only when the weights and the
+  cache cannot fit the requested card; the prompt pass's working memory is
+  an estimate, so it advises, and so does a cache priced by assumption. On
+  CUDA every job of one submission (each shard, the continuation after a
+  merge, a resubmit) gets the same reading; the default steps down to 2,048,
+  1,024, or 512 tokens only when it would not fit, with a note that those
+  texts will not match the default's token for token. Every GPU job the
+  server renders now defaults `PYTORCH_CUDA_ALLOC_CONF` to
+  `expandable_segments:True`, which let a fragmented 217,000-token read
+  succeed; a site's own value under either of torch's names wins, and in a
+  researcher's comparison 100 of 100 seeded texts were identical with and
+  without it. CUDA runs record each record's peak GPU memory in
+  `device-memory.jsonl`, summarised in `device-memory.json`. Runs made on a
+  test build that already read in chunks carry no record and are taken as
+  single pass: do not resume or merge them on this release.
+- **Check on a cluster job from the command line** (public issue #7).
+  `steerlab-cli remote status <job-id>` (and `steerlab runner status`)
+  answers in one call that returns: why a waiting job waits and when the
+  scheduler expects to start it; where a running job runs and how much of its
+  time limit is left; how many records it has written and when the last one
+  landed, counted the way a resume counts them; what the scheduler recorded
+  when it ended (`result.schedulerOutcome`: a time limit, memory, a
+  preemption, a node failure, or a cancel, saying whether SteerLab asked for
+  it); and each part of a split run. It reads the scheduler through the
+  site's configured commands, only for jobs this server submitted, within 30
+  seconds. `remote logs <job-id> --tail N` (and `runner logs --tail N`)
+  prints the last lines of the controller's log and of the job's own
+  scheduler output, then exits. A cluster job's `startedAt` is now the
+  scheduler's start time, empty while it waits (a split run's is its first
+  part's); `createdAt` stays the submission time. An older engine is refused
+  with `jobStatusUnsupported`.
+
 ## [0.9.19] — 2026-10-31
 
 - **The app's command line now says when SteerLab is out of date, and can
