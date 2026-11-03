@@ -923,6 +923,32 @@ def render_reader(text: str, *, model_id: str, rendering=None) -> str:
     return text
 
 
+def render_for_generation(tokenizer, prompt: str, *, model_id: str,
+                          transcript: list | None = None,
+                          prompt_mode: str = CHAT_ASSISTANT,
+                          system_prompt: str | None = None,
+                          qwen_thinking_enabled: bool = False,
+                          reasoning_effort: str | None = None) -> RenderedPrompt:
+    """What a measured generation renders for one study item: the item's
+    whole scripted ``transcript`` when it has one (whose own system turn
+    replaces ``system_prompt``), else the prompt text.
+
+    ONE function for the generation path (``generate.stream_generate``) and
+    for anything that must know the length generation will read (the run's
+    prompt-reading record), so the two cannot disagree. A transcript item's
+    ``prompt`` is only its display text, the final user turn."""
+    if transcript is not None:
+        return render_transcript(
+            tokenizer, transcript, model_id=model_id, prompt_mode=prompt_mode,
+            system_prompt=system_prompt,
+            qwen_thinking_enabled=qwen_thinking_enabled,
+            reasoning_effort=reasoning_effort)
+    return render(tokenizer, prompt, model_id=model_id, prompt_mode=prompt_mode,
+                  system_prompt=system_prompt,
+                  qwen_thinking_enabled=qwen_thinking_enabled,
+                  reasoning_effort=reasoning_effort)
+
+
 def render_messages(tokenizer, messages: list[dict], *, model_id: str,
                     prompt_mode: str = CHAT_ASSISTANT,
                     system_prompt: str | None = None,

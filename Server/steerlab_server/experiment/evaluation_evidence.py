@@ -291,6 +291,9 @@ def judging_context(manifest, spec, run_dir: str, rubric_hash: str | None,
             "dtype": r.dtype if r.kind == "local" else None,
             "provider": (paired_judge.canonical_openrouter_provider(r.provider)
                          if r.kind == "openrouter" else None),
+            # How a local judge reads its prompts: the device default where
+            # its model will load (judge_resources.judge_prompt_reading).
+            **({"promptReading": _local_judge_reading()} if r.kind == "local" else {}),
         })
     return {
         "schemaVersion": 2,
@@ -309,6 +312,49 @@ def judging_context(manifest, spec, run_dir: str, rubric_hash: str | None,
             if structured else None),
         "judges": judges,
     }
+
+
+def _local_judge_reading() -> dict:
+    """The reading a local judge will use: the default for the device the
+    engine loads models on."""
+    from ..steering import model_loader
+    from . import judge_resources
+    return judge_resources.judge_reading_record(model_loader.resolve_device(None))
+
+
+def _judge_reading_admission(resume_from, judge_name, before, now, log) -> None:
+    """Refuse to finish an evaluation whose local judge would read its
+    prompts differently from the session that started it.
+
+    A judge's verdicts are generated text, and chunked and single-pass
+    readings do not give identical texts, so a column judged half one way
+    and half the other is two judges under one name. The judge's rule is the
+    device default, so this refuses only when the two sessions ran on
+    different kinds of device. A session made before judges recorded their
+    reading (0.9.19 and earlier) is not compared, and says so."""
+    if now is None:
+        return
+    if before is None:
+        log(f"note: '{resume_from}' was judged before judges recorded how they "
+            f"read their prompts; judge '{judge_name}' read them by that "
+            "release's rule, which cannot be compared with this session's")
+        return
+    from . import prompt_reading
+    a = prompt_reading.reading_from_record(before)
+    b = prompt_reading.reading_from_record(now)
+    if a is not None and b is not None and a.reads_like(b):
+        return
+    said = lambda entry, reading: (
+        f"{reading.describe()} on {str(entry.get('device') or 'its device').upper()}"
+        if reading is not None else "an unreadable rule")
+    raise RuntimeError(
+        f"cannot resume '{resume_from}': judge '{judge_name}' read its prompts "
+        f"as {said(before, a)} in the earlier session, but would read them as "
+        f"{said(now, b)} here; chunked and single-pass readings do not give "
+        "identical verdict texts, so finishing here would mix two judge "
+        "readings in one column. Finish the evaluation on an engine with the "
+        f"same kind of device ({str(before.get('device') or 'the earlier one').upper()}), "
+        "or run a fresh evaluate")
 
 
 def load_resumable_judgments(name: str, resume_from: str, root: str | None,
@@ -371,11 +417,16 @@ def load_resumable_judgments(name: str, resume_from: str, root: str | None,
         prior = before_judges.get(judge["name"])
         if prior is None:
             continue  # a judge added since: it simply has nothing to reuse
-        if prior != judge:
+        without_reading = lambda entry: {k: v for k, v in entry.items()
+                                         if k != "promptReading"}
+        if without_reading(prior) != without_reading(judge):
             raise RuntimeError(
                 f"cannot resume '{resume_from}': judge '{judge['name']}' was "
                 f"configured differently ({prior} vs {judge}) — its earlier "
                 "verdicts came from a different judge. Run a fresh evaluate")
+        _judge_reading_admission(resume_from, judge["name"],
+                                 prior.get("promptReading"),
+                                 judge.get("promptReading"), log)
 
     rows: dict[tuple[str, tuple[str, str, str]], dict] = {}
     path = os.path.join(partial, "judgments.jsonl")

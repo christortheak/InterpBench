@@ -1354,8 +1354,11 @@ picks the rule in this order:
    frozen, since it is part of the frozen manifest and its hash);
 2. the submission's plan, which the client sends when the default would not
    fit the card you asked for, and says so in an advisory;
-3. the `STEERLAB_PREFILL_CHUNK` setting on the engine, as before (a whole
-   number of tokens per chunk, or 0 for a single pass);
+3. the `STEERLAB_PREFILL_CHUNK` setting, as before (a whole number of
+   tokens per chunk, or 0 for a single pass). It applies only where it is
+   set: a local run, or a job the server runs on its own machine. A Slurm
+   job starts with a bare environment and never sees it, so declare a
+   reading in the study instead when a cluster run must follow it;
 4. the engine's default for the device: on CUDA, prompts over 8,192 tokens in
    chunks of 4,096; on MPS, prompts over 4,096 tokens in chunks of 1,024; on
    CPU, a single pass. Through 0.9.19, CUDA always read in a single pass.
@@ -1371,12 +1374,18 @@ where it came from (`studyDeclaration`, `submission`, `environment`, or
 `engineDefault`), the plan's `basis` when the submission sent one, the device,
 how many of the study's task prompts there are, how many were read in chunks
 under at least one arm's rendering, the longest prompt's token count, and
-`cudaAllocatorConfig`, the CUDA allocator setting in force. A panel records the
-rule and leaves the three counts empty, since its turn prompts grow while it
-runs. On CUDA, `device-memory.json` holds the run's peak allocated and reserved
-GPU memory, and `device-memory.jsonl` the peak of each generated record (beside
-the records, not in them); on other devices the file says the peaks were not
-measured.
+`cudaAllocatorConfig` and `allocatorConfig`, the CUDA allocator settings in
+force under their two names. A panel records the rule and leaves the three
+counts empty, since its turn prompts grow while it runs; a sweep records the
+rule the same way. A scripted-transcript item is counted as the whole
+conversation generation reads, not its display text. On CUDA,
+`device-memory.json` holds the run's peak allocated and reserved GPU memory
+(empty until something is measured) and every card the run used, and
+`device-memory.jsonl` the peak of each generated record and the card it ran on
+(beside the records, not in them; a record generated again after a crash
+counts once, by its last line); on other devices the file says the peaks were
+not measured. A J-lens readout labels the final prompt token `prefill` even
+when a chunked reading leaves it for its own pass.
 
 **A run never mixes two readings.** Resuming a run, or merging a fan-out's
 shards, compares how each part reads the study's prompts, and refuses when
@@ -1386,18 +1395,27 @@ actually happens to the prompts, not how the rule is spelled or where it came
 from, so a declared 4096 above 8192 equals the CUDA default, and a run made by
 0.9.19 on CUDA (a single pass, by that release's rule) resumes on 0.9.20 when
 none of its prompts is longer than 8,192 tokens. The refusal names both
-readings and the repair: finish the run on the engine release that started
-it, or start a new run. A run made before 0.9.20 on MPS is taken as read by
+readings and the repair. Resume through a submission
+(`steerlab-server study submit <study> --verb run --resume runs/<run>`),
+which reads the prompts the way the parked run recorded them, or the way its
+release did; or finish the run on the engine release that started it; or
+start a new run. Replaying a job's original script (`remote resubmit`) reads
+the way that script was first submitted, so it is not the repair.
+A local judge is its own instrument: it always reads by the device default,
+records its reading in the judge report, and a targeted evaluation resume
+(`--resume-from`) refuses when the earlier session's judge read differently. A run made before 0.9.20 on MPS is taken as read by
 that release's default; a `STEERLAB_PREFILL_CHUNK` value set then was not
 recorded and cannot be checked.
 
 **The GPU allocator setting.** Every GPU job the server starts, and every local
 child, begins with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` unless
-the site sets its own, which wins. Without it, a chunked 217,000-token reading
-failed with 8.7 GiB of GPU memory reserved but too fragmented to use. The
-setting changes where data lives in memory, not what is computed (100 of 100
-seeded texts were identical with and without it), so runs record it but never
-refuse on it.
+the site sets its own allocator setting, which wins: under that name or
+torch's generic `PYTORCH_ALLOC_CONF` (which torch reads first), and even set
+to nothing, which keeps torch's own defaults. Without it, a chunked
+217,000-token reading failed with 8.7 GiB of GPU memory reserved but too
+fragmented to use. The setting changes where data lives in memory, not what
+is computed (100 of 100 seeded texts were identical with and without it), so
+runs record it but never refuse on it.
 
 **Limits.** Answer-token scoring (the `answerTokenLogprob` instrument) still
 reads its prompt in one pass. The rule says how a prompt is read, not whether

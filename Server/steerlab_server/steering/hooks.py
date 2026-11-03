@@ -181,6 +181,11 @@ class HookedModel:
         self._last_layer_index = len(self.layers) - 1
         self._cumulative_offset = 0
         self._current_offset = 0
+        #: The current generation's prompt length, when the generation path
+        #: states it (``generate._stream_rendered``), so the diagnostic
+        #: counters can tell the final prompt token, which a chunked reading
+        #: leaves for generation's first one-token pass, from a decode step.
+        self.prompt_token_count: int | None = None
         #: Filled ONLY under STEERLAB_MEMORY_DIAGNOSTIC (open-issues §15) —
         #: None in every ordinary run, so nothing reads or writes it.
         self.counters: dict[str, int] | None = None
@@ -312,6 +317,10 @@ class HookedModel:
 
         def hook(_module, _inputs, output):
             armed = len(self._interventions)
+            # The pass's first position, read before the real hook runs: on
+            # a one-block model the first layer is also the last, where the
+            # offset advances.
+            start = self._cumulative_offset
             result = base(_module, _inputs, output)
             counters["hookFires"] += 1
             if armed:
@@ -330,11 +339,13 @@ class HookedModel:
                         counters["outputTuplesRebuilt"] += 1
             if index == 0:
                 # Layer 0 fires exactly once per forward pass, so it is where
-                # passes are counted. seq_len 1 is a decode step; anything
-                # longer is a prefill (or prefill chunk) pass.
+                # passes are counted. A one-token pass is a decode step unless
+                # it reads a prompt position: a chunked reading leaves the
+                # final prompt token for generation's first pass.
                 seq_len = int(_hidden_of(result).shape[1])
                 counters["forwardPasses"] += 1
-                if seq_len == 1:
+                prompt = self.prompt_token_count
+                if seq_len == 1 and (prompt is None or start >= prompt):
                     counters["decodeSteps"] += 1
                 else:
                     counters["prefillTokens"] += seq_len

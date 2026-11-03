@@ -16,11 +16,13 @@ GIB = 1024 ** 3
 
 
 class _FakeAllocator:
-    """Stands in for torch.cuda's peak counters on one 80 GB card."""
+    """Stands in for torch.cuda's peak counters on one card (80 GB unless
+    ``card`` says otherwise)."""
 
     def __init__(self):
         self.allocated = self.reserved = 0
         self.resets = 0
+        self.card = SimpleNamespace(name="Example 80GB", total_memory=80 * GIB)
 
     def install(self, monkeypatch):
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
@@ -31,8 +33,7 @@ class _FakeAllocator:
         monkeypatch.setattr(torch.cuda, "max_memory_reserved",
                             lambda device=None: self.reserved)
         monkeypatch.setattr(torch.cuda, "get_device_properties",
-                            lambda device=None: SimpleNamespace(
-                                name="Example 80GB", total_memory=80 * GIB))
+                            lambda device=None: self.card)
         return self
 
     def reset(self, device=None):
@@ -74,10 +75,13 @@ def test_each_generation_is_measured_and_the_run_keeps_its_maximum(
             for line in _lines(tmp_path)] == [
         ("a", 71 * GIB, 78 * GIB), ("b", 56 * GIB, 60 * GIB)]
     summary = _summary(tmp_path)
-    assert (summary["measured"], summary["device"], summary["deviceName"],
-            summary["totalBytes"], summary["recordCount"],
+    assert (summary["measured"], summary["device"], summary["recordCount"],
             summary["peakAllocatedBytes"], summary["peakReservedBytes"]) == (
-        True, "cuda", "Example 80GB", 80 * GIB, 2, 71 * GIB, 78 * GIB)
+        True, "cuda", 2, 71 * GIB, 78 * GIB)
+    assert summary["devices"] == [{"deviceName": "Example 80GB", "totalBytes": 80 * GIB}]
+    # Each line names the card it was measured on.
+    assert all((line["deviceName"], line["totalBytes"]) == ("Example 80GB", 80 * GIB)
+               for line in _lines(tmp_path))
     # A resumed run continues the same files and keeps the earlier maximum.
     resumed = device_memory.DeviceMemoryLog(str(tmp_path), model, resuming=True)
     with resumed.measure(condition="steered", promptID="a", promptIndex=0,
@@ -86,6 +90,54 @@ def test_each_generation_is_measured_and_the_run_keeps_its_maximum(
     summary = _summary(tmp_path)
     assert (summary["recordCount"], summary["peakAllocatedBytes"]) == (3, 71 * GIB)
     assert len(_lines(tmp_path)) == 3
+
+
+def test_nothing_measured_yet_reads_as_unknown_not_zero(tmp_path, monkeypatch):
+    _FakeAllocator().install(monkeypatch)
+    device_memory.DeviceMemoryLog(str(tmp_path), SimpleNamespace(device="cuda"))
+    summary = _summary(tmp_path)
+    assert summary["measured"] is True and summary["recordCount"] == 0
+    assert summary["peakAllocatedBytes"] is None
+    assert summary["peakReservedBytes"] is None
+    assert summary["devices"] == []
+
+
+def test_a_record_generated_again_after_a_crash_counts_once_by_its_last_line(
+        tmp_path, monkeypatch):
+    """Measured, then lost before its record was written: the record is
+    generated again on resume, and its second line is the one that stands."""
+    allocator = _FakeAllocator().install(monkeypatch)
+    model = SimpleNamespace(device="cuda")
+    key = dict(condition="baseline", promptID="a", promptIndex=0, sampleIndex=0, seed=0)
+    log = device_memory.DeviceMemoryLog(str(tmp_path), model)
+    with log.measure(**key):
+        allocator.use(79, 79.5)
+    resumed = device_memory.DeviceMemoryLog(str(tmp_path), model, resuming=True)
+    with resumed.measure(**key):
+        allocator.use(60, 62)
+    assert len(_lines(tmp_path)) == 2  # the file only grows
+    summary = _summary(tmp_path)
+    assert (summary["recordCount"], summary["peakAllocatedBytes"],
+            summary["peakReservedBytes"]) == (1, 60 * GIB, int(62 * GIB))
+
+
+def test_a_run_resumed_on_another_card_says_so(tmp_path, monkeypatch):
+    allocator = _FakeAllocator().install(monkeypatch)
+    model = SimpleNamespace(device="cuda")
+    log = device_memory.DeviceMemoryLog(str(tmp_path), model)
+    with log.measure(condition="baseline", promptID="a", promptIndex=0,
+                     sampleIndex=0, seed=0):
+        allocator.use(71, 78)
+    allocator.card = SimpleNamespace(name="Example 141GB", total_memory=141 * GIB)
+    resumed = device_memory.DeviceMemoryLog(str(tmp_path), model, resuming=True)
+    with resumed.measure(condition="baseline", promptID="b", promptIndex=1,
+                         sampleIndex=0, seed=0):
+        allocator.use(90, 95)
+    assert [line["deviceName"] for line in _lines(tmp_path)] == [
+        "Example 80GB", "Example 141GB"]
+    assert _summary(tmp_path)["devices"] == [
+        {"deviceName": "Example 80GB", "totalBytes": 80 * GIB},
+        {"deviceName": "Example 141GB", "totalBytes": 141 * GIB}]
 
 
 def test_a_failed_generation_is_measured_and_still_fails(tmp_path, monkeypatch):

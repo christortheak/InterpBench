@@ -518,6 +518,29 @@ _DRAIN_JOIN_SECONDS = 5.0
 #: compares it.
 CUDA_ALLOCATOR_ENV = "PYTORCH_CUDA_ALLOC_CONF"
 CUDA_ALLOCATOR_DEFAULT = "expandable_segments:True"
+#: torch's device-generic name for the same settings. Its headers (2.13,
+#: c10/core/AllocatorConfig.h) name it the primary variable, with
+#: PYTORCH_CUDA_ALLOC_CONF read at lower priority for backward
+#: compatibility, so a site that sets it gets no CUDA default beside it.
+ALLOCATOR_ENV = "PYTORCH_ALLOC_CONF"
+ALLOCATOR_ENVS = (ALLOCATOR_ENV, CUDA_ALLOCATOR_ENV)
+
+
+def with_allocator_default(env: dict, source=None) -> dict:
+    """``env`` with the site's allocator settings and, only when neither
+    name is set, the CUDA default. Changes ``env`` in place and returns it.
+
+    A setting is the site's whenever it is SET in ``source`` (the server's
+    own environment by default), even to an empty value: an empty value is
+    a site's explicit choice of torch's defaults, not an absent one. A value
+    already in ``env`` (the caller's) wins over the site's."""
+    source = os.environ if source is None else source
+    for key in ALLOCATOR_ENVS:
+        if key in source and key not in env:
+            env[key] = source[key]
+    if not any(key in env for key in ALLOCATOR_ENVS):
+        env[CUDA_ALLOCATOR_ENV] = CUDA_ALLOCATOR_DEFAULT
+    return env
 
 
 class LocalExecutor:
@@ -564,7 +587,7 @@ class LocalExecutor:
         child_env.pop("SLURM_JOB_ID", None)
         # A local GPU child starts with the same allocator setting a rendered
         # job does; the server's own value (the site's) still wins.
-        child_env.setdefault(CUDA_ALLOCATOR_ENV, CUDA_ALLOCATOR_DEFAULT)
+        with_allocator_default(child_env, source={})
         process = subprocess.Popen(
             command, cwd=cwd, env=child_env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1,
@@ -771,18 +794,18 @@ class SlurmExecutor:
         # runs the provider preflight, whose "why was the catalogue
         # unreachable" wording is this site's declared posture. A value, not a
         # secret, and read-only — it changes no refusal.
-        # PYTORCH_CUDA_ALLOC_CONF joins the inheritance, defaulting to
+        for key in ("HF_HOME", "HF_HUB_OFFLINE", "STEERLAB_NODE_STAGE_DIR",
+                    "STEERLAB_JUDGE_KEY_FILE", "STEERLAB_EXTERNAL_SERVICE_EGRESS"):
+            if os.environ.get(key):
+                env.setdefault(key, os.environ[key])
+        # The allocator settings join the inheritance, defaulting to
         # expandable_segments (2026-11-02): a 217,000-token chunked prompt
         # reading on one 80 GB card failed with 69.4 GiB allocated and 8.7 GiB
         # reserved but unallocated, while a 1.66 GiB attention request found
         # no block large enough. The allocator setting changes where tensors
-        # live, not what is computed. A site's own value still wins.
-        for key in ("HF_HOME", "HF_HUB_OFFLINE", "STEERLAB_NODE_STAGE_DIR",
-                    "STEERLAB_JUDGE_KEY_FILE", "STEERLAB_EXTERNAL_SERVICE_EGRESS",
-                    "PYTORCH_CUDA_ALLOC_CONF"):
-            if os.environ.get(key):
-                env.setdefault(key, os.environ[key])
-        env.setdefault(CUDA_ALLOCATOR_ENV, CUDA_ALLOCATOR_DEFAULT)
+        # live, not what is computed. A site's own value, under either name
+        # and even empty, still wins (with_allocator_default).
+        with_allocator_default(env)
 
         stdout = os.path.join(bundle_dir, "slurm-%j.out")
         stderr = os.path.join(bundle_dir, "slurm-%j.err")
@@ -1292,11 +1315,12 @@ def render_slurm_script(bundle: JobBundle) -> str:
         "# STEERLAB_* values — exporting them after it would silently no-op",
         "# module loads and conda/venv activation (the classic ordering bug).",
     ])
-    # The CUDA allocator default rides every rendered script, including a
-    # bundle a caller assembled without create_bundle (an optimized-vector
-    # campaign cell builds its own); a value in the bundle's env, the site's
-    # or the caller's, still wins.
-    exported = {CUDA_ALLOCATOR_ENV: CUDA_ALLOCATOR_DEFAULT, **bundle.env}
+    # The allocator settings ride every rendered script, including a bundle
+    # a caller assembled without create_bundle (an optimized-vector campaign
+    # cell builds its own, and passes only a non-empty CUDA setting): the
+    # bundle's own value wins, then the site's under either name, then the
+    # CUDA default.
+    exported = with_allocator_default(dict(bundle.env))
     for key, value in sorted(exported.items()):
         lines.append(f"export {key}={shlex.quote(str(value))}")
     lines.extend([

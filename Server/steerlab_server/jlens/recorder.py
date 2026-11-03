@@ -161,13 +161,16 @@ class JLensReadoutRecorder:
         import torch
 
         seq_len = hidden.shape[1]
-        pass_kind = "decode" if seq_len == 1 else "prefill"
         with torch.no_grad():
             for i in range(seq_len):
                 position = offset + i
                 predicted = position - self.prompt_length + 1
                 if predicted < 0:
                     continue      # predicts a prompt token; nobody sampled it
+                # Labelled by POSITION, not by the pass's length: a chunked
+                # reading leaves the final prompt token for generation's
+                # first pass, a one-token pass that is still the prompt.
+                pass_kind = "prefill" if position < self.prompt_length else "decode"
                 h = hidden[0, i]
                 obs = Observation(layer=layer, passKind=pass_kind,
                                   position=position, predictedIndex=predicted)

@@ -220,15 +220,17 @@ def judge_worker(name: str, awaiting_run: str, model: str,
             "for this worker to judge")
     rubric = str(jm.get("rubric") or "")
     structured = jm.get("structuredPrompt")
+    judge_reading = None
     if generate_fn is None:
         slot = model_loader.load(model, revision=revision, dtype=dtype,
                                  device=device)
+        from . import judge_resources
+        judge_reading = judge_resources.judge_reading_record(
+            generate._model_device(slot))
 
         def generate_fn(prompt: str) -> str:  # noqa: PLR0913 - closure
-            return generate.generate(slot, prompt, model_id=model,
-                            max_tokens=paired_judge.JUDGE_MAX_TOKENS,
-                            temperature=0.0,
-                            prompt_mode=prompt_render.CHAT_ASSISTANT)
+            from . import judge_resources
+            return judge_resources.generate_as_judge(slot, prompt, model_id=model)
 
     judge_fn = paired_judge.make_local_judge(generate_fn)
     rows: list[dict] = []
@@ -257,6 +259,9 @@ def judge_worker(name: str, awaiting_run: str, model: str,
         "judgeModel": model,
         **({"revision": revision} if revision else {}),
         **({"dtype": dtype} if dtype and dtype != "auto" else {}),
+        # How this worker's judge read its prompts (its own rule, the
+        # device default; judge_resources.judge_prompt_reading).
+        **({"promptReading": judge_reading} if judge_reading else {}),
         "judges": sorted(judge_names),
         "rows": rows,
     }

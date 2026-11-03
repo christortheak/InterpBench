@@ -27,6 +27,8 @@ from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import ConceptVectors
 
 PR = prompt_reading
+#: The real counter, before any test replaces it with a stand-in.
+REAL_COUNTS = prompt_reading.rendered_token_counts
 CUDA_DEFAULT = {"mode": "chunked", "chunkTokens": 4096, "aboveTokens": 8192}
 
 
@@ -359,10 +361,26 @@ def test_a_study_run_records_how_it_read_its_prompts(tmp_path, monkeypatch):
         "promptCount": 2, "chunkedPromptCount": 1,
         "longestPromptTokens": 217_230,
         "cudaAllocatorConfig": "expandable_segments:True",
+        "allocatorConfig": None,
     }
     # Every generation ran under that reading, and the scope ended with the run.
     assert seen == [(CUDA_DEFAULT, "engineDefault")] * 4
     assert PR.active_reading.get() is None
+
+
+def test_the_record_states_both_allocator_settings_as_set():
+    """An empty value is recorded as empty (a site's choice of torch's
+    defaults), and torch's generic name is recorded beside the CUDA one."""
+    reading = PR.resolve_prompt_reading("cuda")
+    entry = PR.record(reading, device="cuda", counts=[[10]], environ={
+        "PYTORCH_CUDA_ALLOC_CONF": "", "PYTORCH_ALLOC_CONF": "max_split_size_mb:128"})
+    assert (entry["cudaAllocatorConfig"], entry["allocatorConfig"]) == (
+        "", "max_split_size_mb:128")
+    unset = PR.record(reading, device="cuda", counts=[[10]], environ={})
+    assert (unset["cudaAllocatorConfig"], unset["allocatorConfig"]) == (None, None)
+    off_cuda = PR.record(PR.resolve_prompt_reading("mps"), device="mps", counts=[[10]],
+                         environ={"PYTORCH_ALLOC_CONF": "x"})
+    assert (off_cuda["cudaAllocatorConfig"], off_cuda["allocatorConfig"]) == (None, None)
 
 
 def test_a_submission_plan_reaches_the_record_with_its_basis(tmp_path, monkeypatch):
@@ -416,6 +434,22 @@ def test_a_sweep_reads_by_the_studys_declaration(tmp_path, monkeypatch):
                                 log=lambda *_: None) == "swept"
     assert seen == [({"mode": "singlePass"}, "studyDeclaration")]
     assert PR.active_reading.get() is None
+
+
+def test_a_sweep_records_its_reading_in_its_config(tmp_path, monkeypatch):
+    from steerlab_server.experiment import sweep_workflow
+    root = str(tmp_path)
+    _study(root, "reading-sweep-record", promptReading={"mode": "singlePass"})
+    _patch(monkeypatch)
+    # No concepts to sweep: the run directory and its stamp are still written.
+    monkeypatch.setattr(_owner_vector_materialization, "extract_all",
+                        lambda model, manifest, root: {})
+    run_dir = sweep_workflow.sweep("reading-sweep-record", root,
+                                   model_provider=_cuda_model, log=lambda *_: None)
+    entry = _config(run_dir)["notes"]["promptReading"]
+    assert (entry["mode"], entry["source"], entry["device"]) == (
+        "singlePass", "studyDeclaration", "cuda")
+    assert (entry["promptCount"], entry["longestPromptTokens"]) == (None, None)
 
 
 def test_an_unreadable_declaration_refuses_before_any_generation(tmp_path,
@@ -504,7 +538,11 @@ def test_a_resume_under_a_different_reading_refuses(tmp_path, monkeypatch):
     assert "refusing to mix two prompt readings in one run" in message
     assert refusal.value.gate == "manifestEpoch"
     assert refusal.value.repair_action.startswith(
-        "steerlab-server experiment run reading-resume  (a fresh run")
+        "steerlab-server study submit reading-resume --verb run --resume "
+        f"runs/{os.path.basename(run_dir)}  (resume through a submission, which "
+        "reads the prompts as this run recorded;")
+    assert ("start afresh with steerlab-server experiment run reading-resume, "
+            "without --resume") in refusal.value.repair_action
     assert isinstance(refusal.value, resume_mod.ResumeError)
     assert open(os.path.join(run_dir, "generations.jsonl"), "rb").read() == before
 
@@ -558,6 +596,92 @@ def test_a_run_from_0919_with_a_long_prompt_refuses_on_the_cuda_default(
     assert ("it was made before runs recorded their prompt reading, so it is "
             "taken as read by that release's rule on CUDA") in message
     assert "(the longest 217,230 tokens)" in message
+
+
+# --- scripted transcripts: the length generation reads is the conversation's -------
+
+#: A scripted conversation whose earlier turns are long and whose final user
+#: turn, the item's display text, is short.
+LONG_TRANSCRIPT = [
+    {"role": "user", "content": "Read this packet."},
+    {"role": "assistant", "content": "a " * 4600},
+    {"role": "user", "content": "Did you read it? Answer yes or no."},
+]
+
+
+def _transcript_model(model_id, revision=None):
+    from test_transcript_study import FakeTokenizer  # one id per character
+
+    @contextmanager
+    def provider(model_id, revision=None):
+        yield SimpleNamespace(model_id=model_id, revision=revision or "abc",
+                              device="cuda", tokenizer=FakeTokenizer())
+    return provider(model_id, revision)
+
+
+def _transcript_study(root, name):
+    prompts = _study(root, name, ids=("short-note",))
+    with open(prompts, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"id": "conversation", "transcript": LONG_TRANSCRIPT}) + "\n")
+    return prompts
+
+
+def test_a_transcript_items_length_is_the_whole_conversation_generation_reads(
+        monkeypatch):
+    """task_inputs fills a transcript item's ``prompt`` with its final user
+    turn; generation renders the whole conversation. The count must be what
+    generation reads."""
+    from test_transcript_study import FakeTokenizer
+    from steerlab_server.experiment import prompt_render, task_inputs
+    tokenizer = FakeTokenizer()
+    item = {"id": "conversation", "transcript": LONG_TRANSCRIPT}
+    item["prompt"] = prompt_render.transcript_display_text(
+        prompt_render.normalize_transcript(LONG_TRANSCRIPT))
+    setting = {"prompt_mode": "chatAssistant", "system_prompt": None,
+               "qwen_thinking_enabled": False, "reasoning_effort": None}
+    [[counted]] = REAL_COUNTS(tokenizer, "org/m", [item], [setting])
+    # What generation itself renders for the item, through stream_generate.
+    read = []
+
+    def stream_rendered(model, rendered, **_):
+        read.append(rendered.prompt_token_count)
+        return iter(())
+    monkeypatch.setattr(_owner_generate, "_stream_rendered", stream_rendered)
+    list(_owner_generate.stream_generate(
+        SimpleNamespace(model_id="org/m", tokenizer=tokenizer), item["prompt"],
+        transcript=item["transcript"], **setting))
+    assert read == [counted]
+    # The whole conversation, far longer than the display text alone.
+    display = prompt_render.render(tokenizer, item["prompt"], model_id="org/m")
+    assert counted > 9_000 > 8_192 > display.prompt_token_count
+
+
+def test_a_0919_transcript_study_with_long_conversations_refuses_to_resume(
+        tmp_path, monkeypatch):
+    """The display text is a few dozen tokens; the conversation is over 9,000.
+    Counting the display text admitted a single-pass run to be finished in
+    chunks."""
+    root = str(tmp_path)
+    prompts = _transcript_study(root, "reading-transcript")
+    flag = resume_mod.CheckpointFlag()
+    _patch(monkeypatch, counter=[0], flag=flag, after=1)
+    monkeypatch.setattr(PR, "rendered_token_counts", REAL_COUNTS)
+    seen = {}
+    with pytest.raises(resume_mod.CheckpointRequested):
+        tasks.run("reading-transcript", prompts, root, model_provider=_transcript_model,
+                  log=lambda *_: None, checkpoint=flag,
+                  on_run_directory=lambda d: seen.setdefault("dir", d))
+    run_dir = seen["dir"]
+    entry = _config(run_dir)["notes"]["promptReading"]
+    assert entry["longestPromptTokens"] > 9_000
+    assert (entry["promptCount"], entry["chunkedPromptCount"]) == (1, 1)
+    _as_historic(run_dir)
+    _patch(monkeypatch)
+    monkeypatch.setattr(PR, "rendered_token_counts", REAL_COUNTS)
+    with pytest.raises(resume_mod.ResumeRefusal) as refusal:
+        tasks.run("reading-transcript", prompts, root, model_provider=_transcript_model,
+                  log=lambda *_: None, run_directory=run_dir)
+    assert "read its prompts as every prompt in a single pass" in str(refusal.value)
 
 
 def test_the_record_settles_a_definite_difference_before_the_model_loads(tmp_path):
