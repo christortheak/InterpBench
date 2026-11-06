@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.21] — 2026-11-06
+
 - **Answer-token readouts read a long prompt the way generation does**
   (public issue #8). A study run's `answerTokenLogprob`, `choiceProbability`,
   and `ordinalScale` readouts read their whole prompt in one pass, and once
