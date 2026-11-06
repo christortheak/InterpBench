@@ -362,6 +362,8 @@ def test_a_study_run_records_how_it_read_its_prompts(tmp_path, monkeypatch):
         "longestPromptTokens": 217_230,
         "cudaAllocatorConfig": "expandable_segments:True",
         "allocatorConfig": None,
+        # Issue #8: its answer-token readouts read prompts by the same rule.
+        "answerTokenReadoutsFollowRule": True,
     }
     # Every generation ran under that reading, and the scope ended with the run.
     assert seen == [(CUDA_DEFAULT, "engineDefault")] * 4

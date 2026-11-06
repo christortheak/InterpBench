@@ -84,6 +84,12 @@ DECLARATION_KEY = "promptReading"
 #: The run record's key inside config.json's open ``notes`` object: the same
 #: spelling as the declaration, in a different document.
 RECORD_KEY = DECLARATION_KEY
+#: In a study run's record (and, by the same name, in the capability's
+#: description): ``true`` when the run's answer-token readouts read their
+#: prompts by the run's rule, as its generation does (issue #8). A record
+#: without it was written by an engine whose readouts read every prompt in a
+#: single pass at every length, and that run keeps doing so when resumed.
+READOUTS_KEY = "answerTokenReadoutsFollowRule"
 VERB = "set-prompt-reading"
 
 #: The verbs that generate the study's own text, so a submission's plan and
@@ -603,17 +609,22 @@ def rendered_token_counts(tokenizer, model_id: str, prompts: list[dict],
 
 
 def record(reading: PromptReading, *, device, counts: list[list[int]] | None,
-           environ=None) -> dict:
+           environ=None, readouts_follow_rule: bool = False) -> dict:
     """The run's ``notes.promptReading`` object.
 
     ``counts`` (from :func:`rendered_token_counts`) gives ``promptCount`` (the
     study's task prompts), ``chunkedPromptCount`` (those chunked under at
     least one arm's rendering), and ``longestPromptTokens`` (the longest
     rendering of any prompt). None, as for a panel whose turn prompts grow
-    while it runs, leaves all three null: not established at the start."""
+    while it runs, leaves all three null: not established at the start.
+
+    ``readouts_follow_rule`` (a study run) adds :data:`READOUTS_KEY`: the
+    run's answer-token readouts read prompts by this rule. A panel and a
+    sweep, whose readouts (if any) read in a single pass, record no such key."""
     env = os.environ if environ is None else environ
     kind = device_kind(device)
     flat = [n for row in counts or [] for n in row]
+    marker = {READOUTS_KEY: True} if readouts_follow_rule else {}
     return {
         "schemaVersion": RECORD_SCHEMA_VERSION,
         **reading.rule(),
@@ -632,7 +643,53 @@ def record(reading: PromptReading, *, device, counts: list[list[int]] | None,
         "cudaAllocatorConfig": (env.get(CUDA_ALLOCATOR_ENV)
                                 if kind == "cuda" else None),
         "allocatorConfig": (env.get(ALLOCATOR_ENV) if kind == "cuda" else None),
+        **marker,
     }
+
+
+# ------------------------------------------------------------- answer-token readouts
+
+def readouts_follow_rule(entry) -> bool:
+    """Whether a ``notes.promptReading`` record says its run's answer-token
+    readouts read prompts by the run's rule (:data:`READOUTS_KEY` is
+    ``true``). False for no record, for a record without the key, and for
+    any other value."""
+    return isinstance(entry, dict) and entry.get(READOUTS_KEY) is True
+
+
+def readout_reading(reading: PromptReading, *,
+                    resumed_from: str | None = None) -> PromptReading | None:
+    """The reading a study run's answer-token readouts use (issue #8).
+
+    A new run reads them by its own ``reading``, the rule its generation
+    uses, and records so (:data:`READOUTS_KEY`). A resumed run continues as
+    it began: by ``reading`` when the parked run's record carries the key
+    (the resume guard has confirmed ``reading`` reads every prompt as the
+    parked run did), and otherwise None, a single pass at every length, as
+    the engine that started the run read them. A resume never rewrites
+    config.json, so such a run's record keeps saying so."""
+    if resumed_from is None:
+        return reading
+    _then, entry, _note = run_directory_reading(resumed_from)
+    return reading if readouts_follow_rule(entry) else None
+
+
+def recorded_readout_reading(run_directory: str) -> PromptReading | None:
+    """How a run directory's answer-token readouts read prompts: its own
+    rule when its record says they follow it, else a single pass (no
+    record, or a record without :data:`READOUTS_KEY`). None only when its
+    record says they follow a rule it cannot state."""
+    _then, entry, _note = run_directory_reading(run_directory)
+    if readouts_follow_rule(entry):
+        return reading_from_record(entry)
+    return PromptReading.single_pass(source=ENGINE_DEFAULT)
+
+
+def chunks_any_prompt(reading: PromptReading | None) -> bool:
+    """Whether ``reading`` reads any prompt in chunks. A caller hands a
+    readout its reading only then: a single-pass rule reads exactly as no
+    rule does, so passing none keeps that call unchanged."""
+    return reading is not None and reading.mode == CHUNKED
 
 
 def reading_from_record(entry) -> PromptReading | None:
@@ -835,6 +892,9 @@ def engine_description() -> dict:
         "devices": {name: dict(rule) for name, rule in DEVICE_DEFAULTS.items()},
         "environmentOverride": PREFILL_CHUNK_ENV,
         "splitsModelAcrossGPUs": False,
+        # Issue #8: a study run's answer-token readouts read their prompts by
+        # the run's rule, as its generation does (READOUTS_KEY in the record).
+        READOUTS_KEY: True,
         "summary": (
             "This engine reads a long prompt in chunks on CUDA (chunks of "
             f"{CUDA_PREFILL_CHUNK_SIZE:,} tokens for prompts over "
@@ -843,9 +903,11 @@ def engine_description() -> dict:
             f"{PREFILL_CHUNK_THRESHOLD:,} tokens), and in a single pass on "
             "CPU. A study can declare its own reading (promptReading), and a "
             "submission chooses one for every job it starts; the run records "
-            "which reading it used. A model always loads onto one GPU: this "
-            "engine does not split a model across GPUs, so a study must fit "
-            "on one card."),
+            "which reading it used. A study run's answer-token readouts read "
+            "their prompts the same way, so a study that can generate at a "
+            "length can also be read out at it. A model always loads onto "
+            "one GPU: this engine does not split a model across GPUs, so a "
+            "study must fit on one card."),
     }
 
 

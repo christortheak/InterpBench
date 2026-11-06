@@ -12,7 +12,7 @@ from .. import memory_diagnostic
 from ..steering import vector_math as vm
 from ..steering import residual_norm_convention as norm_convention
 from . import command_vocabulary as vocabulary
-from . import judicial, lifecycle_gates, paths, prompt_render
+from . import judicial, lifecycle_gates, paths, prompt_reading, prompt_render
 from . import response_format
 from . import resume as resume_mod
 from . import system_prompt as system_prompt_mod
@@ -787,7 +787,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                        wants_sampled, reader_scorers, should_cancel, log,
                        numeric_parser=None, adapter_active: bool = False,
                        jlens_trace=None, root=None, span_resolutions=None,
-                       device_memory=None) -> bool:
+                       device_memory=None, readout_reading=None) -> bool:
     """The shared per-item executor — ONE measurement pipeline for every
     condition: prompt-metadata copy, the declared deterministic instruments,
     sampled generation, categorical parsing, reader scores, and consistent
@@ -806,7 +806,13 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
     ``generate``/``score_options`` (which render it via
     ``prompt_render.render_transcript``), and their records carry
     ``scriptedTranscript: true`` plus the transcript itself — the transcript
-    is the stimulus, and records are the rebuild-without-rerun archive."""
+    is the stimulus, and records are the rebuild-without-rerun archive.
+
+    ``readout_reading`` (issue #8) is the prompt reading the answer-token
+    readouts read their prompts by: the run's own
+    (``prompt_reading.readout_reading``), so a prompt its generation reads
+    in chunks is read out in the same chunks. None reads every readout's
+    prompt in a single pass, as before."""
     # Condition-scoped transcript gate: variant conditions carry their OWN
     # prompt mode, so a rawCompletion variant over transcript items must
     # refuse at condition start — never as a mid-run template error.
@@ -862,6 +868,13 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
     # the monkeypatched test fakes built against it keep working.
     latent_kwargs = ({"latent_edits": eff.latent_edits}
                      if eff.latent_edits else {})
+    # The readout's prompt reading, threaded the same way: only a rule that
+    # can chunk a prompt is passed (a single-pass rule reads exactly as no
+    # rule does), so every other score_options call is byte-for-byte the
+    # call it was.
+    choice_reading_kwargs = ({"reading": readout_reading}
+                             if prompt_reading.chunks_any_prompt(readout_reading)
+                             else {})
     common = {
         "experiment": name, "experimentHash": experiment_hash,
         "modelID": manifest.model_id, "modelRevision": model.revision,
@@ -915,7 +928,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 prompt_mode=eff.prompt_mode,
                 system_prompt=eff.system_prompt,
                 qwen_thinking_enabled=eff.qwen_thinking_enabled,
-                **transcript_kwargs)
+                **transcript_kwargs, **choice_reading_kwargs)
             check_option_lengths(choice, manifest, prompt["id"])
             # Ordinal-scale fields (cross-engine contract keys
             # "ordinalPosition"/"ordinalDistribution"): the option

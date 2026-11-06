@@ -21,11 +21,17 @@ def _score_choice(model, manifest, prompt: str, options, injections):
         qwen_thinking_enabled=manifest.qwen_thinking_enabled)
 
 
-def battery_backends(model, model_id: str, injections, latent_edits=None):
-    """Compatibility boundary for callers injecting tasks.generate."""
+def battery_backends(model, model_id: str, injections, latent_edits=None,
+                     reading=None):
+    """Compatibility boundary for callers injecting tasks.generate.
+
+    ``reading`` (a study run's capability battery, issue #8) is the prompt
+    reading its choice items are read out by; passed on only when given, so
+    every other caller's call is unchanged."""
     from .runtime_backends import battery_backends
+    reading_kwargs = {"reading": reading} if reading is not None else {}
     return battery_backends(model, model_id, injections, latent_edits,
-                            generate_text=generate.generate)
+                            generate_text=generate.generate, **reading_kwargs)
 
 
 def choice_target_logprobs(model, manifest, choice_rows, injections, *,

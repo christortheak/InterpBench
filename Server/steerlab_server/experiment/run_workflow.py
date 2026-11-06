@@ -3,6 +3,7 @@
 This owner never imports the task compatibility facade.
 """
 from __future__ import annotations
+import os
 from typing import Callable
 from . import lifecycle_gates, paths
 from . import resume as resume_mod
@@ -308,6 +309,24 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         # the reading the guard has just confirmed this continuation keeps
         # (the log line above names it, with source resumedRun).
     prompt_reading.active_reading.set(reading)
+    # The answer-token readouts read their prompts by the same rule (issue
+    # #8), passed to them explicitly. A new run records that it does; a
+    # resumed run continues as it began, so one started before readouts
+    # followed the rule keeps reading them in a single pass, and its record
+    # (never rewritten) keeps saying so.
+    readout_reading = prompt_reading.readout_reading(
+        reading, resumed_from=run_directory if resuming else None)
+    if (resuming and readout_reading is None
+            and set(manifest.outcome_instruments)
+            & condition_execution.CHOICE_INSTRUMENTS
+            and (reading_counts is None
+                 or any(reading.chunk_size(n)
+                        for row in reading_counts for n in row))):
+        _log(f"note: {os.path.basename(os.path.normpath(run_directory))} was "
+             "started before answer-token readouts read prompts by the run's "
+             "prompt reading, so its readouts continue in a single pass at "
+             "every length, as they began; start a new run to read them as "
+             "its generation reads them")
     if run_directory is None:
         # Shard partials are visibly partial by name; the merge assembles the
         # plain exp-<name>-run directory from them.
@@ -496,7 +515,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
                        numeric_parser=numeric_parser,
                        should_cancel=should_cancel, log=_log,
                        jlens_trace=jlens_trace,
-                       device_memory=device_memory_log)
+                       device_memory=device_memory_log,
+                       readout_reading=readout_reading)
     # Study-owned sampling guard (2026-07-21, defense in depth): refuse
     # BEFORE any generation compute if a condition would execute under a
     # sampling policy different from the manifest's declared one.
@@ -652,7 +672,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
             should_cancel, _log, checkpoint, resuming,
             condition_filter=(set(plan.owned_conditions)
                               if plan is not None else None),
-            latent_conditions=latent_conditions)
+            latent_conditions=latent_conditions,
+            readout_reading=readout_reading)
         if battery_cancelled:
             cancelled = True
             battery = None
@@ -681,7 +702,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
 def _run_capability_battery(model, name, manifest, bundles, conditions, root,
                             run_directory, should_cancel, _log, checkpoint,
                             resuming, condition_filter=None,
-                            latent_conditions=()) -> tuple[dict, bool]:
+                            latent_conditions=(),
+                            readout_reading=None) -> tuple[dict, bool]:
     """Score the manifest's PINNED capability battery under EVERY condition of
     the run matrix — baseline, concept/steering, variant AND SAE latent arms —
     with each condition's intervention applied exactly as for that condition's
@@ -768,8 +790,13 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
         if advisory and advisory not in advised:
             advised.add(advisory)
             _log(f"WARNING: {advisory}")
+        # A choice item reads its prompt by the run's rule, as the battery's
+        # generation does (issue #8); only a rule that can chunk is passed.
         generate_fn, choice_fn = choice_scoring.battery_backends(
-            model, manifest.model_id, injections, latent_edits=latent_edits)
+            model, manifest.model_id, injections, latent_edits=latent_edits,
+            reading=(readout_reading
+                     if prompt_reading.chunks_any_prompt(readout_reading)
+                     else None))
         for index, item in enumerate(items):
             if cancellation.observe_cancel(should_cancel, _log,
                                f"battery condition={condition_name} item={index}"):

@@ -492,7 +492,9 @@ def study_prompt_reading(model, manifest, prompts, root, _log,
     generation. ``counts`` are the token counts of every task prompt under
     every arm's rendering (``prompt_reading.rendered_token_counts``), or None
     when they cannot be measured, which is said in the log. ``record`` is the
-    run's ``notes.promptReading`` object."""
+    run's ``notes.promptReading`` object, which a new run writes: it says
+    that the run's answer-token readouts read prompts by the same rule
+    (``prompt_reading.READOUTS_KEY``). A resumed run never rewrites it."""
     from . import condition_execution, prompt_reading
     from . import generate as generate_mod
     device = generate_mod._model_device(model)
@@ -524,7 +526,8 @@ def study_prompt_reading(model, manifest, prompts, root, _log,
     else:
         _log(f"prompt reading: {reading.describe()} (source {reading.source})")
     return reading, counts, prompt_reading.record(reading, device=device,
-                                                  counts=counts)
+                                                  counts=counts,
+                                                  readouts_follow_rule=True)
 
 
 def _has_records(run_directory) -> bool:

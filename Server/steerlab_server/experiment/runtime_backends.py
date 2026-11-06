@@ -6,7 +6,7 @@ Injected callables use the same interface as generate and score_options.
 from __future__ import annotations
 
 def battery_backends(model, model_id: str, injections, latent_edits=None, *,
-                     generate_text=None, score_choices=None):
+                     generate_text=None, score_choices=None, reading=None):
     """The two scoring back-ends a battery item can use, bound to one
     condition's arming (2026-08-13 battery repair).
 
@@ -28,13 +28,20 @@ def battery_backends(model, model_id: str, injections, latent_edits=None, *,
     condition's ``generate``/``score_options`` call is byte-for-byte the call
     it was before this argument existed. Without it a latent arm's battery
     scored the UNSTEERED model and filed the result under the latent
-    condition's name: a capability control that measured nothing."""
+    condition's name: a capability control that measured nothing.
+
+    ``reading`` (issue #8) is the prompt reading ``choice_fn`` reads its
+    prompt by: a study run's capability battery passes the run's, so a choice
+    item is read as the run's generation reads it. Threaded, like
+    ``latent_edits``, only when given; every other caller reads in a single
+    pass, as before."""
     if generate_text is None:
         from .generate import generate as generate_text
     if score_choices is None:
         from .logprob import score_options as score_choices
 
     latent_kwargs = {"latent_edits": list(latent_edits)} if latent_edits else {}
+    reading_kwargs = {"reading": reading} if reading is not None else {}
 
     def generate_fn(prompt: str, arming) -> str:
         return generate_text(model, prompt, model_id=model_id,
@@ -47,7 +54,7 @@ def battery_backends(model, model_id: str, injections, latent_edits=None, *,
     def choice_fn(prompt: str, options, arming):
         result = score_choices(
             model, prompt, list(options), model_id=model_id,
-            injections=injections, **latent_kwargs,
+            injections=injections, **latent_kwargs, **reading_kwargs,
             prompt_mode=arming.prompt_mode,
             system_prompt=arming.system_prompt,
             qwen_thinking_enabled=arming.qwen_thinking_enabled)
