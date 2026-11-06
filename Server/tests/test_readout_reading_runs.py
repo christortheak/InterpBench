@@ -92,6 +92,36 @@ def test_a_study_that_also_generates_hands_every_readout_the_reading(
     assert calls == [CUDA_DEFAULT] * 4
 
 
+def test_a_capability_battery_in_a_run_reads_choice_items_by_its_reading(
+        tmp_path, monkeypatch):
+    """The run's capability battery is scored in the same run, so its choice
+    items are read out as the run reads (its generation already was)."""
+    from types import SimpleNamespace
+
+    import test_battery_format_v2 as v2
+    root = str(tmp_path)
+    prompts = v2._study(root, "readout-battery", battery_lines=v2._v2_lines(),
+                        system_prompt="")
+    v2._patch_engine(monkeypatch)
+    monkeypatch.setattr(PR, "rendered_token_counts",
+                        lambda tokenizer, model_id, items, settings:
+                        [[10 for _ in settings] for _ in items])
+    seen = []
+
+    def score_options(model, prompt, options, **kwargs):
+        reading = kwargs.get("reading", "none")
+        seen.append(reading if reading == "none" else reading.rule())
+        correct = "Paris" if "capital" in prompt else "43"
+        return SimpleNamespace(
+            selected=correct,
+            probability={o: (0.8 if o == correct else 0.1) for o in options})
+    monkeypatch.setattr(logprob, "score_options", score_options)
+    tasks.run("readout-battery", prompts, root, model_provider=_cuda_model,
+              log=lambda *_: None)
+    # Two conditions (baseline and the concept arm), two choice items each.
+    assert seen == [CUDA_DEFAULT] * 4
+
+
 def test_a_single_pass_reading_hands_the_readout_nothing(tmp_path, monkeypatch):
     """A rule that never chunks reads exactly as no rule does, so the call is
     the one it always was; the record still says readouts follow it."""
