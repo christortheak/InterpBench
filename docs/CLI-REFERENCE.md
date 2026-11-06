@@ -1506,8 +1506,11 @@ the reading it was started with. A study that declares a reading is refused
 (`promptReadingUnsupported`) by a runner whose capabilities lack
 `remoteStudy.promptReading`; the capability snapshot's `longPromptReading`
 says how that engine reads long prompts on each device, and that it never
-splits a model across GPUs. The Mac's own engine reads prompts in steps of 512
-tokens and advises that the declaration applies to the Python engine.
+splits a model across GPUs; an engine whose study runs read answer-token
+readouts by the same rule says so with `answerTokenReadoutsFollowRule`. The
+Mac's own engine reads prompts in steps of 512 tokens, reads every
+answer-token readout's prompt in one pass, and advises that the declaration
+applies to the Python engine.
 
 **`set-evaluation-sampling <name> <n> <seed>`** — the study's **evaluation
 sampling design**: how many records per condition the judged coding

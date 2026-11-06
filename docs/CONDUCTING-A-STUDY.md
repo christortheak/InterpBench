@@ -1385,7 +1385,9 @@ sent one, the device,
 how many of the study's task prompts there are, how many were read in chunks
 under at least one arm's rendering, the longest prompt's token count, and
 `cudaAllocatorConfig` and `allocatorConfig`, the CUDA allocator settings in
-force under their two names. A panel records the rule and leaves the three
+force under their two names, and, for a study run made from this release on,
+`answerTokenReadoutsFollowRule: true`: its answer-token readouts read their
+prompts by the same rule (see **Answer-token readouts** below). A panel records the rule and leaves the three
 counts empty, since its turn prompts grow while it runs; a sweep records the
 rule the same way. A scripted-transcript item is counted as the whole
 conversation generation reads, not its display text. On CUDA,
@@ -1434,10 +1436,30 @@ fragmented to use. The setting changes where data lives in memory, not what
 is computed (100 of 100 seeded texts were identical with and without it), so
 runs record it but never refuse on it.
 
-**Limits.** Answer-token scoring (the `answerTokenLogprob` instrument) still
-reads its prompt in one pass. The rule says how a prompt is read, not whether
-it fits: the submission's memory check sizes that, and the chunk size a plan
-chooses is recorded in its `basis`.
+**Answer-token readouts.** In a study run, the answer-token readouts
+(`answerTokenLogprob`, `choiceProbability`, and `ordinalScale`) read their
+prompts by the run's rule, as its generation does, so a study that can
+generate at a length can also be read out at it. A chunked readout fills the
+cache in chunks and reads the last prompt token alone, so steering lands at
+the true end of the prompt and at each option token, never on a chunk, as in
+a chunked generation; its numbers match a single pass within rounding. When
+every option is a single token, the prompt is read once for the item rather
+than once per option; the numbers are unchanged. Through 0.9.20 the readouts
+read every prompt in one pass whatever the rule, so a run without
+`answerTokenReadoutsFollowRule` in its record read them that way, and keeps
+doing so when resumed (its log says so, and the submission's memory check
+advises when that single pass may not fit the card; start a new run to read
+them in chunks). A merge of shards whose readouts read any of the study's
+prompts differently is refused, with the same repair as for generation. The
+capability snapshot's `longPromptReading` lists
+`answerTokenReadoutsFollowRule` on an engine that does this. Other uses of
+answer-token scoring (a sweep's `logprobShift` objective, a capability
+battery scored outside a run, optvec, and J-lens) read in one pass, and the
+Mac's own engine reads every readout's prompt in one pass.
+
+**Limits.** The rule says how a prompt is read, not whether it fits: the
+submission's memory check sizes that, and the chunk size a plan chooses is
+recorded in its `basis`.
 
 ---
 

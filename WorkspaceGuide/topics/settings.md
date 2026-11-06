@@ -232,6 +232,15 @@ only when the weights and that cache cannot fit the card. The prompt pass's
 working memory is an estimate: when it exceeds the card, the check advises
 and does not refuse. A model always loads onto one GPU.
 
+In a study run, answer-token readouts (`answerTokenLogprob`,
+`choiceProbability`, and `ordinalScale`) read their prompts by the same rule
+as generation, so a study that can generate at a length can also be read out
+at it. The run records this as `answerTokenReadoutsFollowRule` in
+`config.json`'s `notes.promptReading`. A run started before this release
+keeps reading its readouts in one pass when resumed, and the memory check
+advises when that pass may not fit; start a new run to read them in chunks.
+The Mac's own engine reads every readout's prompt in one pass.
+
 **`set-evaluation-sampling <name> <n> <seed>`** — declares the study's
 EVALUATION SAMPLING DESIGN on a draft: how many records per condition the
 judged coding preregistered, and the seed that draws them

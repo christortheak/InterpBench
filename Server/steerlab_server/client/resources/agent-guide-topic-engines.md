@@ -34,7 +34,9 @@ the one that release used), so Resume, or `steerlab runner resubmit`, just works
 resume or shard merge that a declaration or a plan would make mix two
 readings refuses, naming both. Follow its repair: resume the job that started
 the run, or start a new run. On CUDA a run also records its peak GPU memory
-in `device-memory.json`.
+in `device-memory.json`. A study run's answer-token readouts read their
+prompts by the same rule (recorded as `answerTokenReadoutsFollowRule`); the
+Mac's own engine reads them in one pass.
 
 Activations do not transfer between engines. Vectors must be **re-extracted and
 re-validated on whichever engine a study runs on** — the parity claim is
