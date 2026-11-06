@@ -20,6 +20,9 @@ from steerlab_server.experiment import sharding, tasks
 from test_prompt_reading import (CUDA_DEFAULT, _config, _cuda_model, _patch,
                                  _study, _write)
 from test_prompt_reading import _no_ambient_overrides  # noqa: F401 - autouse
+from test_prompt_reading_submission import (_edit, _memory, _parked_run,
+                                            _submit, site)  # noqa: F401 - fixture
+from test_prompt_reading_submission import COUNTS, LONG
 
 KEY = "answerTokenReadoutsFollowRule"
 
@@ -259,3 +262,62 @@ def test_a_study_without_readouts_is_not_compared_on_them(tmp_path, monkeypatch)
                               shard=sharding.ShardSpec(index, 2)))
     _unmark(dirs[1])
     sharding.merge_shard_runs("readout-merge-sampled", dirs, root=root)
+
+
+# --- the memory check ----------------------------------------------------------------
+
+def test_a_readout_only_study_is_priced_by_the_chunked_reading_it_will_use(site):
+    """The readouts now read as generation does, so the job's chunked
+    reading prices them: a 217,230-token readout fits one 80 GB card."""
+    _edit(site, outcomeInstruments=["answerTokenLogprob"])
+    memory = _memory(_submit(site))
+    assert memory["status"] == "ok"
+    assert memory["data"]["memoryFit"] == "fits"
+    assert memory["data"]["promptReading"]["chunkTokensForLongestPrompt"] == 4096
+    assert "readoutAdvisory" not in memory["data"]
+    assert "answerTokenReadouts" not in memory["data"]
+
+
+def _recorded(**marker):
+    return {**PR.record(PR.PromptReading.from_rule(CUDA_DEFAULT,
+                                                   source="submission"),
+                        device="cuda:0", counts=COUNTS, environ={}), **marker}
+
+
+def test_a_resumed_run_without_the_key_is_advised_its_single_pass_readouts(site):
+    _edit(site, outcomeInstruments=["answerTokenLogprob"])
+    run = _parked_run(site, "parked-old", record=_recorded())
+    memory = _memory(_submit(site, resume_directory=run,
+                             target_root=str(site["root"])))
+    # The job's own reading fits; the single-pass readout of the longest
+    # prompt is estimated not to. Advice, not a refusal.
+    assert memory["data"]["memoryFit"] == "fits"
+    assert memory["status"] == "warn"
+    readouts = memory["data"]["answerTokenReadouts"]
+    assert (readouts["reading"], readouts["memoryFit"]) == ("singlePass", "mayNotFit")
+    advisory = memory["data"]["readoutAdvisory"]
+    assert advisory.startswith(
+        "This resumed run was started before answer-token readouts read "
+        "prompts as its generation does, so it keeps reading them in a single "
+        f"pass at every length; reading its longest prompt ({LONG:,} tokens)")
+    assert advisory.endswith(
+        "To read them in chunks, start a new run of the study instead of "
+        "resuming this one.")
+    assert advisory in memory["message"]
+
+
+def test_a_resumed_run_with_the_key_is_priced_as_a_fresh_one(site):
+    _edit(site, outcomeInstruments=["answerTokenLogprob"])
+    run = _parked_run(site, "parked-new", record=_recorded(**{KEY: True}))
+    memory = _memory(_submit(site, resume_directory=run,
+                             target_root=str(site["root"])))
+    assert memory["status"] == "ok"
+    assert "readoutAdvisory" not in memory["data"]
+
+
+def test_a_resumed_sampled_study_has_no_readouts_to_advise_on(site):
+    run = _parked_run(site, "parked-sampled", record=_recorded())
+    memory = _memory(_submit(site, resume_directory=run,
+                             target_root=str(site["root"])))
+    assert memory["status"] == "ok"
+    assert "readoutAdvisory" not in memory["data"]

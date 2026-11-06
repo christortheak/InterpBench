@@ -365,6 +365,10 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                                   verb=verb, shard_count=parallel,
                                   prompts_text=prompts_text, device=device,
                                   fixed_reading_plan=resumed_plan,
+                                  readouts_single_pass=(
+                                      _resumed_readouts_single_pass(
+                                          resumed_run, target, verb=verb)
+                                      if resumed_run else False),
                                   artifact_root=root or paths.project_root())
     overridden = _gate_on_preflight(preflight, dry_run=dry_run, force=force)
     # ONE reading for every job of this submission, shards included.
@@ -1412,6 +1416,7 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
                       prompts_text: str | None = None,
                       device: str | None = None,
                       fixed_reading_plan: dict | None = None,
+                      readouts_single_pass: bool = False,
                       artifact_root: str | None = None) -> dict:
     checks: list[dict] = []
     if verb in MODEL_FREE_VERBS:
@@ -1434,6 +1439,7 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
          else _check_memory_fit(manifest, resources,
                                 prompts_text=prompts_text, device=device,
                                 verb=verb, fixed_plan=fixed_reading_plan,
+                                readouts_single_pass=readouts_single_pass,
                                 artifact_root=artifact_root)),
         ("walltime", lambda: model_checks[2] if model_checks
          else _check_walltime(manifest, resources, planned_records, profile,
@@ -1545,6 +1551,26 @@ def _resumed_reading_plan(run_directory: str | None, target_root: str, *,
              "resumedRun": os.path.basename(os.path.normpath(resolved))}
     return prompt_reading.plan(parked.rule(), source=prompt_reading.SUBMISSION,
                                basis=basis)
+
+
+def _resumed_readouts_single_pass(run_directory: str | None, target_root: str,
+                                  *, verb: str) -> bool:
+    """Whether a resumed run reads its answer-token readouts in a single pass
+    at every length (issue #8): its ``notes.promptReading`` record lacks
+    ``prompt_reading.READOUTS_KEY``, so the engine continues it as it began
+    (``prompt_reading.readout_reading``). False for a fresh submission, a
+    verb without readouts of the study's task prompts, and a directory that
+    cannot be found (the engine's own resume checks say why)."""
+    from ..experiment import prompt_reading
+    if not run_directory or verb not in TASK_PROMPT_VERBS:
+        return False
+    resolved = (run_directory if os.path.isabs(run_directory)
+                else os.path.join(target_root, run_directory))
+    recorded = _recorded_run_directory(resolved, verb)
+    if not recorded or not os.path.isdir(recorded):
+        return False
+    _then, entry, _note = prompt_reading.run_directory_reading(recorded)
+    return not prompt_reading.readouts_follow_rule(entry)
 
 
 class PreflightRejection(ValueError):
@@ -1946,8 +1972,17 @@ def _check_memory_fit(manifest: Manifest | None,
                       device: str | None = None,
                       verb: str = "run",
                       fixed_plan: dict | None = None,
+                      readouts_single_pass: bool = False,
                       artifact_root: str | None = None) -> dict:
     """Size one GPU against the study (issue #6).
+
+    A study run's answer-token readouts read their prompts by the job's
+    reading (issue #8), so the price of that reading is theirs too. The one
+    exception is ``readouts_single_pass``: a resumed run started before
+    readouts followed the reading, which keeps reading them in a single pass
+    at every length. When the longest prompt would be chunked, that single
+    pass is priced as well, and an estimate over the card is advice
+    (``readoutAdvisory``), never a refusal: working memory is an estimate.
 
     The context is the longest MEASURED prompt plus ``maxTokens`` plus
     ``reasoningMaxTokens``; the cache is priced by layer type; the prompt
@@ -2149,6 +2184,11 @@ def _check_memory_fit(manifest: Manifest | None,
             f"{rule['chunkTokens']:,} tokens. This study's texts will not be "
             "token-identical to runs that used the default reading.")
         data["readingAdvisory"] = stepped_note.strip()
+    readout_note = _single_pass_readout_note(
+        manifest, config, readouts_single_pass=readouts_single_pass,
+        chunked=priced.get("chunkTokens") is not None, weights=weights,
+        prompt_tokens=prompt_tokens, generation=generation, gpu_type=gpu_type,
+        vram_table=resources.gpu_vram_gb, data=data)
     certain_words = (f"{_gb(certain):.1f} GB for the weights "
                      f"({_gb(weights):.1f}) and the key-value cache over "
                      f"{context:,} tokens ({_gb(kv):.1f})")
@@ -2220,16 +2260,63 @@ def _check_memory_fit(manifest: Manifest | None,
                       f"may not fit: {data['summary']} The job may run, or "
                       "may run out of memory on the node after the queue "
                       f"wait. {advisory}{reading_note}{stepped_note}"
-                      + unmeasured_note, data)
+                      f"{readout_note}" + unmeasured_note, data)
     data["summary"] = (f"The job needs {certain_words} on one GPU, about "
                        f"{_gb(estimate):.1f} GB at its peak; one {gpu_type} "
                        f"declares {vram_gb} GB.")
-    status = "warn" if stepped_note else "ok"
+    status = "warn" if stepped_note or readout_note else "ok"
     return _check(check_id, status,
                   f"fits: ≈{_gb(estimate):.1f} GB of {vram_gb} GB on one "
                   f"{gpu_type} (gpu:{gpu_type}:{gpu_count}; a model occupies "
-                  f"one card).{reading_note}{stepped_note}" + unmeasured_note,
-                  data)
+                  f"one card).{reading_note}{stepped_note}{readout_note}"
+                  + unmeasured_note, data)
+
+
+def _single_pass_readout_note(manifest: Manifest, config: dict | None, *,
+                              readouts_single_pass: bool, chunked: bool,
+                              weights: int, prompt_tokens: int,
+                              generation: int, gpu_type: str | None,
+                              vram_table: dict | None, data: dict) -> str:
+    """The advice for a resumed run that reads its answer-token readouts in
+    a single pass at every length (issue #8), or "".
+
+    Priced only when it matters: the run is such a resume, the study
+    declares an answer-token instrument, and the job's reading chunks the
+    longest prompt (otherwise readouts and generation read it alike, and the
+    job's price already covers them). The single pass is priced as the
+    memory check prices any reading; when its estimate exceeds the card,
+    ``data.readoutAdvisory`` says so and names the repair. Never a refusal:
+    the weights and the cache are the same either way, and working memory
+    is an estimate."""
+    from ..experiment import prompt_reading
+    from . import instrument_family, prompt_memory
+    if not (readouts_single_pass and chunked
+            and instrument_family.reads_choice_instrument(manifest)):
+        return ""
+    priced = prompt_memory.estimate(
+        config, weights_bytes=weights, prompt_tokens=prompt_tokens,
+        generation_tokens=generation, rule={"mode": prompt_reading.SINGLE_PASS},
+        model_id=manifest.model_id, gpu_type=gpu_type)
+    verdict = prompt_memory.fit(priced, gpu_type=gpu_type, vram_table=vram_table)
+    estimated = priced.get("estimatedBytes")
+    data["answerTokenReadouts"] = {
+        "reading": prompt_reading.SINGLE_PASS,
+        "basis": "resumedRunWithoutReadoutsFollowingRule",
+        "estimatedBytes": estimated,
+        "memoryFit": verdict.get("memoryFit")}
+    if verdict.get("memoryFit") not in ("mayNotFit", "exceeds") \
+            or estimated is None:
+        return ""
+    note = (f" This resumed run was started before answer-token readouts read "
+            "prompts as its generation does, so it keeps reading them in a "
+            f"single pass at every length; reading its longest prompt "
+            f"({prompt_tokens:,} tokens) that way is estimated to peak at "
+            f"about {_gb(estimated):.1f} GB, more than one {gpu_type} can "
+            "use, so its readouts may run out of memory on the node. To read "
+            "them in chunks, start a new run of the study instead of "
+            "resuming this one.")
+    data["readoutAdvisory"] = note.strip()
+    return note
 
 
 #: Said in every walltime verdict that carries an estimate. Both directions
