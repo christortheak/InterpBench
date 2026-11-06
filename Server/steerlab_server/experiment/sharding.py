@@ -763,6 +763,71 @@ def _prove_one_prompt_reading(name: str, stamps: list[dict]) -> None:
                        "shown to have read every prompt the same way")
 
 
+def _prove_one_readout_reading(name: str, manifest, stamps: list[dict]) -> None:
+    """Refuse a merge whose shards read their answer-token readouts'
+    prompts differently (issue #8).
+
+    A shard whose record carries ``prompt_reading.READOUTS_KEY`` read its
+    readouts by its own rule; any other shard (no record, or a record
+    without the key) read them in a single pass at every length, as every
+    engine before the key did. The comparison is the one generation's guard
+    makes (:func:`_prove_one_prompt_reading`), of effective behaviour on the
+    study's longest prompt: shards that differ only where no prompt reaches
+    merge. Only a study that declares an answer-token instrument has
+    readouts to compare. Runs after the generation guard, which has already
+    refused a record that cannot be read."""
+    from . import execution_plan, prompt_reading
+    if not execution_plan.resolve(manifest.outcome_instruments).scores_directly:
+        return
+    entries = [prompt_reading.run_directory_reading(stamp["_dir"])[1]
+               for stamp in stamps]
+    found = [(int(stamp["shardIndex"]),
+              prompt_reading.recorded_readout_reading(stamp["_dir"]),
+              prompt_reading.readouts_follow_rule(entry))
+             for stamp, entry in zip(stamps, entries)]
+    # Every shard of one fan-out renders the same prompts (the experiment
+    # hash matched), so any shard's longest prompt settles it.
+    longest = next((entry["longestPromptTokens"] for entry in entries
+                    if isinstance(entry, dict)
+                    and isinstance(entry.get("longestPromptTokens"), int)),
+                   None)
+
+    def said(index, reading, follows):
+        if reading is None:
+            return (f"shard {index} records that its answer-token readouts "
+                    "follow a prompt reading it cannot state")
+        if not follows:
+            return (f"shard {index} read its answer-token readouts in a single "
+                    "pass at every length (an engine from before readouts "
+                    "followed the prompt reading)")
+        return (f"shard {index} read its answer-token readouts as "
+                f"{reading.describe()}")
+
+    first = found[0]
+    for other in found[1:]:
+        if first[1] is None or other[1] is None:
+            agree = None
+        else:
+            agree = prompt_reading.agree_on_longest(first[1], other[1], longest)
+        if agree:
+            continue
+        cause = ("so its longest prompt was read out differently"
+                 if agree is False else
+                 "and nothing the shards record shows that every prompt was "
+                 "read out the same way")
+        raise ShardMergeRefusal(
+            "shard merge refused: the shards read their answer-token readouts' "
+            f"prompts differently: {said(*first)}, but {said(*other)}, "
+            f"{cause}. Chunked and single-pass readings do not give "
+            "identical numbers, and merging would mix two readings in one "
+            "run's readouts; the shard partials are untouched",
+            gate=MANIFEST_EPOCH,
+            repair=(f"steerlab-server study submit {name} --verb run --executor "
+                    f"slurm --parallel {len(stamps)}  (a fresh fan-out on one "
+                    "engine release, which reads every readout one way; do "
+                    "not merge these partials)"))
+
+
 def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShards:
     """Every refusal a merge can make, and none of its writes."""
     stamps: list[dict] = []
@@ -889,6 +954,7 @@ def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShar
             "fan-out (epoch guard); the shard partials are untouched")
     _prove_one_seed_rule(name, manifest, stamps, shard_records)
     _prove_one_prompt_reading(name, stamps)
+    _prove_one_readout_reading(name, manifest, stamps)
 
     merged_records = [record for records in shard_records
                       for record in records]

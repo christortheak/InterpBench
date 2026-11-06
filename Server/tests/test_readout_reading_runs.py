@@ -16,7 +16,7 @@ import pytest
 from steerlab_server.experiment import logprob
 from steerlab_server.experiment import prompt_reading as PR
 from steerlab_server.experiment import resume as resume_mod
-from steerlab_server.experiment import tasks
+from steerlab_server.experiment import sharding, tasks
 from test_prompt_reading import (CUDA_DEFAULT, _config, _cuda_model, _patch,
                                  _study, _write)
 from test_prompt_reading import _no_ambient_overrides  # noqa: F401 - autouse
@@ -187,3 +187,75 @@ def test_the_engine_advertises_that_readouts_follow_the_reading():
     assert described[KEY] is True
     assert ("A study run's answer-token readouts read their prompts the same "
             "way") in described["summary"]
+
+
+# --- the shard merge -----------------------------------------------------------------
+
+def _readout_shards(root, name, monkeypatch, *, ids):
+    prompts = _choice_study(root, name, ids=ids)
+    dirs = []
+    for index in range(2):
+        _readouts(monkeypatch, [])
+        dirs.append(tasks.run(name, prompts, root, model_provider=_cuda_model,
+                              log=lambda *_: None,
+                              shard=sharding.ShardSpec(index, 2)))
+    return dirs
+
+
+def test_a_merge_of_shards_whose_readouts_read_a_long_prompt_differently_refuses(
+        tmp_path, monkeypatch):
+    """Both shards' generation reads alike (the CUDA default), but shard 1's
+    engine predates readouts following the reading, so it read the
+    217,230-token prompt's readout in one pass."""
+    root = str(tmp_path)
+    dirs = _readout_shards(root, "readout-merge", monkeypatch,
+                           ids=("long-packet", "short-note"))
+    _unmark(dirs[1])
+    with pytest.raises(sharding.ShardMergeRefusal) as refusal:
+        sharding.merge_shard_runs("readout-merge", dirs, root=root)
+    message = str(refusal.value)
+    assert ("shard 0 read its answer-token readouts as prompts over 8,192 tokens "
+            "in 4,096-token chunks (shorter prompts in a single pass), but "
+            "shard 1 read its answer-token readouts in a single pass at every "
+            "length") in message
+    assert "so its longest prompt was read out differently" in message
+    assert "the shard partials are untouched" in message
+    assert refusal.value.gate == "manifestEpoch"
+    assert refusal.value.repair_action.startswith(
+        "steerlab-server study submit readout-merge --verb run --executor "
+        "slurm --parallel 2")
+    assert not os.path.exists(os.path.join(root, "runs", "exp-readout-merge-run"))
+
+
+def test_a_merge_of_shards_whose_readouts_read_alike_succeeds(tmp_path, monkeypatch):
+    """Every prompt at or below 8,192 tokens: a marked shard and an unmarked
+    one read every readout in one pass, so they merge."""
+    root = str(tmp_path)
+    dirs = _readout_shards(root, "readout-merge-short", monkeypatch,
+                           ids=("short-note",))
+    _unmark(dirs[1])
+    merged = sharding.merge_shard_runs("readout-merge-short", dirs, root=root)
+    assert _config(merged)["notes"]["promptReading"][KEY] is True
+
+
+def test_a_merge_of_matching_shards_succeeds_with_the_key(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    dirs = _readout_shards(root, "readout-merge-same", monkeypatch,
+                           ids=("long-packet", "short-note"))
+    merged = sharding.merge_shard_runs("readout-merge-same", dirs, root=root)
+    assert _config(merged)["notes"]["promptReading"][KEY] is True
+
+
+def test_a_study_without_readouts_is_not_compared_on_them(tmp_path, monkeypatch):
+    """A sampled-text study has no readouts: the key's absence on one shard
+    changes nothing about how its prompts were read."""
+    root = str(tmp_path)
+    prompts = _study(root, "readout-merge-sampled", ids=("long-packet",))
+    dirs = []
+    for index in range(2):
+        _patch(monkeypatch)
+        dirs.append(tasks.run("readout-merge-sampled", prompts, root,
+                              model_provider=_cuda_model, log=lambda *_: None,
+                              shard=sharding.ShardSpec(index, 2)))
+    _unmark(dirs[1])
+    sharding.merge_shard_runs("readout-merge-sampled", dirs, root=root)
