@@ -175,8 +175,9 @@ In a study run, answer-token readouts (`answerTokenLogprob`,
 as generation, so a study that can generate at a length can also be read out
 at it. The run records this as `answerTokenReadoutsFollowRule` in
 `config.json`'s `notes.promptReading`. A run started before this release
-keeps reading its readouts in one pass when resumed, and the memory check
-advises when that pass may not fit; start a new run to read them in chunks.
+keeps reading its readouts in one pass when resumed, and its log says so. A
+long prompt read that way may not fit the card, so start a new run to read
+them in chunks.
 The Mac's own engine reads every readout's prompt in one pass.
 
 **`set-evaluation-sampling <name> <n> <seed>`** — declares the study's

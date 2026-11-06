@@ -1442,14 +1442,15 @@ prompts by the run's rule, as its generation does, so a study that can
 generate at a length can also be read out at it. A chunked readout fills the
 cache in chunks and reads the last prompt token alone, so steering lands at
 the true end of the prompt and at each option token, never on a chunk, as in
-a chunked generation; its numbers match a single pass within rounding. When
+a chunked generation. Its numbers can differ from a single pass's only by
+rounding, as a chunked generation's can. When
 every option is a single token, the prompt is read once for the item rather
 than once per option; the numbers are unchanged. Through 0.9.20 the readouts
 read every prompt in one pass whatever the rule, so a run without
 `answerTokenReadoutsFollowRule` in its record read them that way, and keeps
-doing so when resumed (its log says so, and the submission's memory check
-advises when that single pass may not fit the card; start a new run to read
-them in chunks). A merge of shards whose readouts read any of the study's
+doing so when resumed. Its log says so, and a resume submitted with `study
+submit --resume` also gets a memory-check advisory when that single pass may
+not fit the card. Start a new run to read them in chunks. A merge of shards whose readouts read any of the study's
 prompts differently is refused, with the same repair as for generation. The
 capability snapshot's `longPromptReading` lists
 `answerTokenReadoutsFollowRule` on an engine that does this. Other uses of

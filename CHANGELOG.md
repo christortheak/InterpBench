@@ -12,6 +12,24 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Answer-token readouts read a long prompt the way generation does**
+  (public issue #8). A study run's `answerTokenLogprob`, `choiceProbability`,
+  and `ordinalScale` readouts read their whole prompt in one pass, and once
+  per option. So a study that generated at 82,000 or 217,000 tokens on one
+  80 GB card would have run out of memory in its readout. On the Python
+  engine, a study run's readouts now read prompts by the run's prompt reading
+  (on CUDA, 4,096-token chunks above 8,192 tokens), with steering at the true
+  prompt end and at each option token, as in chunked generation. Chunked and
+  single-pass readouts can differ only by rounding. When every option is a
+  single token, the prompt is read once per item rather than once per option,
+  on both engines, with unchanged numbers. New runs record
+  `answerTokenReadoutsFollowRule: true` in `notes.promptReading`, and the
+  capability snapshot's `longPromptReading` lists it. A run started earlier
+  keeps single-pass readouts when resumed, and its log says so. A shard merge
+  refuses parts whose readouts read any prompt differently. Sweeps, batteries
+  scored outside a run, J-lens, and optvec still read in one pass, and so does
+  the Mac's engine. Update a cluster's engine before submitting a long-prompt
+  study with a readout.
 - **`remote status` says when the scheduler is ahead of SteerLab's record.**
   The record moves only when the controller's own check of the scheduler
   sees a change, but a status read also asks the live queue. On a live job,
