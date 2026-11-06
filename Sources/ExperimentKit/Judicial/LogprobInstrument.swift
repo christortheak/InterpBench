@@ -10,9 +10,9 @@ import SteeringKit
 /// The preferred instrument for any CATEGORICAL outcome: instead of sampling a
 /// full response and parsing it, evaluate the prompt once and read the model's
 /// distribution over the named answer options. Deterministic, temperature-free,
-/// and one forward pass per option — sensitive, and it avoids the confounds of
-/// scoring sampled prose. (A judicial-decision study reads a holding this way;
-/// the mechanism knows nothing about the domain, only the declared options.)
+/// and sensitive, and it avoids the confounds of scoring sampled prose. (A
+/// judicial-decision study reads a holding this way; the mechanism knows
+/// nothing about the domain, only the declared options.)
 ///
 /// Steering parity is load-bearing: options are scored with a stepped forward
 /// pass (single-chunk prompt prefill, then one step per option token under the
@@ -244,8 +244,14 @@ public enum LogprobInstrument {
     /// option step, mirroring steered generation (`ExperimentTasks.generate`):
     /// the prompt token count gates the injector, the whole prompt goes
     /// through in one chunk so the injector fires at the true prompt end, and
-    /// each option gets a fresh KV cache. Temperature never enters — the
-    /// readout is the model's own next-token distribution.
+    /// every read of the prompt gets a fresh KV cache. The prompt is read
+    /// once for the item when every option is a single token, and once per
+    /// option otherwise (`stepRows`). Temperature never enters — the readout
+    /// is the model's own next-token distribution.
+    ///
+    /// This engine reads the prompt in one chunk at every length; the Python
+    /// engine reads a long one in chunks by the study run's prompt reading
+    /// (`logprob.score_options`'s `reading`, issue #8).
     ///
     /// `transcript` (scripted-transcript study items) renders the item's
     /// whole scripted conversation through the chat template
@@ -312,20 +318,18 @@ public enum LogprobInstrument {
 
             let promptTokens = MLXArray(promptTokenIDs.map { Int32($0) })
                 .reshaped([1, promptTokenIDs.count])
-            var rowsPerOption: [[[Float]]] = []
-            rowsPerOption.reserveCapacity(optionTokenIDs.count)
-            for ids in optionTokenIDs {
-                // Fresh cache per option: every option is scored against the
-                // identical prompt state, prefilled in a single chunk.
-                let cache = context.model.newCache(parameters: nil)
-                var rows = [lastPositionRow(context.model(promptTokens, cache: cache))]
-                for tokenID in ids.dropLast() {
+            return stepRows(
+                optionTokenIDs: optionTokenIDs,
+                readPrompt: {
+                    // A fresh cache for every read: each read starts from the
+                    // identical prompt state, prefilled in a single chunk.
+                    let cache = context.model.newCache(parameters: nil)
+                    return (cache, lastPositionRow(context.model(promptTokens, cache: cache)))
+                },
+                step: { cache, tokenID in
                     let step = MLXArray([Int32(tokenID)]).reshaped([1, 1])
-                    rows.append(lastPositionRow(context.model(step, cache: cache)))
-                }
-                rowsPerOption.append(rows)
-            }
-            return rowsPerOption
+                    return lastPositionRow(context.model(step, cache: cache))
+                })
         }
 
         return ChoiceResult(
@@ -333,6 +337,42 @@ public enum LogprobInstrument {
                 options: options, optionTokenIDs: optionTokenIDs,
                 stepLogits: stepLogits),
             promptTokenCount: promptTokenCount)
+    }
+
+    /// Whether one read of the prompt scores every option: true when every
+    /// option is a single token, since each option's only scored row is then
+    /// the row after the prompt, the same for all of them. Server twin:
+    /// `logprob.reads_prompt_once`.
+    static func readsPromptOnce(_ optionTokenIDs: [[Int]]) -> Bool {
+        !optionTokenIDs.isEmpty && optionTokenIDs.allSatisfy { $0.count == 1 }
+    }
+
+    /// Every option's scored rows (`optionScores`' `stepLogits`), reading the
+    /// prompt once for the item when every option is a single token
+    /// (`readsPromptOnce`), and once per option otherwise. `readPrompt` reads
+    /// the whole prompt into a fresh state and returns that state with the
+    /// row after the prompt; `step` feeds one option token into a state and
+    /// returns the next row. Model-free, so how often the prompt is read is
+    /// testable without Metal. Server twin: `logprob._step_logits` (which
+    /// also chunks a long prompt; this engine reads it in one chunk).
+    static func stepRows<State>(
+        optionTokenIDs: [[Int]],
+        readPrompt: () throws -> (State, [Float]),
+        step: (State, Int) throws -> [Float]
+    ) rethrows -> [[[Float]]] {
+        if readsPromptOnce(optionTokenIDs) {
+            let (_, row) = try readPrompt()
+            return optionTokenIDs.map { _ in [row] }
+        }
+        return try optionTokenIDs.map { ids in
+            let (state, first) = try readPrompt()
+            var rows = [first]
+            rows.reserveCapacity(ids.count)
+            for tokenID in ids.dropLast() {
+                rows.append(try step(state, tokenID))
+            }
+            return rows
+        }
     }
 
     /// Last-position next-token logits as float32, evaluated and copied to

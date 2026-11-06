@@ -129,6 +129,102 @@ import Testing
         #expect(decoded.acknowledgeUnequalOptionLengths == true)
     }
 
+    // MARK: - How often the prompt is read (server test_readout_prompt_reading twins)
+
+    /// A stand-in model state: the tokens read so far. A reference type, as a
+    /// KV cache is, so `step` extends the state `readPrompt` returned.
+    private final class FakeState {
+        var tokens: [Int]
+        init(_ tokens: [Int]) { self.tokens = tokens }
+    }
+
+    /// A deterministic logits row for a token history (vocabulary 8): what a
+    /// model would answer after reading exactly these tokens.
+    private static func row(after tokens: [Int]) -> [Float] {
+        (0 ..< 8).map { index in
+            Float(tokens.enumerated().reduce(0) { sum, pair in
+                sum + (pair.offset + 1) * (pair.element + index + 1) % 7
+            }) / 4
+        }
+    }
+
+    /// The readout as it was: one read of the prompt per option, each from a
+    /// fresh state, then one step per option token but the last.
+    private static func perOptionRows(prompt: [Int], optionTokenIDs: [[Int]]) -> [[[Float]]] {
+        optionTokenIDs.map { ids in
+            var history = prompt
+            var rows = [row(after: history)]
+            for tokenID in ids.dropLast() {
+                history.append(tokenID)
+                rows.append(row(after: history))
+            }
+            return rows
+        }
+    }
+
+    private static func rows(
+        prompt: [Int], optionTokenIDs: [[Int]], reads: inout Int, steps: inout Int
+    ) -> [[[Float]]] {
+        var promptReads = 0
+        var stepCount = 0
+        let result = LogprobInstrument.stepRows(
+            optionTokenIDs: optionTokenIDs,
+            readPrompt: { () -> (FakeState, [Float]) in
+                promptReads += 1
+                return (FakeState(prompt), row(after: prompt))
+            },
+            step: { state, tokenID in
+                stepCount += 1
+                state.tokens.append(tokenID)
+                return row(after: state.tokens)
+            })
+        reads = promptReads
+        steps = stepCount
+        return result
+    }
+
+    @Test func singleTokenOptionsReadThePromptOnceWithUnchangedScores() {
+        let prompt = [3, 1, 4, 1, 5, 9, 2, 6]
+        let options = ["A", "B", "C", "D"]
+        let ids = [[1], [2], [5], [6]]
+        #expect(LogprobInstrument.readsPromptOnce(ids))
+        var reads = 0
+        var steps = 0
+        let rows = Self.rows(prompt: prompt, optionTokenIDs: ids, reads: &reads, steps: &steps)
+        // One read of the prompt for four options, and no steps.
+        #expect(reads == 1)
+        #expect(steps == 0)
+        let scores = LogprobInstrument.optionScores(
+            options: options, optionTokenIDs: ids, stepLogits: rows)
+        let reference = LogprobInstrument.optionScores(
+            options: options, optionTokenIDs: ids,
+            stepLogits: Self.perOptionRows(prompt: prompt, optionTokenIDs: ids))
+        // Exactly the per-option path's scores.
+        #expect(scores.map(\.tokenLogprobs) == reference.map(\.tokenLogprobs))
+        #expect(scores.map(\.tokenIDs) == reference.map(\.tokenIDs))
+    }
+
+    @Test func multiTokenOptionsKeepOneReadEachAndScoreAsBefore() {
+        let prompt = [2, 7, 1, 8]
+        let options = ["yes", "no way", "not at all"]
+        let ids = [[4], [5, 6], [1, 2, 3]]
+        #expect(!LogprobInstrument.readsPromptOnce(ids))
+        #expect(!LogprobInstrument.readsPromptOnce([]))
+        var reads = 0
+        var steps = 0
+        let rows = Self.rows(prompt: prompt, optionTokenIDs: ids, reads: &reads, steps: &steps)
+        // One read per option, and one step per option token but the last.
+        #expect(reads == 3)
+        #expect(steps == 0 + 1 + 2)
+        #expect(rows.map(\.count) == [1, 2, 3])
+        let scores = LogprobInstrument.optionScores(
+            options: options, optionTokenIDs: ids, stepLogits: rows)
+        let reference = LogprobInstrument.optionScores(
+            options: options, optionTokenIDs: ids,
+            stepLogits: Self.perOptionRows(prompt: prompt, optionTokenIDs: ids))
+        #expect(scores.map(\.tokenLogprobs) == reference.map(\.tokenLogprobs))
+    }
+
     // MARK: - Task-prompts loader (options + science metadata)
 
     @Test func taskPromptsLoaderRoundTripsScienceMetadata() throws {
