@@ -3,10 +3,9 @@
 The preferred instrument for any CATEGORICAL outcome: instead of sampling
 a full response and parsing it, evaluate the prompt once and read the model's
 distribution over the named answer options.
-Deterministic, temperature-free, and one forward pass per option — sensitive,
-and it avoids the confounds of scoring sampled prose. (A judicial-decision
-study reads a holding this way; the mechanism knows nothing about the domain,
-only the declared options.)
+Deterministic, temperature-free, and sensitive, and it avoids the confounds of
+scoring sampled prose. (A judicial-decision study reads a holding this way;
+the mechanism knows nothing about the domain, only the declared options.)
 
 Steering parity is load-bearing: options are scored with a stepped forward pass
 (prompt prefill, then one step per option token under the KV cache), so the
@@ -14,6 +13,15 @@ Steering parity is load-bearing: options are scored with a stepped forward pass
 position — byte-identical semantics to steered generation. A single unbatched
 full pass over ``prompt + option`` would inject only at the final option token
 and silently under-steer.
+
+How often the prompt is read: once per item when every option is one token
+(each option's only scored row is then the row after the prompt, the same for
+all of them), and once per option otherwise. How it is read: in a single pass,
+unless the caller passes a prompt reading (``reading``) that chunks a prompt
+of this length; then the cache is filled by ``generate._chunked_prefill``
+exactly as a chunked generation fills it (issue #8). A study run passes the
+run's own reading, so a study that can generate at a length can also be read
+out at it; every other caller passes none and reads in a single pass.
 
 Multi-token options are supported: the option score is the joint log-probability
 (sum of per-token logprobs), with the length-normalized mean also reported.
@@ -28,8 +36,9 @@ import torch
 
 from ..steering.model_loader import SteeredModel
 from . import prompt_render
-from .generate import (CellInjection, _injectors, check_context_budget,
-                       logits_slice_kwargs)
+from .generate import (CellInjection, _chunked_prefill, _injectors,
+                       check_context_budget, logits_slice_kwargs)
+from .prompt_reading import PromptReading
 
 
 # The closed ``ordinalAggregation`` vocabulary for the ``ordinalScale``
@@ -192,19 +201,57 @@ def option_scores_from_step_logits(options: list[str],
 
 
 @torch.no_grad()
+def _chunked_prompt_pass(model: SteeredModel, prompt_ids: list[int],
+                         chunk_size: int):
+    """The prompt read in chunks, as a chunked generation reads it: the cache
+    over every position but the last (``generate._chunked_prefill``), then
+    the last position alone, whose output is the first scored row.
+
+    Runs inside the caller's armed session, after its ``reset_offsets``: the
+    chunks advance the offsets the injector gates on, so no chunk fires
+    mid-prompt and the final one-token pass fires at the true prompt end,
+    exactly where a single pass fires. The hooks are told where the prompt
+    ends (as ``generate._stream_rendered`` tells them), so the memory
+    diagnostic counts that one-token pass as prompt, not as a decode step."""
+    device = model.device
+    input_ids = torch.tensor([prompt_ids], device=device)
+    hooked = model.hooked
+    previous = getattr(hooked, "prompt_token_count", None)
+    hooked.prompt_token_count = len(prompt_ids)
+    try:
+        past = _chunked_prefill(model, input_ids, chunk_size)
+        mask = torch.ones((1, len(prompt_ids)), dtype=torch.long, device=device)
+        return model.model(input_ids=input_ids[:, -1:], attention_mask=mask,
+                           past_key_values=past, use_cache=True,
+                           **logits_slice_kwargs(model.model))
+    finally:
+        hooked.prompt_token_count = previous
+
+
+@torch.no_grad()
 def _continuation_logits(model: SteeredModel, prompt_ids: list[int],
-                         option_ids: list[int]) -> list[torch.Tensor]:
+                         option_ids: list[int], *,
+                         chunk_size: int | None = None) -> list[torch.Tensor]:
     """Next-token logits before each option token, scored under the KV cache
-    exactly as decode would see them (prefill pass + one pass per token)."""
+    exactly as decode would see them (prefill pass + one pass per token).
+
+    ``chunk_size`` reads the prompt in chunks of that many tokens
+    (:func:`_chunked_prompt_pass`); None reads it in one pass, the path every
+    readout took before issue #8, unchanged."""
     device = model.device
     model.hooked.reset_offsets()
-    # Explicit all-ones masks (batch-of-one, no padding — identical behavior,
-    # no HF pad==eos inference warning). Cached steps mask the FULL sequence
-    # (past + current token), which is what HF expects with past_key_values.
-    prompt_mask = torch.ones((1, len(prompt_ids)), dtype=torch.long, device=device)
-    out = model.model(input_ids=torch.tensor([prompt_ids], device=device),
-                      attention_mask=prompt_mask, use_cache=True,
-                      **logits_slice_kwargs(model.model))
+    if chunk_size:
+        out = _chunked_prompt_pass(model, prompt_ids, chunk_size)
+    else:
+        # Explicit all-ones masks (batch-of-one, no padding — identical
+        # behavior, no HF pad==eos inference warning). Cached steps mask the
+        # FULL sequence (past + current token), which is what HF expects with
+        # past_key_values.
+        prompt_mask = torch.ones((1, len(prompt_ids)), dtype=torch.long,
+                                 device=device)
+        out = model.model(input_ids=torch.tensor([prompt_ids], device=device),
+                          attention_mask=prompt_mask, use_cache=True,
+                          **logits_slice_kwargs(model.model))
     rows = [out.logits[0, -1].detach()]
     past = out.past_key_values
     for step, token_id in enumerate(option_ids[:-1], start=1):
@@ -216,6 +263,35 @@ def _continuation_logits(model: SteeredModel, prompt_ids: list[int],
     return rows
 
 
+def reads_prompt_once(option_token_ids: list[list[int]]) -> bool:
+    """Whether one read of the prompt scores every option: true when every
+    option is a single token, since each option's only scored row is then
+    the row after the prompt, the same for all of them. Swift twin
+    ``LogprobInstrument.readsPromptOnce``."""
+    return bool(option_token_ids) and all(len(ids) == 1
+                                          for ids in option_token_ids)
+
+
+def _step_logits(model: SteeredModel, prompt_ids: list[int],
+                 option_token_ids: list[list[int]], *,
+                 chunk_size: int | None = None) -> list[list[torch.Tensor]]:
+    """Every option's scored rows (``option_scores_from_step_logits``'s
+    input), inside the caller's armed session.
+
+    Single-token options share the one row after the prompt, read once.
+    Otherwise each option is scored from its own read of the prompt, each in
+    chunks when ``chunk_size`` says so: a cache cannot simply be rewound to
+    the prompt's end for every model (a hybrid model's linear-attention
+    layers carry a running state, not a per-position cache), so the
+    multi-token path keeps one read per option."""
+    if reads_prompt_once(option_token_ids):
+        rows = _continuation_logits(model, prompt_ids, option_token_ids[0],
+                                    chunk_size=chunk_size)
+        return [rows for _ in option_token_ids]
+    return [_continuation_logits(model, prompt_ids, ids, chunk_size=chunk_size)
+            for ids in option_token_ids]
+
+
 def score_options(model: SteeredModel, prompt: str, options: list[str], *,
                   model_id: str | None = None,
                   injections: list[CellInjection] | None = None,
@@ -223,8 +299,20 @@ def score_options(model: SteeredModel, prompt: str, options: list[str], *,
                   prompt_mode: str = prompt_render.CHAT_ASSISTANT,
                   system_prompt: str | None = None,
                   qwen_thinking_enabled: bool = False,
-                  transcript: list | None = None) -> ChoiceResult:
+                  transcript: list | None = None,
+                  reading: PromptReading | None = None) -> ChoiceResult:
     """Score every answer option as a continuation of the rendered prompt.
+
+    ``reading`` is the prompt reading to read the prompt by (issue #8): a
+    study run passes its own (``prompt_reading.readout_reading``), so a
+    prompt the run's generation reads in chunks is read out in the same
+    chunks. None — every other caller: optvec, J-lens g0, a sweep's
+    objective, a battery outside a run — reads every prompt in a single
+    pass, as before. So does a reading that does not chunk a prompt of this
+    length.
+
+    The prompt is read once per item when every option is a single token,
+    and once per option otherwise (:func:`_step_logits`).
 
     Injections (when given) are resolved through the shared intervention
     builder (``steering.plan``, via :func:`generate._injectors`) — never
@@ -280,10 +368,11 @@ def score_options(model: SteeredModel, prompt: str, options: list[str], *,
     # ride between it and the injectors, per the plan ordering contract.
     chain = _injectors(list(injections or []), rendered.prompt_token_count,
                        latent_edits=list(latent_edits or []))
-    step_logits: list[list[torch.Tensor]] = []
+    chunk = (reading.chunk_size(rendered.prompt_token_count)
+             if reading is not None else None)
     with model.hooked.session(chain):
-        for ids in option_token_ids:
-            step_logits.append(_continuation_logits(model, rendered.input_ids, ids))
+        step_logits = _step_logits(model, rendered.input_ids, option_token_ids,
+                                   chunk_size=chunk)
 
     scores = option_scores_from_step_logits(options, option_token_ids, step_logits)
     return ChoiceResult(options=scores,

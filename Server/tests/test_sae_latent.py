@@ -1336,14 +1336,14 @@ def test_the_latent_edit_fires_on_the_prompt_end_of_every_scored_option():
     """Decode-identical semantics: the edit lands at the true prompt end, which
     is exactly the position injection steers before the first scored token.
 
-    Two single-token options → two uncached passes over the 3-token prompt (the
-    stepped driver re-prefills per option and resets the offset each time), and
-    the edit fires on both."""
+    Two single-token options share the one row after the prompt (issue #8), so
+    the 3-token prompt is read once, from offset 0, and the edit fires on that
+    read. Multi-token options keep one read each (the next test)."""
     model = ProbeSteeredModel()
     _score_with_latent(model, edit_at(mode=CLAMP, beta=5.0))
     fires = model.hooked.fires
-    assert [f["seqLen"] for f in fires] == [3, 3]
-    assert [f["offset"] for f in fires] == [0, 0]
+    assert [f["seqLen"] for f in fires] == [3]
+    assert [f["offset"] for f in fires] == [0]
     assert all(f["delta"] > 0 for f in fires), fires
 
 
