@@ -3247,9 +3247,26 @@ public struct ClusterClient: Sendable {
     private func postSubmission<Body: Encodable>(
         _ path: String, body: Body
     ) async throws -> RemoteStudySubmission {
-        // Whether the request can have reached the server: URLError's
-        // `.timedOut` also covers a connection that was never made, and only
-        // a request known to have been sent is "unknown" (review round 3).
+        try await postAwaitingAnswer(path, body: body) { cause in
+            let repeatIsSafe = (try? await self.capabilities())?.supportsSubmissionKey ?? false
+            return SubmissionOutcomeUnknown(
+                endpoint: self.profile.baseURL.absoluteString, cause: cause,
+                repeatIsSafe: repeatIsSafe,
+                waitedSeconds: Self.studySubmissionTimeout)
+        }
+    }
+
+    /// POST a request whose answer can take minutes (a study submission, a
+    /// resume that runs sbatch inside the request): the long wait, and a
+    /// request that was sent and never answered handed to `unknown` for its
+    /// typed error. Whether it can have reached the server is read from the
+    /// request's own network timings: URLError's `.timedOut` also covers a
+    /// connection that was never made, and only a request known to have been
+    /// sent is "unknown" (review round 3).
+    private func postAwaitingAnswer<T: Decodable, Body: Encodable>(
+        _ path: String, body: Body,
+        unknown: (String) async -> Error
+    ) async throws -> T {
         let probe = SubmissionSendProbe()
         do {
             var request = try makeRequest(path: path, method: "POST")
@@ -3258,16 +3275,12 @@ public struct ClusterClient: Sendable {
             request.timeoutInterval = Self.studySubmissionTimeout
             let (data, response) = try await session.data(for: request, delegate: probe)
             try validate(response: response, data: data)
-            return try decoder.decode(RemoteStudySubmission.self, from: data)
+            return try decoder.decode(T.self, from: data)
         } catch {
             guard let cause = SubmissionOutcomeUnknown.cause(of: error),
                 !probe.neverSent
             else { throw error }
-            let repeatIsSafe = (try? await capabilities())?.supportsSubmissionKey ?? false
-            throw SubmissionOutcomeUnknown(
-                endpoint: profile.baseURL.absoluteString, cause: cause,
-                repeatIsSafe: repeatIsSafe,
-                waitedSeconds: Self.studySubmissionTimeout)
+            throw await unknown(cause)
         }
     }
 
@@ -3412,8 +3425,15 @@ public struct ClusterClient: Sendable {
             var walltime: String?
         }
         do {
-            return try await post("/api/jobs/\(id)/resubmit",
-                                  body: Body(walltime: walltime))
+            // A resume can run sbatch inside the request (review round 4):
+            // the long wait, and an unanswered request is an unknown outcome.
+            return try await postAwaitingAnswer(
+                "/api/jobs/\(id)/resubmit", body: Body(walltime: walltime)
+            ) { cause in
+                ResumeOutcomeUnknown(
+                    endpoint: self.profile.baseURL.absoluteString, jobID: id,
+                    cause: cause, waitedSeconds: Self.studySubmissionTimeout)
+            }
         } catch let error as ClientError {
             throw Self.unwrappingDetail(error)
         }

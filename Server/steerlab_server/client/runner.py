@@ -450,6 +450,16 @@ class SubmitOutcomeUnknown(RunnerUnreachable):
     code = "submitOutcomeUnknown"
 
 
+class ResumeOutcomeUnknown(RunnerUnreachable):
+    """A resume request (``POST /api/jobs/{id}/resubmit``) that was sent and
+    never answered (review round 4). The runner may have resumed the job, so
+    it is ``pending`` (exit 12), and the repair is to check the job's status
+    before resuming again."""
+
+    state = "pending"
+    code = "resumeOutcomeUnknown"
+
+
 def bundle_content_digest(metadata: dict | None) -> str | None:
     """What a run bundle CONTAINS, as one digest: its study's name and
     content hash, and every packaged file's path and SHA-256, in path order
@@ -1338,8 +1348,43 @@ class RunnerClient:
             try: instrumentation_contract.require(required, self.capabilities())
             except ValueError as exc:
                 raise RunnerRefusal(str(exc), code='unsupportedInstrumentation', repair_action='Update and restart the engine, then reconnect before resubmitting.') from exc
-        return self._json("POST", f"/api/jobs/{quote(job_id, safe='')}/resubmit",
-                          json_body={"walltime": walltime} if walltime else {})
+        # A resume can run sbatch inside the request (review round 4): it
+        # gets the submit's long wait, and a request that was sent and never
+        # answered is an unknown outcome, never a failure.
+        try:
+            return self._json(
+                "POST", f"/api/jobs/{quote(job_id, safe='')}/resubmit",
+                json_body={"walltime": walltime} if walltime else {},
+                timeout=self._submit_timeout if self._owns_client else None)
+        except RunnerUnreachable as exc:
+            if not exc.request_sent:
+                raise
+            raise self._resume_unknown(job_id, exc.reason) from exc
+        except RunnerHTTPError as exc:
+            if exc.status not in GATEWAY_STATUSES:
+                raise
+            raise self._resume_unknown(
+                job_id, f"a proxy answered {exc.status}: {exc.reason}") from exc
+        except RunnerError as exc:
+            if exc.code != "notARunner":
+                raise
+            raise self._resume_unknown(
+                job_id, "the runner's answer could not be read") from exc
+
+    def _resume_unknown(self, job_id: str, why: str) -> "ResumeOutcomeUnknown":
+        """The typed answer for a resume that was sent and never answered."""
+        return ResumeOutcomeUnknown(
+            self.scrub(f"the resume request for job {job_id} to "
+                       f"{self.base_url} was sent and never answered ({why}) "
+                       "— the runner may have resumed it, so nothing was "
+                       "retried"),
+            repair_action=(
+                f"steerlab runner status {job_id} --runner {self.base_url}  "
+                "(check the job's status: a resumed job names the job that "
+                "continues it). Resume again only if it still reads "
+                "checkpointed or cancelled with nothing continuing it"),
+            detail={"jobID": job_id, "retried": False,
+                    "waitedSeconds": self._submit_timeout})
 
     def job_recovery(self, job_id: str) -> dict:
         return self._json("GET", f"/api/jobs/{quote(job_id, safe='')}/recovery")

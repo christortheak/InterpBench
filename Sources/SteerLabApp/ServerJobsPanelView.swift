@@ -1279,6 +1279,10 @@ struct ServerJobsPanelView: View {
             status = RemoteJobStatusClass.resumedStatusLine(
                 jobID: jobID, result: result)
             await refreshJobs(selectFirstWhenEmpty: false)
+        } catch let unknown as ResumeOutcomeUnknown {
+            // Review round 4: the server may have resumed it; look first.
+            status = unknown.appSentence
+            await refreshJobs(selectFirstWhenEmpty: false)
         } catch let error as ClusterClient.ClientError {
             showRefusal(RefusalPresentation(
                 ClusterClient.unwrappingDetail(error), context: "Couldn't resume job \(jobID)."))

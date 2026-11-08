@@ -88,6 +88,8 @@ class _SlowRunner(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/capabilities":
             cluster = {"submissionKey": True} if self.submit_key else {}
             self._answer({"cluster": cluster, "instrumentation": []})
+        elif self.path == "/api/jobs/job1":
+            self._answer({"id": "job1", "status": "checkpointed"})
         else:
             self.send_error(404)
 
@@ -98,6 +100,14 @@ class _SlowRunner(http.server.BaseHTTPRequestHandler):
             self._answer({"kind": "runBundle", "experiment": "demo",
                           "bundleSha256": "d" * 64,
                           "runtimeRequirements": []})
+            return
+        if self.path == "/api/jobs/job1/resubmit":
+            type(self).bodies.append(body)
+            time.sleep(self.delay)
+            try:
+                self._answer({"jobId": "job2", "resubmittedFrom": "job1"})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
         if self.path == "/api/studies/submit-bundle":
             type(self).bodies.append(body)
@@ -248,3 +258,38 @@ def test_runner_submit_says_plainly_when_it_was_already_submitted(
     assert document["result"]["alreadySubmitted"] is True
     assert document["result"]["alreadySubmittedNote"] == note
     assert document["message"].startswith("already submitted:")
+
+
+def test_a_resume_waits_as_long_as_a_submission(slow_runner, monkeypatch):
+    """Review round 4: a resume can run sbatch inside the request. Answered
+    after longer than an ordinary request's budget (0.5 s here), it is
+    waited for."""
+    handler, url = slow_runner
+    handler.delay = 1.2
+    monkeypatch.setattr(runner_api, "DEFAULT_TIMEOUT", 0.5)
+    monkeypatch.setattr(runner_api, "SUBMIT_TIMEOUT", 10.0)
+    with runner_api.RunnerClient(base_url=url) as client:
+        assert client.resubmit_job("job1")["jobId"] == "job2"
+
+
+def test_an_unanswered_resume_is_pending_with_the_repair_to_check(
+        slow_runner, monkeypatch, capsys, tmp_path):
+    from steerlab_server import client_cli
+    handler, url = slow_runner
+    handler.delay = 2.0
+    monkeypatch.setattr(runner_api, "SUBMIT_TIMEOUT", 0.4)
+    monkeypatch.delenv(client_cli.RUNNER_TOKEN_ENV, raising=False)
+    with runner_api.RunnerClient(base_url=url) as client:
+        with pytest.raises(runner_api.ResumeOutcomeUnknown) as raised:
+            client.resubmit_job("job1")
+    assert raised.value.state == "pending"
+    assert raised.value.repair_action.startswith(
+        f"steerlab runner status job1 --runner {url}")
+    workspace = str(tmp_path / "ws")
+    os.makedirs(workspace)
+    code = client_cli.main(["runner", "resubmit", "job1", "--runner", url,
+                            "--root", workspace, "--json"])
+    document = json.loads(capsys.readouterr().out)
+    assert code == 12, document
+    assert document["error"]["code"] == "resumeOutcomeUnknown"
+    assert len(handler.bodies) == 2, "one attempt each, nothing retried"

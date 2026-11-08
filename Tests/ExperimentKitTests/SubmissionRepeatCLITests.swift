@@ -219,6 +219,84 @@ import Testing
                                        requestStarted: true)]))
     }
 
+    /// Review round 4: a resume can run sbatch inside the request, so it
+    /// waits as long as a submission, and one that was sent and never
+    /// answered is `pending` (12) with the repair to check the job's status.
+    func resubmit(_ behaviour: SubmitBehaviour) async throws -> Outcome {
+        let timeouts = WiringLocked<[TimeInterval]>([])
+        RepeatURLProtocol.handler = { request in
+            switch (request.httpMethod ?? "", request.url?.path ?? "") {
+            case ("GET", "/api/jobs/job1"):
+                return (Data(#"{"id":"job1","status":"checkpointed"}"#.utf8), 200)
+            case ("GET", "/api/capabilities"):
+                return (Data(#"{"instrumentation":["policy-v1","policy-evidence-v2","probe-readings-v1"]}"#.utf8), 200)
+            case ("POST", "/api/jobs/job1/resubmit"):
+                timeouts.withLock { $0.append(request.timeoutInterval) }
+                switch behaviour {
+                case .fail(let code): throw URLError(code)
+                case .answerAfter(let seconds, _):
+                    if seconds > request.timeoutInterval { throw URLError(.timedOut) }
+                    return (Data(#"{"jobId":"job2","resubmittedFrom":"job1"}"#.utf8), 200)
+                default:
+                    return (Data(#"{"detail":"gateway"}"#.utf8), 504)
+                }
+            default:
+                return (Data(#"{"detail":"no such route"}"#.utf8), 404)
+            }
+        }
+        defer { RepeatURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RepeatURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let stderr = WiringLocked("")
+        let sink = ExperimentCLISink(
+            out: { _ in }, outRaw: { _ in },
+            err: { text in stderr.withLock { $0 += text } })
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "resume-wait-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+        let result = await ExperimentCLIRunner.$remoteSessionOverride.withValue(session) {
+            await ExperimentCLIRunner(sink: sink).run(
+                namespace: "remote",
+                ["resubmit", "job1", "--url", "http://127.0.0.1:1", "--token", "stub",
+                 "--json"])
+        }
+        return Outcome(
+            envelope: result.envelope, exitCode: result.exitCode,
+            stderr: stderr.withLock { $0 }, submitBodies: [],
+            submitTimeouts: timeouts.withLock { $0 })
+    }
+
+    @Test func aSlowResumeIsWaitedFor() async throws {
+        let outcome = try await resubmit(.answerAfter(seconds: 120))
+        #expect(outcome.envelope.exitCode == 0, "\(outcome.envelope.error?.reason ?? "")")
+        #expect(outcome.submitTimeouts == [3600])
+    }
+
+    @Test func anUnansweredResumeIsPendingWithTheRepairToCheckItsStatus() async throws {
+        for behaviour in [SubmitBehaviour.fail(.timedOut), .status(504)] {
+            let outcome = try await resubmit(behaviour)
+            #expect(outcome.envelope.exitCode == 12)
+            #expect(outcome.envelope.state == .pending)
+            #expect(outcome.envelope.error?.code == "resumeOutcomeUnknown")
+            #expect(outcome.envelope.error?.repairAction.hasPrefix(
+                "steerlab-cli remote status job1 --url http://127.0.0.1:1 --json") == true)
+            #expect(outcome.envelope.error?.reason.contains("may have resumed it") == true)
+        }
+        let refused = try await resubmit(.fail(.cannotConnectToHost))
+        #expect(refused.envelope.error?.code != "resumeOutcomeUnknown")
+        let unknown = ResumeOutcomeUnknown(
+            endpoint: "http://server.test", jobID: "job1",
+            cause: "the wait for an answer ran out", waitedSeconds: 3600)
+        #expect(unknown.appSentence.contains("Check the job's status"))
+    }
+
     /// A request that cannot have reached the server stays what it is.
     @Test func aRefusedConnectionIsStillAFailure() async throws {
         let outcome = try await submit(behaviour: .fail(.cannotConnectToHost))

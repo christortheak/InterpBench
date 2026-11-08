@@ -178,6 +178,55 @@ public struct SubmissionOutcomeUnknown: Error, CustomStringConvertible, Localize
     }
 }
 
+/// A resume request (`POST /api/jobs/{id}/resubmit`) that was sent and never
+/// answered (review round 4). A resume can run sbatch inside the request, so
+/// the server may have resumed the job: `pending`, exit 12, and the repair is
+/// to check the job's status before resuming again. Python twin:
+/// `runner.ResumeOutcomeUnknown`.
+public struct ResumeOutcomeUnknown: Error, CustomStringConvertible, LocalizedError {
+    public static let code = "resumeOutcomeUnknown"
+
+    public let endpoint: String
+    public let jobID: String
+    public let cause: String
+    public let waitedSeconds: TimeInterval
+
+    public init(endpoint: String, jobID: String, cause: String, waitedSeconds: TimeInterval) {
+        self.endpoint = endpoint
+        self.jobID = jobID
+        self.cause = cause
+        self.waitedSeconds = waitedSeconds
+    }
+
+    public var reason: String {
+        "The resume request for job \(jobID) to \(endpoint) was sent and not "
+            + "answered (\(cause)). This is not a failure: the server may have "
+            + "resumed it, and nothing was sent again."
+    }
+
+    /// The repair, naming the exact command that reads the job's status.
+    public func repair(statusCommand: String) -> String {
+        "\(statusCommand)  (check the job's status: a resumed job names the "
+            + "job that continues it). Resume again only if it still reads "
+            + "checkpointed or cancelled with nothing continuing it"
+    }
+
+    public var repairAction: String {
+        repair(statusCommand: "steerlab-cli remote status \(jobID) --json")
+    }
+
+    /// The app's words for it.
+    public var appSentence: String {
+        "The resume request for job \(jobID) was sent, but the server did not "
+            + "answer (\(cause)). The outcome is unknown: the server may have "
+            + "resumed it. Check the job's status in Compute › Server Jobs before "
+            + "resuming again."
+    }
+
+    public var description: String { reason + " To repair: " + repairAction }
+    public var errorDescription: String? { description }
+}
+
 /// Watches one submission request's network metrics, to tell a request that
 /// was never sent (its connection was never made) from one that may have
 /// reached the server. URLError's `.timedOut` covers both; only the second is
