@@ -618,8 +618,9 @@ def read_throughput(profile: ServerProfile | None = None) -> dict:
     return {"schemaVersion": 1, "entries": entries, "foldedJobIds": folded}
 
 
-def parse_gpu_type(gres: str | None) -> str | None:
-    """``gpu:A100:1`` / ``gpu:A100`` / ``A100`` → ``A100``; None when absent."""
+def _gres_token(gres: str | None) -> str | None:
+    """The word after ``gpu:`` in a gres (``gpu:A100:1`` → ``A100``,
+    ``gpu:1`` → ``1``), the bare value otherwise, None when absent."""
     if not gres or not str(gres).strip():
         return None
     value = str(gres).strip()
@@ -627,6 +628,37 @@ def parse_gpu_type(gres: str | None) -> str | None:
         parts = value.split(":")
         return parts[1] or None if len(parts) > 1 else None
     return value
+
+
+def requests_gpu(gres: str | None) -> bool:
+    """Whether a gres asks for a GPU at all, typed or not (``gpu:1`` does)."""
+    return bool(_gres_token(gres))
+
+
+def parse_gpu_type(gres: str | None) -> str | None:
+    """``gpu:A100:1`` / ``gpu:A100`` / ``A100`` → ``A100``; None when absent,
+    and None for an untyped request (``gpu:1``, ``1``, ``gpu``): a count is
+    not a GPU type."""
+    token = _gres_token(gres)
+    if token is None or token.isdigit() or token.lower() == "gpu":
+        return None
+    return token
+
+
+#: The throughput history's GPU key for a request that asks for a GPU
+#: without naming its type: its own bucket, never a type's, and never the
+#: no-GPU (local executor) bucket.
+UNTYPED_GPU_BUCKET = "unknownGPU"
+
+
+def throughput_gpu_bucket(gres: str | None) -> str | None:
+    """The GPU key a job's throughput is kept under, and looked up by: its
+    GPU type; :data:`UNTYPED_GPU_BUCKET` for a GPU of no named type; None for
+    a job that asked for no GPU."""
+    gpu_type = parse_gpu_type(gres)
+    if gpu_type is not None:
+        return gpu_type
+    return UNTYPED_GPU_BUCKET if requests_gpu(gres) else None
 
 
 def throughput_lookup(model_id: str, gpu_type: str | None,
@@ -647,11 +679,6 @@ def throughput_lookup(model_id: str, gpu_type: str | None,
                 and entry.get("instrumentFamily") == instrument_family):
             return entry
     return None
-
-
-#: How many stamped jobs a family entry keeps for pricing by prompt length
-#: (issue #11): the most recent, oldest dropped first.
-PROMPT_HISTORY_JOBS = 64
 
 
 def _number(value) -> bool:
@@ -804,7 +831,7 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                     or not isinstance(count, int) or count <= 0
                     or not model_id):
                 continue
-            gpu_type = parse_gpu_type(
+            gpu_type = throughput_gpu_bucket(
                 (job.requested_resources or {}).get("gres"))
             # The records' own pace where the job stamped it (issue #11): a
             # pilot's elapsed time is mostly its model load, and dividing it

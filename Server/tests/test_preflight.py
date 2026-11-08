@@ -263,8 +263,9 @@ def test_walltime_warns_when_the_estimate_exceeds_the_request(study_site,
     # 6 records ÷ 10/h × 1.5 + 0.25 = 0.9 + 0.25 = 1.15 h, over 0.5 h.
     assert walltime["status"] == "warn"
     assert walltime["data"]["estimatedHours"] == 1.15
-    assert "request --walltime 02:00:00 or more" in walltime["message"]
-    assert "keeps the records it finished" in walltime["message"]
+    assert "Ask for --walltime 02:00:00 or more" in walltime["message"]
+    # More than twice the 0.5 h asked for.
+    assert "very likely to run out of time" in walltime["message"]
 
 
 def test_walltime_warn_above_80_percent(study_site, tmp_path):

@@ -4039,7 +4039,7 @@ def _battery_run_plan(spec, agents, battery_file: str, dtype) -> dict:
     rate = 0.0
     try:
         from .api import housekeeping, instrument_family
-        gpu = housekeeping.parse_gpu_type(os.environ.get("STEERLAB_GRES"))
+        gpu = housekeeping.throughput_gpu_bucket(os.environ.get("STEERLAB_GRES"))
         # The SAMPLED family's rate first, then the global. A battery run's
         # expensive half is the long-form regime — sampled text at a positive
         # temperature — and pricing the whole run at a deterministic-logprob

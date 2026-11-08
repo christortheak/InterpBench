@@ -323,14 +323,19 @@ extension ClusterCapabilities {
 }
 
 extension RemoteStudySubmission {
-    /// The walltime check's plain-language notice: the throughput history it
-    /// priced from came from much shorter items than this submission's, or
-    /// does not say how long its items were. Nil when there is none.
+    /// The walltime check's plain-language advice (issue #11): that the job
+    /// is estimated to need longer than the requested walltime, with the
+    /// walltime to ask for (`walltimeAdvice`), and that the history it priced
+    /// from came from items of a very different length, or does not say how
+    /// long its items were (`promptLengthNotice`). Both, when both are said;
+    /// nil when there is neither. Python twin: `runner.walltime_notice`.
     public var walltimeNotice: String? {
-        guard let check = preflight?.checks.first(where: { $0.id == "walltime" }),
-            case .string(let notice)? = check.data?["promptLengthNotice"],
-            !notice.isEmpty
+        guard let check = preflight?.checks.first(where: { $0.id == "walltime" })
         else { return nil }
-        return notice
+        let said = ["walltimeAdvice", "promptLengthNotice"].compactMap { key -> String? in
+            guard case .string(let text)? = check.data?[key], !text.isEmpty else { return nil }
+            return text
+        }
+        return said.isEmpty ? nil : said.joined(separator: " ")
     }
 }

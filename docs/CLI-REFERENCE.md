@@ -4167,11 +4167,10 @@ caller`).
 
 Representative failures: `memoryFit` fails when weights + KV cache + 20 %
 headroom exceed the requested GPU's VRAM, and names a GPU type that would fit;
-`walltime` fails only when even the pace of a comparable past job with
-shorter items cannot fit the records in the requested walltime (below), and
-otherwise warns when its estimate (planned records ÷ observed throughput ×
-1.5, plus startup) exceeds the requested walltime or above 80 % of it;
-`maintenanceWindow` fails when the walltime crosses a configured window.
+`walltime` never fails: it warns when its estimate (planned records ÷
+observed throughput × 1.5, plus startup) exceeds the requested walltime, or
+above 80 % of it (below); `maintenanceWindow` fails when the walltime crosses
+a configured window.
 
 **Which throughput the `walltime` check divides by** (corrected 2026-08-20).
 The submission is classified into one *instrument family* — from the
@@ -4208,33 +4207,32 @@ compute pace apart on its family entry (`promptTokens.jobs: [{perRecord,
 records, hours, computeSecondsPerRecord, maxTokens, jobId}]`, the most
 recent 64). `computeSecondsPerRecord` is the job's own records' pace, (last
 record − first record) ÷ (records − 1), from the `recordPace` stamp the
-bundle executor writes; it leaves out the model load. The check then builds
-two figures (review round 4):
+bundle executor writes; it leaves out the model load.
 
-- **The estimate** (`data.estimatedHours`), advice only. A
-  `deterministicLogprob` study is priced from the past jobs nearest its
-  length (less than four times longer or shorter, and of those the closest),
-  each one's time per record scaled in proportion to tokens, the slowest of
-  them; a generating family keeps its generated-token pricing; × 1.5, plus
-  15 minutes of startup. Over the requested walltime it is a `warn` that
-  names the walltime to ask for (the estimate rounded up to the hour) or a
-  split, and says that a run which reaches its walltime keeps its finished
-  records and can be resumed. With no past job near this length, the
-  notice (`data.promptLengthNotice`, also on both clients' stderr and in the
-  envelope's `result.walltimeNotice`) names the nearest past job and how far
-  it is (`data.farFromHistory`).
-- **The minimum** (`data.minimumHours`, `data.minimumBasis`), the only basis
-  for `fail`. A longer prompt never reads faster, so a past job of this
-  family, model and GPU (the history's own key) whose items were no longer,
-  and for a generating family whose records generated no more tokens, ran
-  each record at a pace this job cannot beat. The minimum is this job's
-  records (the largest part's, for a split run) × the slowest such job's
-  `computeSecondsPerRecord`, with no margin and no startup. When it exceeds
-  the requested walltime, the check fails and says so as certain ("even at
-  the pace of <job>'s shorter items, these N records need at least X h"),
-  with the repair: request at least that, or split the study. A past job of
-  another model or GPU, with longer items, or with no compute pace never
-  counts, and then the check only warns.
+The check is advice and never refuses (review round 5): a past job can be
+slow or fast for reasons that are not this study's (multi-token options read
+the prompt once per option, a token budget is not the tokens generated, an
+adapter load between conditions), so no history-based figure can promise
+that a job will not fit. Its verdicts are `ok` and `warn`. The estimate
+(`data.estimatedHours`): a `deterministicLogprob` study is priced from the
+past jobs nearest its length (less than four times longer or shorter, and of
+those the closest), each one's time per record scaled in proportion to
+tokens, the slowest of them; a generating family keeps its generated-token
+pricing; × 1.5, plus 15 minutes of startup. The estimate line names the past
+jobs it was priced from. Over the requested walltime it is a prominent
+`warn`, `data.walltimeAdvice` (also on both clients' stderr and in the
+envelope's `result.walltimeNotice`): the estimate, the walltime to ask for
+(rounded up to the hour), and splitting the study as the alternative; past
+twice the request it says the job is very likely to run out of time. It says
+what happens at the walltime by the step (`data.atWalltime`: `resumes`,
+`resumesInRunStage`, or `stops`): a `run` keeps its finished records and a
+`sweep` its finished cells, and either can be resumed; a pipeline passes the
+checkpoint to its `run` stage only, so it can be resumed only when the
+walltime finds it there; `extract`, `validate`, and `evaluate`, and a
+pipeline in any other stage, stop and must be submitted again. With no past job near this length, the notice
+(`data.promptLengthNotice`) names the nearest past job and how far it is
+(`data.farFromHistory`). A request for a GPU of no named type (`gpu:1`) is
+kept in its own history bucket, `unknownGPU`.
 
 A history that does not record its items' length gets the notice when these
 average 8,192 tokens or more. The estimate never sets the job's time limit:
