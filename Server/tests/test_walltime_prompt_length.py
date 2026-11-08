@@ -649,9 +649,9 @@ def readout_site(tmp_path, monkeypatch):
     return {"tmp": tmp_path}
 
 
-def _submit(site, *, dry_run=True, walltime="04:00:00"):
+def _submit(site, *, dry_run=True, walltime="04:00:00", verb="run"):
     return sub.submit_study(
-        "readout-study", verb="run",
+        "readout-study", verb=verb,
         jobs=JobManager(DurableJobStore(str(site["tmp"] / "jobs.sqlite")),
                         sweep_orphans=False),
         executor="slurm", dry_run=dry_run,
@@ -724,12 +724,41 @@ def test_a_slow_past_pace_is_never_refused_before_the_queue(readout_site):
                                   force=False) is False
 
 
+def test_a_sweep_submission_is_told_it_stops_at_its_walltime(readout_site):
+    """Review round 6: a standalone sweep does not resume on the cluster
+    (``bundle execute`` gives it no checkpoint flag), so a sweep estimated
+    over its walltime is told it stops and must be submitted again, in the
+    advice both clients show, never that it keeps what it finished. A slow
+    family history of 2 records an hour: 4 records ÷ 2 = 2 h × 1.5 + 0.25 =
+    3.25 h, over twice 00:20:00."""
+    meta = readout_site["tmp"] / "meta"
+    (meta / "throughput.json").write_text(json.dumps({
+        "schemaVersion": 1, "foldedJobIds": [], "entries": [
+            _entry(2.0, fam.DETERMINISTIC_LOGPROB)]}), encoding="utf-8")
+    preview = _submit(readout_site, walltime="00:20:00", verb="sweep")
+    check = _walltime_check(preview)
+    assert check["status"] == "warn"
+    assert check["data"]["estimatedHours"] == 3.25
+    assert "very likely to run out of time" in check["data"]["walltimeAdvice"]
+    assert check["data"]["atWalltime"] == sub.AT_WALLTIME_STOPS
+    advice = check["data"]["walltimeAdvice"]
+    assert "a sweep job that reaches its walltime stops and must be " \
+        "submitted again" in advice
+    assert "keeps the" not in advice and "resumed" not in advice
+    # A run of the same study, by contrast, is told it resumes.
+    run = _walltime_check(_submit(readout_site, walltime="00:20:00"))
+    assert "a run that reaches its walltime keeps the records it finished" \
+        in run["data"]["walltimeAdvice"]
+
+
 # --- which jobs resume at their walltime ------------------------------------------
 
 
 @pytest.mark.parametrize("verb,stages,expected", [
     ("run", None, sub.AT_WALLTIME_RESUMES),
-    ("sweep", None, sub.AT_WALLTIME_RESUMES),
+    # A standalone sweep is given no checkpoint flag on the cluster (review
+    # round 6): the walltime warning ends it with no resume state.
+    ("sweep", None, sub.AT_WALLTIME_STOPS),
     ("extract", None, sub.AT_WALLTIME_STOPS),
     ("validate", None, sub.AT_WALLTIME_STOPS),
     ("evaluate", None, sub.AT_WALLTIME_STOPS),
@@ -748,9 +777,9 @@ def test_only_checkpointing_steps_are_said_to_resume(verb, stages, expected):
     (sub.AT_WALLTIME_RESUMES, "run",
      "a run that reaches its walltime keeps the records it finished, and can "
      "be resumed from them"),
-    (sub.AT_WALLTIME_RESUMES, "sweep",
-     "a sweep that reaches its walltime keeps the cells it finished, and can "
-     "be resumed from them"),
+    (sub.AT_WALLTIME_STOPS, "sweep",
+     "a sweep job that reaches its walltime stops and must be submitted "
+     "again"),
     (sub.AT_WALLTIME_RESUMES_IN_RUN_STAGE, "pipeline",
      "a pipeline that reaches its walltime in its run stage keeps the records "
      "it finished there, and can be resumed from them; in any other stage it "
