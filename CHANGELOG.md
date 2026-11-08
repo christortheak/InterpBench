@@ -55,11 +55,15 @@ migration that rewrites frozen bytes.
   the job it already made, however often the study is repackaged, and
   reports the job as it is now. A repeat from the other client is not
   recognised. Prompts are counted once per submission, and faster, with
-  identical counts. The walltime estimate prices an answer-token study from
-  past jobs whose items were of similar length, taking the slowest of them.
-  When none is near, it says which way the estimate errs. It still refuses,
-  before the queue, a walltime shorter than an estimate that can only be
-  too low, and only warns about one that can only be too high.
+  identical counts. The walltime check refuses a submission only when even
+  the pace of a comparable past job with shorter items (the same kind of
+  study, model, and GPU, timed from its own records) cannot fit its records
+  in the requested walltime. Otherwise it gives an estimate from past jobs
+  of similar length, and when that is over the walltime it warns, naming
+  the walltime to ask for. A run that reaches its walltime keeps its
+  finished records and can be resumed. Both clients also wait up to an hour
+  for a resume, and report one that goes unanswered as an unknown outcome
+  to check.
 - **A split run that meets the cluster's job limit waits instead of
   cancelling itself** (public issue #12). When the scheduler refuses a part
   of a `--parallel` run because your job limit is reached (submitted jobs,
@@ -71,9 +75,9 @@ migration that rewrites frozen bytes.
   exits nonzero on both clients. A held part that the scheduler refuses for
   a limit that never frees, such as a walltime above the cluster's maximum
   for one job, fails its run with the scheduler's words and a repair. It
-  never holds up another run's parts, and a Resume that asks for such a
-  walltime is refused at once. A maintenance window delays only its own
-  run. The searches that keep a part from being
+  never holds up another run's parts. A Resume refused for a named limit
+  is refused at once. A refusal that gives no reason holds the parts, and
+  says so. A maintenance window delays only its own run. The searches that keep a part from being
   submitted twice now reach back to their own record's time, across
   midnight, and an inconclusive search is never read as absence.
 
