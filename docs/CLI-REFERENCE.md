@@ -4514,18 +4514,27 @@ Consequences, stated plainly:
   refused (`--retry-refused-walltime` on either, sent as
   `retryRefusedWalltime: true`). The refusal's 409 carries the same two
   choices typed beside its `detail` (`code: "refusedWalltime"`,
-  `repairAction`), and both clients make that their `repairAction`; a Mac
-  client facing an older server builds the same choices as full commands.
+  `repairAction`). The Python client makes that its `repairAction`; the Mac
+  client builds the same choices as full commands aimed at the server it
+  connected to (`--site` or `--url`, and `--json`), from a current server or
+  an older one alike.
   A retry without `--walltime` asks for exactly the walltime in `heldGaveUp`,
-  even one an earlier Resume's `--walltime` set, and hands the first part to
-  the scheduler in the request, as an explicit `--walltime` does: the answer
-  carries `retriedRefusedWalltime` and says what the scheduler did (the parts
-  continue, are held for the job limit with `heldReason`, are held without a
-  reason with `heldUnexplained`, or the Resume is refused, and the run stays
-  stopped). The app's Resume sends no walltime: for such a run its line names
+  even one an earlier Resume's `--walltime` set, in the form sbatch's
+  override takes: a site default in days (`1-00:00:00`, `2-12:30:00`) is sent
+  as `24:00:00` or `60:30:00`. A walltime SteerLab cannot read is refused in
+  SteerLab's own words (`code: "unreadableWalltime"`), never as the
+  scheduler's, with the repair: resume with an explicit `--walltime
+  HH:MM:SS`. Its parts are then resumed as an explicit `--walltime` resumes
+  them: a part cancelled while it ran is resubmitted in the request; when
+  none was, the first held part is handed to the scheduler in the request,
+  and otherwise the held parts wait for the controller. The answer carries
+  `retriedRefusedWalltime` and says how the parts stand (they continue, are
+  held for the job limit with `heldReason`, are held without a reason with
+  `heldUnexplained`, or the Resume is refused, and the run stays stopped).
+  The app's Resume sends no walltime: for such a run its line names
   both commands, and it offers "Retry at <walltime>…" only after a
   confirmation that says what that risks, and only when the server named the
-  walltime (`cancelResume.refusedWalltime`; review rounds 7 to 9). A named
+  walltime (`cancelResume.refusedWalltime`; review rounds 7 to 10). A named
   job count, or the part's acceptance, ends the count. A Resume whose first
   held part is refused that way answers
   `heldUnexplained: true` with `schedulerMessage`, says the parts are held,

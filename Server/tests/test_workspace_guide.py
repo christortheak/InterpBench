@@ -413,3 +413,23 @@ def test_the_held_resume_answers_are_named_where_they_are_described():
     assert '(never while another part of it is with the scheduler)' in text
     assert 'while another part of it runs' not in text
     assert 'which asks for exactly that walltime, even one an earlier `--walltime` set' in text
+    # Review round 10: a walltime in days is retried; one SteerLab cannot
+    # read is SteerLab's to say, and the answer claims no more than it knows.
+    assert 'or one given in days' in text
+    assert "a walltime SteerLab cannot read is refused in SteerLab's own words" in text
+    assert 'answers with what the scheduler did' not in text
+
+
+def test_the_cli_reference_says_when_a_retry_hands_a_part_over():
+    """Review round 10: a retry hands the first held part to the scheduler
+    in the request only when no part was resubmitted in that Resume; the
+    reference says so, and that the Mac aims its repair at its server."""
+    text = ' '.join((ROOT / 'docs/CLI-REFERENCE.md')
+                    .read_text(encoding='utf-8').split())
+    assert ('a part cancelled while it ran is resubmitted in the request; '
+            'when none was, the first held part is handed to the scheduler in '
+            'the request, and otherwise the held parts wait for the '
+            'controller') in text
+    assert 'and hands the first part to the scheduler in the request, as an explicit' not in text
+    assert 'is sent as `24:00:00` or `60:30:00`' in text
+    assert 'aimed at the server it connected to (`--site` or `--url`, and `--json`)' in text

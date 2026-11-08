@@ -153,9 +153,11 @@ a walltime within the cluster's limit for one job (`steerlab-cli remote
 resubmit <job-id> --walltime HH:MM:SS`), or, if the cause was the job limit
 and slots have freed, the walltime that was refused (`steerlab-cli remote
 resubmit <job-id> --retry-refused-walltime`, which asks for exactly that
-walltime, even one an earlier `--walltime` set, and answers with what the
-scheduler did with it). A Resume at that walltime without the flag is
-refused (65), and its reason and repair name both choices. An engine older
+walltime, even one an earlier `--walltime` set or one given in days, and
+whose answer says how the parts stand). A Resume at that walltime without
+the flag is refused (65), and its reason and repair name both choices; a
+walltime SteerLab cannot read is refused in SteerLab's own words, so resume
+with an explicit `--walltime`. An engine older
 than this answers a
 refused fan-out as a success, so on one, check `steerlab-cli remote jobs`
 and count the parts. **And stagger submissions where the site caps queued jobs per user:**
