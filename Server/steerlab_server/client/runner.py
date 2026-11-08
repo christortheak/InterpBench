@@ -257,6 +257,34 @@ def require_declared_seed_policy(staged, verb, capabilities, where: str,
         repair_action=sampling.outdated_engine_repair())
 
 
+def require_greedy_seed_list(staged, verb, workspace_root) -> None:
+    """Refuse BEFORE submitting a staged bundle whose study runs at
+    temperature 0 with several seeds (public issue #9): every seed gives the
+    same response, so the run is refused, and an engine from before the rule
+    would refuse it only after the queue wait and the model load. Asked of
+    every engine, whatever its capabilities. Same evidence rule as
+    :func:`require_declared_seed_policy`. Swift twin:
+    ``ClusterClient.requireGreedySeedList``."""
+    from ..experiment import lifecycle_gates, sampling
+    from ..experiment.manifest import Manifest
+    name = staged.get("experiment") if isinstance(staged, dict) else None
+    if not workspace_root or not isinstance(name, str) or not name:
+        return
+    try:
+        manifest = Manifest.load(name, workspace_root)
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    if manifest.content_hash() != staged.get("experimentContentHash"):
+        return
+    problem = sampling.submission_greedy_seed_list_problem(manifest, verb)
+    if problem is None:
+        return
+    raise RunnerRefusal(
+        problem, code=lifecycle_gates.STUDY_DECLARATION,
+        repair_action=sampling.greedy_seed_list_repair(
+            name, frozen=manifest.status != "draft"))
+
+
 def require_prompt_reading(staged, verb, capabilities, where: str,
                            workspace_root) -> None:
     """Refuse BEFORE submitting a staged bundle whose study declares a
@@ -930,6 +958,7 @@ class RunnerClient:
             except ValueError as exc:
                 raise RunnerRefusal(str(exc), code="unsupportedInstrumentation", repair_action="Update and restart the engine, then reconnect and review this unchanged bundle.") from exc
         if workspace_root:
+            require_greedy_seed_list(staged, verb, workspace_root)
             require_declared_seed_policy(staged, verb, self.capabilities(),
                                          self.base_url, workspace_root)
             require_prompt_reading(staged, verb, self.capabilities(),

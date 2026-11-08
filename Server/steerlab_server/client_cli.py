@@ -4492,6 +4492,22 @@ def _run(invocation: Invocation) -> CLIResult:
             common=common, facts={"violations": list(violations)},
             stage_facts={"status": status})
 
+    # A study frozen under an older release still verifies, but a step that
+    # runs it is refused at temperature 0 with several seeds (public issue
+    # #9). Refused here, before anything is uploaded, so even a runner from
+    # before the rule is never reached. Swift twin:
+    # `SubstrateRouting.greedySeedListSubmissionRefusal`.
+    from .experiment import sampling as _seed_rule
+    greedy = _seed_rule.submission_greedy_seed_list_problem(manifest,
+                                                            study_verb)
+    if greedy:
+        raise _die(
+            stages, "load", code=lifecycle_gates.STUDY_DECLARATION,
+            gate=lifecycle_gates.STUDY_DECLARATION, reason=greedy,
+            repair=_seed_rule.greedy_seed_list_repair(
+                name, frozen=status != "draft"),
+            common=common, stage_facts={"status": status})
+
     # The measured run reads its items from the pinned task prompts, and this
     # client's submission carries no other prompt file. Freeze does not ask
     # for task prompts (a multi-agent study has none), so a study can freeze

@@ -77,6 +77,27 @@ extension ClusterClient {
         return inspected
     }
 
+    /// Refuse to submit a staged bundle whose study runs at temperature 0
+    /// with several seeds (public issue #9), on every server: one from
+    /// before the rule would refuse it only after the queue wait and the
+    /// model load. Same evidence rule as `requireDeclaredSeedPolicy`. Python
+    /// twin: `runner.require_greedy_seed_list`.
+    func requireGreedySeedList(inspectedBundle inspected: JSONValue, verb: String) throws {
+        guard SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            case .object(let metadata) = inspected,
+            case .string(let name)? = metadata["experiment"], !name.isEmpty,
+            case .string(let hash)? = metadata["experimentContentHash"],
+            let manifest = try? ExperimentStore.load(name: name),
+            ExperimentStore.manifestHash(manifest) == hash,
+            let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
+                manifest: manifest, verb: verb)
+        else { return }
+        throw ExperimentError.refusing(
+            .studyDeclaration, refusal,
+            repair: StudySampling.greedySeedListRepair(
+                name: name, frozen: manifest.status != .draft))
+    }
+
     /// Refuse to submit a staged bundle whose study an engine without the
     /// declared seed policy would seed with the fixed list (issue #3). The
     /// bundle names its study and that study's content hash; the study is

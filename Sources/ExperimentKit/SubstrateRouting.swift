@@ -212,6 +212,27 @@ public enum SubstrateRouting {
             + "same seeds for every item. Nothing was submitted."
     }
 
+    /// The greedy seed rule for a submission of `verb` (public issue #9): a
+    /// step that runs the study (`run`, or a `pipeline` whose declared
+    /// stages include it) at temperature 0 with several seeds, on a study
+    /// that generates sampled text. Asked of every server whatever its
+    /// capabilities, so one from before the rule, which would refuse only
+    /// after the queue wait and the model load, is never reached. A pipeline
+    /// with no block is left to the engine, which refuses the block itself.
+    /// Returns the rule's sentence, or nil. Python twin:
+    /// `sampling.submission_greedy_seed_list_problem`.
+    public static func greedySeedListSubmissionRefusal(
+        manifest: ExperimentManifest, verb: String
+    ) -> String? {
+        guard matrixExecutingVerbs.contains(verb) else { return nil }
+        if verb == "pipeline" {
+            guard let chain = PipelineDraft.parse(manifest.pipeline),
+                chain.stages.contains("run")
+            else { return nil }
+        }
+        return StudySampling.greedySeedListProblem(manifest)
+    }
+
     /// Old-server guard for a declared prompt reading (issue #6): a study
     /// that declares `promptReading`, on a verb whose prompts the
     /// declaration governs (`PromptReading.readingVerbs`: run, sweep,

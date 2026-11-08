@@ -39,6 +39,7 @@ from steerlab_server.experiment import (bundles, lifecycle_gates, run_workflow,
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import verification_refusal as refusal
 from steerlab_server.experiment.manifest import Manifest
+from test_run_orchestration import evidence_archive, script  # noqa: F401 - fixtures
 
 GREEDY_THREE = sampling.greedy_seed_list_problem(0.0, [11, 22, 33])
 
@@ -713,3 +714,65 @@ def test_a_chain_meets_the_settings_refusals_before_any_stage_or_model(
     assert refused.value.gate == "studyDeclaration"
     assert "duplicate greedy greedy-v2" in refused.value.repair_action
     assert loads == []
+
+
+# --- the clients refuse before submitting (review round 1) -------------------------
+
+
+def test_the_client_refuses_before_any_runner_is_addressed(
+        tmp_path, monkeypatch, capsys, script):
+    """So even a runner from before the rule, which would refuse only after
+    the queue wait and the model load, is never reached."""
+    from test_run_orchestration import (RUNNER_URL, STUDY_NAME,
+                                        _frozen_workspace, _run, _stages)
+    with monkeypatch.context() as older:
+        older.setattr(sampling, "manifest_greedy_seed_list_problem",
+                      lambda manifest: None)
+        root = _frozen_workspace(tmp_path, monkeypatch,
+                                 protocol=("seeds=[11,22,33]",))
+    assert es.load_raw(STUDY_NAME, root)["status"] == "frozen"
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL], capsys,
+                             root=root)
+    assert code == 65, document
+    assert document["error"]["code"] == "studyDeclaration"
+    assert document["error"]["reason"] == GREEDY_THREE
+    assert document["error"]["repairAction"].startswith(
+        f"steerlab experiment duplicate {STUDY_NAME} {STUDY_NAME}-v2 && "
+        f"steerlab experiment set-protocol {STUDY_NAME}-v2 --set seeds='[<n>]'")
+    assert document["result"]["failedStage"] == "load"
+    assert _stages(document)["package"]["state"] == client_cli.STAGE_NOT_REACHED
+    assert script.info_calls == 0
+    assert script.uploads == [] and script.submits == []
+
+
+def test_runner_submit_refuses_a_staged_study_the_seed_rule_refuses(tmp_path,
+                                                                     monkeypatch):
+    """`runner submit` names only a staged bundle: its study is read from the
+    local workspace when the bundle's name and content hash match it."""
+    from steerlab_server.client import runner as runner_api
+    root = str(tmp_path)
+    _frozen_under_an_older_release(root, "greedy", monkeypatch,
+                                   temperature=0.0, seeds=[11, 22, 33])
+    staged = {"experiment": "greedy", "experimentContentHash":
+              Manifest.load("greedy", root).content_hash()}
+    with pytest.raises(runner_api.RunnerRefusal) as refused:
+        runner_api.require_greedy_seed_list(staged, "run", root)
+    assert str(refused.value) == GREEDY_THREE
+    assert refused.value.code == "studyDeclaration"
+    assert "duplicate greedy greedy-v2" in refused.value.repair_action
+    # Steps that do not run the study, a bundle that is not this study, and
+    # no workspace to vouch for it: nothing to refuse.
+    runner_api.require_greedy_seed_list(staged, "analyze", root)
+    runner_api.require_greedy_seed_list(
+        {**staged, "experimentContentHash": "0" * 64}, "run", root)
+    runner_api.require_greedy_seed_list(staged, "run", None)
+    # A pipeline is refused only when its declared chain runs the study.
+    manifest = Manifest.load("greedy", root)
+    assert sampling.submission_greedy_seed_list_problem(manifest, "pipeline") \
+        is None  # no block: the engine refuses the block itself
+    manifest.raw["pipeline"] = {"stages": ["run", "analyze"]}
+    assert sampling.submission_greedy_seed_list_problem(
+        manifest, "pipeline") == GREEDY_THREE
+    manifest.raw["pipeline"] = {"stages": ["extract", "validate"]}
+    assert sampling.submission_greedy_seed_list_problem(
+        manifest, "pipeline") is None

@@ -3125,6 +3125,20 @@ public struct ClusterClient: Sendable {
         resumeFrom: String? = nil
     ) async throws -> RemoteStudySubmission {
         try await requireStudyInstrumentation(experiment: experiment)
+        // A server-resident study at temperature 0 with several seeds
+        // (public issue #9) is refused here, from the server's own manifest,
+        // whatever the engine's release.
+        if SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            let body = try? await experimentManifestBody(name: experiment),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
+            let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
+                manifest: manifest, verb: verb)
+        {
+            throw ExperimentError.refusing(
+                .studyDeclaration, refusal,
+                repair: StudySampling.greedySeedListRepair(
+                    name: manifest.name, frozen: manifest.status != .draft))
+        }
         // A server-resident study an older engine would seed with the fixed
         // list (issue #3) is refused here, from the server's own manifest.
         if SubstrateRouting.matrixExecutingVerbs.contains(verb),
@@ -3181,6 +3195,9 @@ public struct ClusterClient: Sendable {
         rereadChoices: Bool = false
     ) async throws -> RemoteStudySubmission {
         let inspected = try await requireBundleInstrumentation(path: path)
+        // Temperature 0 with several seeds (public issue #9): refused before
+        // submitting, whatever the engine's release.
+        try requireGreedySeedList(inspectedBundle: inspected, verb: verb)
         // An older engine would seed a declared derivedSHA256 at one sample
         // per item with the fixed list: refused before submitting.
         try await requireDeclaredSeedPolicy(inspectedBundle: inspected, verb: verb)

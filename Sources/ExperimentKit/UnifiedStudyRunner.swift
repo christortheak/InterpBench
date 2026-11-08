@@ -104,6 +104,15 @@ public final class UnifiedStudyRunner {
             note(refusal, .error)
             return
         }
+        // Temperature 0 with several seeds (public issue #9): refused BEFORE
+        // packaging/uploading, on every server.
+        if let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
+            manifest: manifest, verb: verb)
+        {
+            statusLine = refusal
+            note(refusal, .error)
+            return
+        }
         // Old-server guard (issue #3): a declared derivedSHA256 at one sample
         // per item would run with the fixed seed list on a server without
         // the declared seed policy — refuse BEFORE packaging/uploading.

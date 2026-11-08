@@ -121,6 +121,15 @@ public final class StudyBundleSubmissionController {
             note(refusal, severity: .error)
             return .failure(StudyBatchSubmission.Failure(reason: refusal))
         }
+        // Temperature 0 with several seeds (public issue #9) — same rule as
+        // UnifiedStudyRunner.submitBundle, on every server.
+        if let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
+            manifest: manifest, verb: submissionVerb)
+        {
+            jobs.remoteStatus = refusal
+            note(refusal, severity: .error)
+            return .failure(StudyBatchSubmission.Failure(reason: refusal))
+        }
         // Old-server guard (issue #3) — same rule as
         // UnifiedStudyRunner.submitBundle: a declared derivedSHA256 at one
         // sample per item would run with the fixed seed list on a server

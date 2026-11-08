@@ -227,6 +227,29 @@ def manifest_greedy_seed_list_problem(manifest) -> str | None:
                                     instruments=manifest.outcome_instruments)
 
 
+def submission_greedy_seed_list_problem(manifest, verb) -> str | None:
+    """:func:`greedy_seed_list_problem` for a submission of ``verb``: one
+    that runs the study (``run``, or a ``pipeline`` whose declared stages
+    include it). Both clients refuse with it before they submit, as they do
+    for :func:`submission_needs_declared_seed_policy`, so an engine from
+    before the rule is never reached. A pipeline with no block (or one that
+    does not resolve) is left to the engine, which refuses the block itself.
+    Swift twin: ``SubstrateRouting.greedySeedListSubmissionRefusal``."""
+    if verb == "pipeline":
+        from . import pipeline_spec
+        block = manifest.raw.get("pipeline")
+        try:
+            stages = (pipeline_spec.resolve_pipeline(block).stages
+                      if block is not None else ())
+        except ValueError:
+            stages = ()
+        if "run" not in stages:
+            return None
+    elif verb != "run":
+        return None
+    return manifest_greedy_seed_list_problem(manifest)
+
+
 def frozen_greedy_seed_list_advisory(manifest) -> str | None:
     """What ``verify`` says of a study frozen under an older release that the
     seed rule refuses, or None: it still verifies (its runs stay readable),

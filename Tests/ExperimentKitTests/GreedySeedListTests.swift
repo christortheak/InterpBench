@@ -279,6 +279,75 @@ import Testing
         }
     }
 
+    // MARK: - the client refuses before submitting (review round 1)
+
+    /// Asked of every server, whatever its capabilities, so one from before
+    /// the rule is never reached; a pipeline only when its chain runs the
+    /// study. Python twin: `sampling.submission_greedy_seed_list_problem`.
+    @Test func theSubmissionRuleFollowsTheVerbAndTheChain() {
+        var manifest = ExperimentManifest(name: "demo", description: "", modelID: "test/model")
+        manifest.temperature = 0
+        manifest.seeds = [11, 22, 33]
+        #expect(
+            SubstrateRouting.greedySeedListSubmissionRefusal(manifest: manifest, verb: "run")
+                == Self.threeGreedy)
+        #expect(
+            SubstrateRouting.greedySeedListSubmissionRefusal(manifest: manifest, verb: "analyze")
+                == nil)
+        // No block: the engine refuses the block itself.
+        #expect(
+            SubstrateRouting.greedySeedListSubmissionRefusal(manifest: manifest, verb: "pipeline")
+                == nil)
+        manifest.pipeline = .object(["stages": .array([.string("run"), .string("analyze")])])
+        #expect(
+            SubstrateRouting.greedySeedListSubmissionRefusal(manifest: manifest, verb: "pipeline")
+                == Self.threeGreedy)
+        manifest.pipeline = .object(["stages": .array([.string("extract"), .string("validate")])])
+        #expect(
+            SubstrateRouting.greedySeedListSubmissionRefusal(manifest: manifest, verb: "pipeline")
+                == nil)
+        // A readout-only study runs, so its submission is not refused.
+        manifest.outcomeInstruments = ["answerTokenLogprob"]
+        #expect(
+            SubstrateRouting.greedySeedListSubmissionRefusal(manifest: manifest, verb: "run")
+                == nil)
+    }
+
+    /// `remote submit-bundle`'s guard: the staged bundle's study is read
+    /// from this workspace when its name and content hash match, and refused
+    /// before anything is sent.
+    @Test func aStagedBundleOfAGreedyStudyIsRefusedBeforeSubmitting() async throws {
+        try await withTempRoot { root in
+            try await attachedDraft(root, "demo")
+            var manifest = try ExperimentStore.load(name: "demo")
+            manifest.seeds = [11, 22, 33]
+            manifest.status = .frozen
+            manifest.freezeHash = ExperimentStore.manifestHash(manifest)
+            try ExperimentStore.save(manifest)
+            let client = ClusterClient(
+                profile: .init(baseURL: URL(string: "https://runner.example.invalid")!))
+            let staged = JSONValue.object([
+                "experiment": .string("demo"),
+                "experimentContentHash": .string(ExperimentStore.manifestHash(manifest)),
+            ])
+            #expect {
+                try client.requireGreedySeedList(inspectedBundle: staged, verb: "run")
+            } throws: { error in
+                let refusal = (error as? ExperimentError)?.lifecycleRefusal
+                return refusal?.gate == .studyDeclaration
+                    && refusal?.reason == Self.threeGreedy
+                    && refusal?.repairAction.hasPrefix(
+                        "steerlab-cli experiment duplicate demo demo-v2 && ") == true
+            }
+            try client.requireGreedySeedList(inspectedBundle: staged, verb: "analyze")
+            try client.requireGreedySeedList(
+                inspectedBundle: .object([
+                    "experiment": .string("demo"),
+                    "experimentContentHash": .string(String(repeating: "0", count: 64)),
+                ]), verb: "run")
+        }
+    }
+
     // MARK: - run start: the backstop for a study frozen under an older release
 
     @Test func runStartRefusesAStudyFrozenUnderAnOlderRelease() async throws {
