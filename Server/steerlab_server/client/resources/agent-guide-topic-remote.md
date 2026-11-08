@@ -132,13 +132,16 @@ measured run out across sibling jobs whose partial results the runner merges
 back into one ordinary run directory. Sharding is execution logistics and
 never enters the manifest or its content hash, so a sharded run and a
 single-job run of the same frozen study are the same measurement. Two rules
-are not optional. **Verify the shard jobs actually landed:** a fan-out can
-partially fail while the submit still succeeds, so count the jobs with
-`steerlab runner jobs --runner <url>` and never report a sharded submit as
-successful on the exit code alone. **And stagger submissions where the site
-caps queued jobs per user**; ask the researcher for the limit rather than
-guess. The merge is performed by the running runner service, not by the
-submitting process.
+are not optional. **Read what the submit says about its parts:** when the
+cluster's job limit is reached part-way through a fan-out, the runner holds
+the remaining parts and submits them, in order, as slots free. The submit
+succeeds, carries `shardsHeld`, and prints a note; `steerlab runner status
+<job-id> --runner <url>` shows each held part. A part refused for any other
+reason fails the submit with a nonzero exit. An older runner answers that
+case as a success, so on one, count the jobs with `steerlab runner jobs
+--runner <url>`. **And stagger submissions where the site caps queued jobs
+per user**; ask the researcher for the limit rather than guess. The merge is
+performed by the running runner service, not by the submitting process.
 
 ### Resuming a checkpointed job
 
@@ -219,6 +222,11 @@ configured scheduler commands, in fixed fields under `result.response`:
   The read answers within about 30 seconds: a part whose scheduler did not
   answer in time says so (`scheduler.timedOut`), so ask again rather than
   concluding anything from it.
+- `held` and `heldNote`: set on a part SteerLab holds because the cluster's
+  job limit is reached (`held.reason` is `clusterJobLimit`, `held.since` when
+  it began to wait). Its status is `pending`, and it has no scheduler view
+  until the controller submits it. Report it as held by SteerLab, not as
+  waiting in the scheduler's queue.
 
 A job's `startedAt` is the scheduler's start time, and stays empty while it
 waits; `createdAt` is when it was submitted. This holds for study runs,

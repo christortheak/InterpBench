@@ -586,11 +586,17 @@ Read §7 before a cluster session. The short list:
    rules, different answer, on purpose (§5.1). The Swift client says which it
    did: the envelope echoes `parallelJobsRequested` /
    `parallelJobsEncoded` / `parallelJobsSuppressedBecause` (§3.8).
-5a. **A fan-out can partially fail while the submit still exits 0.** The abort
-   is reported through the *parent* job record, not the submitting process's
-   exit status — so verify the shard jobs landed in the scheduler queue
-   rather than trusting the exit code, and stagger submissions at a site that
-   caps queued jobs per user (§3.8, §5.3).
+5a. **A fan-out that meets the cluster's job limit holds its remaining
+   parts** (issue #12). The parts already accepted keep running; the rest are
+   held by SteerLab (`pending` shard records carrying `result.held`), and the
+   running controller submits them, in order, as slots free. The submit
+   succeeds and says so: `shardsHeld` in the response, and a `note:` on
+   stderr. A part refused for any other reason cancels the parts already
+   submitted, fails the parent, and fails the submit: the routes answer it
+   as an error, `study submit` exits 1, and both clients exit nonzero. An
+   engine older than this answered that case as a success, so against one,
+   verify the shard jobs in the queue rather than trusting the exit code.
+   Stagger submissions at a site that caps queued jobs per user (§3.8, §5.3).
 6. GPU type is chosen by **`--gres`** (`--gres A100` → `gpu:A100:1`), not by
    any `--gpu`/`--gpu-type` flag; unset, it falls back to the site profile's
    `STEERLAB_SLURM_GRES`. There is no other lever (§5.1).
@@ -2634,7 +2640,7 @@ id fails with the stable code `unknownSite`.
 | `upload` | Uploads a bundle. |
 | `submit-bundle` | **`--verb` is required**. The request waits up to an hour for the server's answer, which comes only after it has measured every task prompt; a submission that was sent and never answered is `submitOutcomeUnknown` (`pending`, exit 12), never a failure, with the repair to look with `remote jobs` (`result.repeatIsSafe` says whether this server answers a repeat with the job the first request created, `cluster.submissionKey`). An `alreadySubmitted` answer says so (`result.alreadySubmitted`, `changed: false`). Without `--executor`, a verb that loads a model gets the server's own executor (`capabilities.profile.executor`: `slurm` on a cluster, `local` on a workstation), and `analyze` and `verify`, which load none, get `local` (the controller). Until 2026-10-20 the default was always `local`, which ran model verbs inside a cluster controller's CPU allocation. `--executor local` for a model verb on a Slurm server warns on stderr. When the server's executor cannot be read, the verb refuses and says to pass `--executor`. The envelope echoes `result.executorSource`: `flag`, `serverProfile`, `loadsNoModel`, or `fallback` (the server declares none). Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
 | `jobs` | Job list as JSON. |
-| `status` | `GET /api/jobs/{id}/status` (capability `cluster.jobStatus`): one read that returns. `result.response.scheduler` is the scheduler's view in fixed fields, read through the site's configured `sacct`/`squeue` names — for a waiting job its `reason` and `expectedStartAt`; for a running or ended one `startedAt`, `nodeList`, `elapsed`, `timeLimit`, `walltimeRemainingSeconds`, `endedAt`, `exitCode`. `progress` counts records written the way a resume counts them (`recordsWritten`, `lastRecordAt`) out of `recordsExpected`, exact from a shard's stamp (`shardStamp`) or the submission's planning figure (`preflightEstimate`). `schedulerOutcome` is the scheduler's own word for an ending or interruption that came from outside the job's code (`TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`, `NODE_FAIL`, `CANCELLED` — by a person, SteerLab, or an administrator — `BOOT_FAIL`, `DEADLINE`), beside the unchanged `status` and never on a success; `schedulerOutcomeNote` says it as "The scheduler recorded …", names a cancel SteerLab asked for, and does not call a requeued job ended. `deathDetail` is the scheduler's sentence for a job that ended, from the same accounting row. A split run's parent answers each part under `shards`, asked about at once; the read answers within about 30 seconds, and a part the scheduler did not answer for in time carries `scheduler.timedOut`. CONFIGURING reads as starting (its start is real); SUSPENDED shows no remaining time. Only jobs in the server's store: an unknown id is `notFound`/66, an id that could name anything but a job is `usage`/64 before any request, and an engine without the read is `jobStatusUnsupported`/65. |
+| `status` | `GET /api/jobs/{id}/status` (capability `cluster.jobStatus`): one read that returns. `result.response.scheduler` is the scheduler's view in fixed fields, read through the site's configured `sacct`/`squeue` names — for a waiting job its `reason` and `expectedStartAt`; for a running or ended one `startedAt`, `nodeList`, `elapsed`, `timeLimit`, `walltimeRemainingSeconds`, `endedAt`, `exitCode`. `progress` counts records written the way a resume counts them (`recordsWritten`, `lastRecordAt`) out of `recordsExpected`, exact from a shard's stamp (`shardStamp`) or the submission's planning figure (`preflightEstimate`). `schedulerOutcome` is the scheduler's own word for an ending or interruption that came from outside the job's code (`TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`, `NODE_FAIL`, `CANCELLED` — by a person, SteerLab, or an administrator — `BOOT_FAIL`, `DEADLINE`), beside the unchanged `status` and never on a success; `schedulerOutcomeNote` says it as "The scheduler recorded …", names a cancel SteerLab asked for, and does not call a requeued job ended. `deathDetail` is the scheduler's sentence for a job that ended, from the same accounting row. A split run's parent answers each part under `shards`, asked about at once; the read answers within about 30 seconds, and a part the scheduler did not answer for in time carries `scheduler.timedOut`. A part SteerLab holds because the cluster's job limit is reached (issue #12) reads `pending` with `held` (`reason` `clusterJobLimit`, `since`, the scheduler's `schedulerMessage`) and `heldNote` ("held by SteerLab: the cluster's job limit is reached; it is submitted when a slot frees"), has no scheduler view yet, and the parent's `notes` count the held parts. CONFIGURING reads as starting (its start is real); SUSPENDED shows no remaining time. Only jobs in the server's store: an unknown id is `notFound`/66, an id that could name anything but a job is `usage`/64 before any request, and an engine without the read is `jobStatusUnsupported`/65. |
 | `logs` | Streams the job log until the job ends. `--tail N` (1–1000) instead prints the last N controller lines and the tails of the job's own `slurm-<id>.out` and `.err` (each read from at most 256 KiB at the end of the file; a missing file says so) and exits — `GET /api/jobs/{id}/log-tail`, capability `cluster.jobLogTail`, same refusals as `status`. |
 | `cancel` | Prints `cancel requested`. |
 | `fetch` | `--out` defaults to `.`. |
@@ -2672,15 +2678,23 @@ back with nothing said. A non-positive or non-integer value exits `64`
 (`--parallel must be a positive integer, not '<raw>'`).
 
 **Two operational disciplines the flag's own help carries, because both have
-cost real GPU time.** First, **verify the shard jobs landed** — a fan-out can
-**partially fail while the submit still exits 0**: the abort is reported
-through the *parent* job record, not the submitting process's exit status, so
-read `steerlab-cli remote jobs` (or the scheduler queue at the site) after
-submitting rather than trusting the exit code. Second, **stagger submissions
-at a site that caps queued jobs**: K shards are K independent sbatch
-submissions by design (§5.3), so a fan-out at a site with a per-user submit
-limit can have its later shards refused by the scheduler while the earlier
-ones run. Site profiles carry `maxParallelGPUJobs` for exactly this, and the
+cost real GPU time.** First, **read what the submit says about its parts.**
+When the cluster's job limit is reached part-way through a fan-out, the parts
+already accepted keep running and the rest are held by SteerLab: the submit
+exits 0 with `shardsHeld` in the response (`count`, `partCount`, `jobIDs`,
+`message`) and prints the message as a `note:` on stderr; the running
+controller submits each held part, in order, when a slot frees, and while it
+is not running they wait. `remote status <parent>` shows each held part as
+`pending`, with "held by SteerLab: the cluster's job limit is reached; it is
+submitted when a slot frees". A part refused for any other reason cancels the
+parts already submitted, fails the parent, and the submit exits nonzero with
+the scheduler's own words; an engine older than this answered that as a
+success, so against one, read `steerlab-cli remote jobs` after submitting.
+Second, **stagger submissions at a site that caps queued jobs**: K shards are
+K independent sbatch submissions by design (§5.3), so a fan-out at a site
+with a per-user submit limit has its later shards held while the earlier
+ones run, and they wait for slots other work also needs. Site profiles carry
+`maxParallelGPUJobs` for exactly this, and the
 field's own help names how to find the real limit
 (`sacctmgr show qos format=Name,MaxTRESPerUser`); with none declared the app's
 stepper caps at **16**.
@@ -4424,6 +4438,27 @@ Consequences, stated plainly:
   job id and the parent's error text (including sbatch's own stderr) to
   stderr and exits 1. stdout still carries the submission JSON, whose
   `shardJobIDs: null` shows the truthful no-shards shape.
+- **A shard sbatch refused for the cluster's job limit holds the rest
+  (issue #12).** The submit-limit reason codes (`QOSMaxSubmitJobPerUserLimit`,
+  `QOSMaxSubmitJobPerAccountLimit`, `QOSGrpSubmitJobsLimit`,
+  `AssocMaxSubmitJobLimit`, `AssocGrpSubmitJobsLimit`) hold that part and
+  every later one; sbatch's general "Job violates accounting/QOS policy"
+  sentence does too once an earlier part of the same run was accepted (alone
+  it may name a per-job size or time limit, which never frees). The list
+  lives in `api/executors.SUBMIT_LIMIT_REASONS`. Nothing is cancelled: a held
+  part is a `pending` shard record carrying `result.held`, and the running
+  server's tick submits held parts, oldest run first and each run's parts in
+  order, at most once a minute while the scheduler keeps refusing. Each
+  attempt's job name (`slhd-<part>-<token>`) is recorded before sbatch runs,
+  so an attempt whose answer was lost is found by name, never submitted
+  twice. A scheduler that cannot be reached, or a maintenance window in the
+  way, keeps the part held; any other refusal cancels the run and fails it.
+  Held parts are in the job store, so they survive a restart, and while no
+  server runs they wait. Cancelling the parent withdraws them, a run that
+  ends withdraws them, resubmit refuses one, and Resume on a cancelled run
+  holds them again. The merge waits for every part. The HTTP answer for a
+  run refused for any other reason is a 400 whose detail names the failed
+  parent; `study submit` reports it as before.
 - A sharded parent is `pending` while its shard children attach. A second
   `JobManager` constructed against the same store during that window (any
   other CLI verb, or a server restart) treats a pending parent as orphaned
@@ -5045,8 +5080,8 @@ cap) and is the re-invocable top-up — it persists every attempt atomically
 BEFORE the next sbatch, adopts orphaned submissions back by job name, treats
 a failed scheduler query as "alive" (known job) or "skip this cycle" (no
 known job), never as permission to resubmit, and **exits 3 when any sbatch
-failed** (this verb never buries a fan-out failure in a zero exit; the older
-`study submit` path does — check squeue there). The per-cell attempt budget
+failed** (this verb never buries a fan-out failure in a zero exit, and since
+2026-08-09 neither does `study submit`). The per-cell attempt budget
 (`1 + maxResubmits`, default 3) counts only submissions that ENTERED the
 scheduler — sbatch returned a job id, or an orphan was adopted by name. An
 sbatch refusal (QOS submit-cap crunch, fan-out failure) is recorded in the

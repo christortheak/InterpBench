@@ -948,19 +948,30 @@ def test_fanout_shard_submission_failure_cancels_and_fails_parent(
     """A shard sbatch failing mid-loop must not strand the earlier shards as
     disconnected children with no ids for the caller: the parent (created
     FIRST) fails with a plain-language account, the submitted shards are
-    scancelled, and the caller receives the parent id."""
+    scancelled, and the caller receives the parent id.
+
+    Issue #12: the refusal is RAISED (``ShardFanoutFailed``, a
+    ``RuntimeError`` the routes answer as an error), never returned as a
+    submission a client would report as a success."""
     monkeypatch.setenv("STEERLAB_EXECUTOR", "slurm")
     monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path / "target"))
     monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "2")  # shard 3 of 4 fails
     os.makedirs(tmp_path / "target", exist_ok=True)
-    from steerlab_server.api.submissions import submit_run_bundle
+    from steerlab_server.api.submissions import (ShardFanoutFailed,
+                                                 submit_run_bundle)
     bundle_path = _staged_bundle(tmp_path, name="shardatomic")
     jobs = _manager(tmp_path)
-    submission = submit_run_bundle(
-        bundle_path, verb="run", jobs=jobs, executor="slurm",
-        target_root=str(tmp_path / "target"),
-        resources={"gres": "A100", "walltime": "00:30:00"},
-        parallel_jobs=4)
+    with pytest.raises(ShardFanoutFailed) as raised:
+        submit_run_bundle(
+            bundle_path, verb="run", jobs=jobs, executor="slurm",
+            target_root=str(tmp_path / "target"),
+            resources={"gres": "A100", "walltime": "00:30:00"},
+            parallel_jobs=4)
+    submission = raised.value.submission
+    assert isinstance(raised.value, RuntimeError)
+    assert submission.job_id in str(raised.value)
+    assert "fake quota exceeded" in str(raised.value)
+    assert "submit the study again" in str(raised.value)
 
     # The caller gets the PARENT id (so the app can show the aborted
     # fan-out) and no shard ids — nothing is running.
@@ -1062,14 +1073,18 @@ def test_fanout_cancel_failure_is_honest_and_reconciler_retries(
     monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "2")  # shard 3 of 3 fails
     monkeypatch.setenv("FAKE_SCANCEL_FAIL", "fake scancel rejected")
     os.makedirs(tmp_path / "target", exist_ok=True)
-    from steerlab_server.api.submissions import submit_run_bundle
+    from steerlab_server.api.submissions import (ShardFanoutFailed,
+                                                 submit_run_bundle)
     bundle_path = _staged_bundle(tmp_path, name="shardcleanup")
     jobs = _manager(tmp_path)
-    submission = submit_run_bundle(
-        bundle_path, verb="run", jobs=jobs, executor="slurm",
-        target_root=str(tmp_path / "target"),
-        resources={"gres": "A100", "walltime": "00:30:00"},
-        parallel_jobs=3)
+    with pytest.raises(ShardFanoutFailed) as raised:
+        submit_run_bundle(
+            bundle_path, verb="run", jobs=jobs, executor="slurm",
+            target_root=str(tmp_path / "target"),
+            resources={"gres": "A100", "walltime": "00:30:00"},
+            parallel_jobs=3)
+    submission = raised.value.submission
+    assert "cancel FAILED for shard job(s)" in str(raised.value)
     parent = jobs.get(submission.job_id)
     assert parent.status == "failed"
     # The honest account: no "were cancelled" lie; the FAILED shards are

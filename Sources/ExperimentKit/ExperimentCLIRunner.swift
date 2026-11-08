@@ -2999,12 +2999,16 @@ public struct ExperimentCLIRunner: Sendable {
             if let notice = submission.walltimeNotice {
                 sink.err("warning: \(notice)\n")
             }
+            // Issue #12: a split run with held parts is a success, said
+            // plainly; one refused for any other reason was an error above.
+            let held = ShardedSubmission.heldParts(submission.shardsHeld)
+            if let held { sink.err("note: \(held.note)\n") }
             var submitted = try respond(
                 submission,
-                message: alreadySubmitted
+                message: (alreadySubmitted
                     ? "already submitted as job \(submission.jobId); nothing was "
                         + "submitted again"
-                    : "submitted \(path)",
+                    : "submitted \(path)") + (held.map { "; \($0.phrase)" } ?? ""),
                 extra: [
                     "alreadySubmitted": .bool(alreadySubmitted),
                     "walltimeNotice": submission.walltimeNotice.map {

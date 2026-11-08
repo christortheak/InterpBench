@@ -125,6 +125,21 @@ public enum ShardedSubmission {
         return max(1, siteMax)
     }
 
+    /// The parts of a split run the server holds because the cluster's job
+    /// limit was reached (issue #12): `(phrase, note)`, where the phrase
+    /// rides the one-line message and the note is the server's own sentence,
+    /// printed as it is. Nil when nothing is held, and from older servers.
+    /// Twin of the Python client's `job_reads.held_parts_summary`.
+    public static func heldParts(_ held: HeldShards?) -> (phrase: String, note: String)? {
+        guard let held, let count = held.count, count > 0 else { return nil }
+        let phrase = held.partCount.map {
+            "\(count) of \($0) parts held by SteerLab until slots free"
+        } ?? "\(count) part(s) held by SteerLab until slots free"
+        let note = held.message
+            ?? "\(phrase); the controller submits each, in order, when a slot frees"
+        return (phrase, note)
+    }
+
     /// Help text for the site-profile field: where the researcher finds the
     /// real per-user GPU-job limit at a Slurm site.
     public static let siteFieldHelp =
@@ -132,6 +147,38 @@ public enum ShardedSubmission {
         + "site — find your real per-user limit with sacctmgr show qos "
         + "format=Name,MaxTRESPerUser (empty = no site cap, and a submission "
         + "may then ask for up to \(defaultStepperCap) jobs)"
+}
+
+/// `shardsHeld` on a submission response (issue #12): the parts of a split
+/// run the server holds, and submits in order as slots free, because the
+/// cluster's job limit was reached. Every field optional, so a shape this
+/// client does not expect costs only that field.
+public struct HeldShards: Codable, Sendable, Equatable {
+    /// `clusterJobLimit`.
+    public var reason: String?
+    public var count: Int?
+    public var partCount: Int?
+    public var submittedCount: Int?
+    public var jobIDs: [String]?
+    public var since: Double?
+    public var schedulerMessage: String?
+    /// The server's sentence, printed as it is.
+    public var message: String?
+
+    public init(
+        reason: String? = nil, count: Int? = nil, partCount: Int? = nil,
+        submittedCount: Int? = nil, jobIDs: [String]? = nil, since: Double? = nil,
+        schedulerMessage: String? = nil, message: String? = nil
+    ) {
+        self.reason = reason
+        self.count = count
+        self.partCount = partCount
+        self.submittedCount = submittedCount
+        self.jobIDs = jobIDs
+        self.since = since
+        self.schedulerMessage = schedulerMessage
+        self.message = message
+    }
 }
 
 // MARK: - Shard fields on job records

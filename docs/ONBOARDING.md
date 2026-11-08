@@ -825,9 +825,11 @@ slurm --parallel 4` from the Mac. Sharding is execution logistics and never
 enters the manifest or its content hash, so a sharded run and a single-job run
 of the same frozen study are the same measurement. Two field rules before you
 use it: the merge is performed by a **running** `steerlab-server serve`, not
-by the submitting process; and a fan-out can **partially fail while the submit
-exits 0**, so check the scheduler queue rather than the exit code, and stagger
-submissions where the site caps queued jobs per user.
+by the submitting process; and a fan-out that meets the cluster's job limit
+**holds its remaining parts** and submits them as slots free, while one
+refused for any other reason fails the submit with a nonzero exit, so read
+what the submit says about its parts, and stagger submissions where the site
+caps queued jobs per user.
 [CONDUCTING-A-STUDY.md](CONDUCTING-A-STUDY.md) §7.2 has the discipline;
 [CLI-REFERENCE.md](CLI-REFERENCE.md) §5.3 has the mechanics.
 

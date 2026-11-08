@@ -3735,20 +3735,26 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
             experiment=submission.get("experiment"),
             verb=submission.get("verb"), operation="submit-bundle")
         already = submission.get("alreadySubmitted") is True
+        from .client.job_reads import held_parts_summary
+        held = held_parts_summary(submission)   # issue #12
         if already:
             # Issue #11: the runner recognised this request as one it had
             # already submitted, and answered with that job.
             line = (f"already submitted: {submission.get('experiment')!r} "
                     f"{submission.get('verb')} is job {job_id} on "
                     f"{client.base_url}; nothing was submitted again")
-            print(line)
-            print(f"  {submission.get('alreadySubmittedNote')}")
         else:
             line = (f"submitted {submission.get('experiment')!r} "
                     f"{submission.get('verb')} to {client.base_url} as job "
                     f"{job_id}"
                     + (" (dry run)" if submission.get("dryRun") else ""))
-            print(line)
+        if held:
+            line += f"; {held[0]}"
+        print(line)
+        if already:
+            print(f"  {submission.get('alreadySubmittedNote')}")
+        if held:
+            print(f"note: {held[1]}")
         from .client import runner as runner_api
         notice = runner_api.walltime_notice(submission)
         if notice:
@@ -3775,6 +3781,7 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
                      "runnerIdentity": identity,
                      "slurmJobID": submission.get("slurmJobID"),
                      "shardJobIDs": submission.get("shardJobIDs"),
+                     "shardsHeld": submission.get("shardsHeld"),
                      "submissionDirectory": submission.get(
                          "submissionDirectory"),
                      "recordsDirectory": submission.get("recordsDirectory"),
@@ -4879,6 +4886,7 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                  "dryRun": bool(submission.get("dryRun")),
                  "slurmJobID": submission.get("slurmJobID"),
                  "shardJobIDs": submission.get("shardJobIDs"),
+                 "shardsHeld": submission.get("shardsHeld"),
                  "submissionDirectory": submission.get("submissionDirectory")}
     already = submission.get("alreadySubmitted") is True
     notice = runner_api.walltime_notice(submission)
@@ -4889,11 +4897,14 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                 "alreadySubmittedNote": submission.get("alreadySubmittedNote")}
                if already else {}),
             **({"walltimeNotice": notice} if notice else {}))
+    from .client.job_reads import held_parts_summary
+    held = held_parts_summary(submission)   # issue #12
     _note("submit", f"job {job_id} ({submission.get('verb')} on "
                     f"{submission.get('executor')})"
                     + (" — dry run" if submission.get("dryRun") else "")
                     + (" — already submitted; nothing was submitted again"
-                       if already else ""))
+                       if already else "")
+                    + (f"; {held[1]}" if held else ""))
     if notice:
         sys.stderr.write(f"warning: {notice}\n")
 

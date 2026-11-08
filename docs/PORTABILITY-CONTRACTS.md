@@ -662,8 +662,12 @@ request; the HTTP body spells it `parallelJobs`; and this client passes
 runner protocol exposes it, inventing no sharding surface of its own (§10.9).
 One resolver rules on all of them, so the *rules* cannot drift — only the
 answer to a non-shardable request differs, and deliberately. The merge is the
-running server's reconciler on every path, and on every path a fan-out can
-partially fail while the submit exits `0`, so the shard jobs are verified at
+running server's reconciler on every path. On every path a fan-out that meets
+the cluster's job limit holds its remaining parts (`shardsHeld` on the
+submission, `held` on each part's status) and the server submits them as
+slots free, while a fan-out refused for any other reason is answered as an
+error, so the client exits nonzero. Against an engine older than that, a
+refused fan-out still reads as a success, and its shard jobs are verified at
 the scheduler, never inferred from an exit code.
 
 ### The envelope
@@ -749,7 +753,7 @@ invents a wire format makes the engine's tests stop being the client's tests.
 | `capabilities()` | `GET /api/capabilities` | → the capability snapshot `info()` also embeds |
 | `upload_run_bundle(path)` | `POST /api/bundles/upload` | raw octet-stream body + `X-SteerLab-Filename`; → `path`, `filename`, `sha256`, `bytes`, `bundle` (inspected), `executable`, `stagingDirectory` |
 | `inspect_remote_bundle(p)` | `POST /api/bundles/inspect` | `{bundlePath}` → the bundle metadata + recomputed `bundleSha256` |
-| `submit_uploaded_bundle(…)` | `POST /api/studies/submit-bundle` | `{bundlePath, verb, executor, dryRun, targetRoot, dtype, device, promptsPath, sourcePath, packageEvidence, parallelJobs, force, resources, env}` → `StudySubmission.to_dict()` (`jobId`, `experiment`, `verb`, `executor`, `dryRun`, `runBundle`, `slurmBundle`, `slurmJobID`, `command`, `recordsDirectory`, `submissionDirectory`, `preflight`, `shardJobIDs`) |
+| `submit_uploaded_bundle(…)` | `POST /api/studies/submit-bundle` | `{bundlePath, verb, executor, dryRun, targetRoot, dtype, device, promptsPath, sourcePath, packageEvidence, parallelJobs, force, resources, env}` → `StudySubmission.to_dict()` (`jobId`, `experiment`, `verb`, `executor`, `dryRun`, `runBundle`, `slurmBundle`, `slurmJobID`, `command`, `recordsDirectory`, `submissionDirectory`, `preflight`, `shardJobIDs`, `shardsHeld`) |
 | `job(id)` | `GET /api/jobs/{id}` | → `Job.to_dict()` (incl. `status`, `result`, `logTail`) |
 | `jobs()` | `GET /api/jobs` | → `{jobs: […]}`, each with a tail |
 | `cancel_job(id)` | `POST /api/jobs/{id}/cancel` | → `{ok: true}`; a 502 means `scancel` did not confirm and is **not** swallowed |

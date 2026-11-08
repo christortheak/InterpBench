@@ -1082,6 +1082,9 @@ public struct RemoteStudySubmission: Codable, Sendable {
     /// and its status.
     public var currentJobID: String? = nil
     public var currentStatus: String? = nil
+    /// Issue #12: the parts the server holds because the cluster's job limit
+    /// was reached. Nil when every part was submitted, and from older servers.
+    public var shardsHeld: HeldShards? = nil
 }
 
 // MARK: - Preflight (WS4 contract)

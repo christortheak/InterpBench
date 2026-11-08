@@ -1711,7 +1711,8 @@ def _study(args: list[str]):
             "to STEERLAB_SLURM_GRES from the site profile)\n")
         return 64
     from .api.jobs import JobManager
-    from .api.submissions import SubmissionRefusal, submit_study
+    from .api.submissions import (ShardFanoutFailed, SubmissionRefusal,
+                                  submit_study)
 
     experiment = args[1]
     verb = _flag(args, "--verb")
@@ -1785,6 +1786,11 @@ def _study(args: list[str]):
             sample_per_condition=_flag(args, "--sample-per-condition"),
             sample_seed=_flag(args, "--sample-seed"),
             reread_choices=("--reread-choices" in args))
+    except ShardFanoutFailed as exc:
+        # The fan-out failed its parent record before raising; the report
+        # below reads that record back and puts sbatch's own words on the
+        # terminal.
+        submission = exc.submission
     except SubmissionRefusal as exc:
         # A TYPED refusal, not a failure: the request is well formed and a
         # policy/precondition declined it, so `--json` carries the reason and
@@ -1801,10 +1807,10 @@ def _study(args: list[str]):
     except Exception as exc:  # noqa: BLE001 - command-line setup error
         sys.stderr.write(f"study submit failed: {type(exc).__name__}: {exc}\n")
         return 1
-    # An aborted sharded fan-out is reported through the PARENT JOB RECORD,
-    # not an exception: `_submit_sharded_bundle` scancels the submitted
-    # siblings, fails the parent, and returns a submission with no shard ids
-    # so the app can render the abort from the record. Exiting 0 on that
+    # An aborted sharded fan-out is reported through the PARENT JOB RECORD:
+    # `_submit_sharded_bundle` scancels the submitted siblings, fails the
+    # parent, and raises `ShardFanoutFailed` carrying a submission with no
+    # shard ids (the routes answer it as an error). Exiting 0 on that
     # shape hid five QOSMaxSubmitJobPerUserLimit-refused submissions on
     # 2026-08-09 — read the record back and put sbatch's own words on the
     # terminal.
@@ -1834,6 +1840,9 @@ def _study(args: list[str]):
             f"under parent {submission.job_id}; a RUNNING `steerlab-server "
             "serve` on this store merges the partials when every shard "
             "succeeds\n")
+    if submission.shards_held:
+        # Issue #12: a split run with held parts is a success, said plainly.
+        sys.stderr.write(f"note: {submission.shards_held['message']}\n")
     print(json.dumps(submission.to_dict(), indent=2, sort_keys=True))
     # A submitted job is asynchronous work in flight, not a finished target:
     # `pending` (exit 12 in JSON mode, 0 in human mode as always) is what the
@@ -1844,7 +1853,10 @@ def _study(args: list[str]):
         message=(f"submitted '{experiment}' --verb {verb} as job "
                  f"{submission.job_id}"
                  + (f", fanned out across {len(submission.shard_job_ids)} "
-                    "shard job(s)" if submission.shard_job_ids else "")),
+                    "shard job(s)" if submission.shard_job_ids else "")
+                 + (f"; {submission.shards_held['count']} of "
+                    f"{submission.shards_held['partCount']} held by SteerLab "
+                    "until slots free" if submission.shards_held else "")),
         changed=True,
         payload={"experiment": experiment, "verb": verb,
                  "jobID": submission.job_id,

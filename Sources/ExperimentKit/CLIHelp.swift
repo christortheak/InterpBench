@@ -309,9 +309,10 @@ public enum CLIFlagVocabulary {
         "--parallel":
             "Fan a Slurm run out across N GPU jobs (sent only when N > 1, "
             + "the executor is slurm, and the verb shards; the envelope "
-            + "echoes what was sent and why not). The fan-out can PARTIALLY "
-            + "fail while the submit still exits 0 — verify the shard jobs "
-            + "landed (`steerlab-cli remote jobs`, or squeue at the site).",
+            + "echoes what was sent and why not). Parts the cluster's job "
+            + "limit refuses are held by the server and submitted as slots "
+            + "free (`shardsHeld`, and a note on stderr); a part refused for "
+            + "any other reason fails the submit, which exits nonzero.",
         "--path": "The server-side path, as an alternative to the positional.",
         "--payload": "Local directory pushed as the server payload.",
         "--plan-hash": "The reviewed plan this apply is allowed to run.",

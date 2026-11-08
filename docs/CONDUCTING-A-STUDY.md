@@ -1228,18 +1228,23 @@ suppressed rather than as honored.
 
 Then two disciplines, both learned the expensive way:
 
-1. **Verify the shard jobs landed; do not trust the exit code.** K shards are
-   K independent scheduler submissions by design, and a fan-out can
-   **partially fail while the submit still exits 0** — the abort is reported
-   through the *parent* job record, not the submitting process. After any
-   sharded submit, look at the queue (`steerlab-cli remote jobs`, or the
-   scheduler's own queue command at the site) and count the jobs. A run that
-   silently lost half its shards does not merge, and the missing cells are
-   found much later, at the merge's completeness check.
+1. **Read what the submit says about its parts.** K shards are K independent
+   scheduler submissions by design. When the cluster's job limit is reached
+   part-way through, the parts already accepted keep running and the rest
+   are **held by SteerLab**: the submit succeeds and says how many
+   (`shardsHeld`, and a note), the running controller submits each held part,
+   in order, when a slot frees, and while the controller is not running they
+   wait. `remote status` shows each held part. A part refused for any other
+   reason cancels the run, and the submit exits nonzero with the scheduler's
+   own words. An engine older than this answers that case with exit 0, so
+   against one, look at the queue (`steerlab-cli remote jobs`) and count the
+   jobs: a run that silently lost half its shards does not merge, and the
+   missing cells are found much later, at the merge's completeness check.
 2. **Stagger submissions where the site caps queued jobs per user.** Most
    Slurm sites enforce a per-user submit and run limit through the QOS; a
-   fan-out that crosses it has its later shards refused by the scheduler while
-   the earlier ones run. Find your site's real limit
+   fan-out that crosses it has its later shards held while the earlier ones
+   run, and held parts wait for slots that other work also needs. Find your
+   site's real limit
    (`sacctmgr show qos format=Name,MaxTRESPerUser`), record it in the site
    profile as `maxParallelGPUJobs`, and keep total queued work under it —
    submitting several sharded studies back to back is the usual way to

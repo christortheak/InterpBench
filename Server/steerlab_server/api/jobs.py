@@ -62,6 +62,13 @@ from .workspace_lock import submitting as _submitting_workspace
 TERMINAL = {"succeeded", "failed", "cancelled", "cancelledResumable",
             "prepared", "parked"}
 
+#: What a part SteerLab holds says, in a person's words (issue #12). A held
+#: part is a "pending" shard record carrying ``result.held``: an existing
+#: status every reader already treats as waiting, never a new value. Twin of
+#: the Mac and Python clients' fallback when a server sends no note.
+HELD_PART_NOTE = ("held by SteerLab: the cluster's job limit is reached; it "
+                  "is submitted when a slot frees")
+
 
 def is_parked_result(result) -> bool:
     """Whether a worker's return value says it PARKED rather than completed.
@@ -222,6 +229,14 @@ def cancel_resume_hint(job: "Job") -> dict | None:
                                 "has fully stopped.")}
     if rr.get("judgeWorker"):
         return {"offered": False, "explanation": _CANCEL_RESUME_JUDGE_WORKER}
+    if rr.get("parentJob") and isinstance(result.get("heldWhenCancelled"), dict):
+        # Issue #12: a held part never reached the scheduler; its run's
+        # Resume holds it again.
+        return {"offered": False,
+                "explanation": ("This part was held for the cluster's job "
+                                "limit and cancelled before it was "
+                                "submitted. Resume the whole run from job "
+                                f"{rr['parentJob']}.")}
     if job.executor != "slurm" or not job.executor_job_id:
         return {"offered": False, "explanation": _CANCEL_RESUME_LOCAL}
     if kind not in CANCEL_RESUMABLE_KINDS:
@@ -892,6 +907,18 @@ class JobManager:
         # once per 15 s reconcile tick — a 4 h maintenance window must not
         # write a thousand identical log lines. Restarts may re-log once.
         self._resubmit_notes: dict[str, tuple[str, str]] = {}
+        # --- held parts of split runs (issue #12) ----------------------------
+        #: Serialises every hand-off of a held part to the scheduler with
+        #: every cancel of one, so a cancel can never land between sbatch
+        #: accepting a part and its record saying so. Re-entrant: failing a
+        #: fan-out from inside the held pass cancels its other held parts.
+        self._held_lock = threading.RLock()
+        #: When the held pass may next ask the scheduler, after it last said
+        #: "not now". In-memory on purpose: a fresh controller asks at once.
+        self._held_retry_after = 0.0
+        #: Per-part note dedup, as ``_resubmit_notes``: a part that waits for
+        #: days logs each distinct situation once, not once a minute.
+        self._held_notes: dict[str, tuple[str, str]] = {}
         # This manager's identity on durable resubmission claims (finding 1):
         # distinguishes claims across restarts/processes so a claim is only
         # ever released by the actor that took it.
@@ -1509,6 +1536,16 @@ class JobManager:
         return answer
 
     def _cancel_one(self, job: Job) -> bool:
+        if self.is_held(job):
+            # A part SteerLab holds for the cluster's job limit (issue #12)
+            # has no scheduler job to stop: it is withdrawn, so it is never
+            # submitted. Under the held lock, a part the held pass is handing
+            # to the scheduler right now is cancelled after it lands, through
+            # the scheduler, by the ordinary path below.
+            with self._held_lock:
+                if self.is_held(job):
+                    return self._withdraw_held_part(
+                        job, "a cancel was requested")
         job._cancel.set()
         self.store.mark_cancel_requested(job.id)
         job.log("cancel requested")
@@ -1730,6 +1767,14 @@ class JobManager:
             # tick that found nothing to merge.
             self._monitor_note(f"shard-merge pass failed: "
                                f"{type(exc).__name__}: {exc}")
+        # Held parts of split runs (issue #12): submitted in order as the
+        # scheduler accepts them, after the merge pass so a run that ended
+        # on this tick withdraws its held parts instead of submitting them.
+        try:
+            changed += self._submit_held_parts()
+        except Exception as exc:  # noqa: BLE001 - never let the monitor die
+            self._monitor_note(f"held-part pass failed: "
+                               f"{type(exc).__name__}: {exc}")
         # Unconfirmed fan-out cleanups (finding 3, 2026-07-23): keep
         # retrying shard cancellations until the scheduler confirms them.
         try:
@@ -1829,6 +1874,348 @@ class JobManager:
             self.store.update(job)
             changed += 1
         return changed
+
+    # --- held parts of a split run (issue #12) ---------------------------------
+    #
+    # A part the scheduler refused for its job limit is a "pending" shard
+    # record that carries ``result.held`` and no scheduler id
+    # (``submissions._submit_sharded_bundle``). This controller submits held
+    # parts, oldest split run first and each run's parts in order, as the
+    # scheduler accepts them. Nothing else submits one: resubmit refuses it,
+    # and auto-resubmit only ever sees checkpointed records. The record is in
+    # the job store, so a held part survives a restart; while no controller
+    # runs, it waits.
+
+    #: Seconds between attempts after the scheduler said "not now". A refused
+    #: sbatch is cheap, but a controller asking every 15 s tick would be the
+    #: busiest client of a scheduler that has just said its queue is full.
+    HELD_RETRY_SECONDS = 60.0
+
+    @staticmethod
+    def is_held(job: "Job | None") -> bool:
+        """Whether ``job`` is a part SteerLab holds and has not submitted."""
+        return (job is not None and job.status == "pending"
+                and job.executor == "slurm" and not job.executor_job_id
+                and isinstance((job.result or {}).get("held"), dict))
+
+    def _held_note(self, job: "Job", key: str, message: str) -> None:
+        if self._held_notes.get(job.id) == (key, message):
+            return
+        self._held_notes[job.id] = (key, message)
+        job.log(message)
+
+    def _held_parts_of(self, parent: "Job") -> list["Job"]:
+        """The held parts of a split run, in part order. A part is read at
+        the end of its chain: a part resumed after a cancel continues as a
+        new record."""
+        parts = []
+        for cid in (parent.requested_resources or {}).get("shardChildren") or []:
+            child = self.get(str(cid))
+            if child is None:
+                continue
+            tail = self._shard_chain_tail(child)
+            if self.is_held(tail):
+                parts.append(tail)
+        return sorted(parts, key=lambda job: int(
+            (job.requested_resources or {}).get("shardIndex") or 0))
+
+    def _submit_held_parts(self) -> int:
+        """One pass over every split run with held parts. Returns the number
+        of records it changed."""
+        if time.time() < self._held_retry_after:
+            return 0
+        if not self._held_lock.acquire(blocking=False):
+            return 0
+        try:
+            changed = 0
+            waiting = False
+            # "pending" parents are still attaching their parts (the fan-out
+            # loop owns them), and a restart sweeps an orphaned one.
+            parents = sorted(
+                (job for job in self.list()
+                 if (job.requested_resources or {}).get("shardChildren")
+                 and job.status != "pending"),
+                key=lambda job: job.created_at)
+            for parent in parents:
+                parts = self._held_parts_of(parent)
+                if not parts:
+                    continue
+                if parent.status in TERMINAL or parent.cancelled:
+                    for part in parts:
+                        if self._withdraw_held_part(
+                                part, f"its split run {parent.id} ended "
+                                      f"({parent.status}) first"):
+                            changed += 1
+                    continue
+                if waiting:
+                    continue
+                for part in parts:
+                    outcome = self._submit_held_part(parent, part)
+                    if outcome == "submitted":
+                        changed += 1
+                        continue
+                    if outcome == "failed":
+                        changed += 1
+                    else:
+                        # The scheduler's queue is full for this user: a
+                        # later part, or a later run, never jumps the queue.
+                        waiting = True
+                    break
+            if waiting:
+                self._held_retry_after = time.time() + self.HELD_RETRY_SECONDS
+            return changed
+        finally:
+            self._held_lock.release()
+
+    @staticmethod
+    def _part_label(part: "Job") -> str:
+        rr = part.requested_resources or {}
+        index, count = rr.get("shardIndex"), rr.get("shardCount")
+        if isinstance(index, int) and isinstance(count, int):
+            return f"part {index + 1} of {count}"
+        return f"part {part.id}"
+
+    def _find_held_attempt(self, held: dict) -> tuple[bool, str | None]:
+        """``(known, slurm_id)`` for the held part's last attempt that may
+        have landed: ``(True, id)`` it did, ``(True, None)`` the scheduler
+        says it did not (or there was none), ``(False, None)`` the scheduler
+        cannot say yet."""
+        attempt = held.get("attempt")
+        name = attempt.get("submissionName") if isinstance(attempt, dict) else None
+        if not name:
+            return True, None
+        find = getattr(self._slurm(), "find_job_by_name", None)
+        if not callable(find):
+            return True, None
+        try:
+            found = find(str(name))
+        except Exception:  # noqa: BLE001 - "cannot say" is the answer
+            return False, None
+        return True, (str(found) if found else None)
+
+    def _submit_held_part(self, parent: "Job", part: "Job") -> str:
+        """Hand one held part to the scheduler: ``"submitted"``,
+        ``"waiting"`` (the scheduler said not now; it stays held), or
+        ``"failed"`` (refused for a reason waiting would not fix: the run is
+        cancelled and failed, as a fan-out refused at submission is).
+
+        At most once: the attempt's job name is recorded BEFORE sbatch runs,
+        and an attempt whose outcome was never learned (sbatch timed out, or
+        this controller stopped mid-call) is searched for by that name
+        before anything is submitted again."""
+        import inspect
+        from .executors import JobBundle, SlurmResources, submit_refusal_kind
+        held = dict((part.result or {}).get("held") or {})
+        label = self._part_label(part)
+        known, found = self._find_held_attempt(held)
+        if not known:
+            self._held_note(
+                part, "unconfirmed",
+                f"still held: an earlier attempt to submit {label} may have "
+                "reached the scheduler, which has not yet said whether it "
+                "did; SteerLab checks again before it submits anything")
+            return "waiting"
+        if found:
+            self._mark_held_part_submitted(parent, part, found, adopted=True)
+            return "submitted"
+        held.pop("attempt", None)
+        rr = part.requested_resources or {}
+        script = rr.get("scriptPath")
+        if not isinstance(script, str) or not os.path.isfile(script):
+            return self._fail_fanout_from_held_part(
+                parent, part, f"its sbatch script is not on disk ({script!r})")
+        token = f"slhd-{part.id}-{uuid.uuid4().hex[:8]}"
+        now = time.time()
+        held["attempt"] = {"submissionName": token, "at": now}
+        part.result = {**(part.result or {}), "held": held}
+        self.store.update(part)
+        bundle_dir = os.path.dirname(script)
+        bundle = JobBundle(
+            bundle_dir=bundle_dir, command=[], env={},
+            resources=SlurmResources(
+                job_name=str(rr.get("job_name") or "steerlab"),
+                walltime=str(rr.get("walltime") or "04:00:00")),
+            stdout_path=os.path.join(bundle_dir, "slurm-%j.out"),
+            stderr_path=os.path.join(bundle_dir, "slurm-%j.err"),
+            script_path=script,
+            manifest_path=os.path.join(bundle_dir, "bundle.json"))
+        executor = self._slurm()
+        try:
+            parameters = inspect.signature(executor.submit).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        submit_kwargs: dict = {}
+        if "job_name" in parameters:
+            submit_kwargs["job_name"] = token
+        if rr.get("walltimeOverride") and "walltime" in parameters:
+            # A person resumed the run with a longer limit; it rides sbatch's
+            # command line, as a resubmission's does.
+            submit_kwargs["walltime"] = str(rr["walltimeOverride"])
+        try:
+            slurm_id = executor.submit(bundle, **submit_kwargs)
+        except Exception as exc:  # noqa: BLE001 - classified below
+            message = str(exc).strip() or type(exc).__name__
+            kind = submit_refusal_kind(message)
+            answered = getattr(exc, "answered", True)
+            held["lastAttemptAt"] = now
+            held["lastRefusal"] = message[:300]
+            if answered and kind in ("jobLimit", "policy"):
+                # The scheduler refused it outright: nothing landed.
+                held.pop("attempt", None)
+                part.result = {**(part.result or {}), "held": held}
+                self.store.update(part)
+                self._held_note(
+                    part, "limit",
+                    f"still held: the cluster's job limit is reached "
+                    f"(the scheduler said: {message[:200]}); SteerLab asks "
+                    "again when a slot may have freed")
+                return "waiting"
+            if not answered or kind == "retryLater":
+                # Not now, rather than never. The attempt stays on record:
+                # the next one first asks whether this one landed.
+                part.result = {**(part.result or {}), "held": held}
+                self.store.update(part)
+                self._held_note(
+                    part, "later",
+                    f"still held: the scheduler did not take {label} just "
+                    f"now ({message[:200]}); SteerLab tries again, and first "
+                    "checks whether this attempt landed")
+                return "waiting"
+            held.pop("attempt", None)
+            part.result = {**(part.result or {}), "held": held}
+            self.store.update(part)
+            return self._fail_fanout_from_held_part(
+                parent, part, f"the scheduler refused it: {message[:300]}")
+        part.requested_resources = {**rr, "submissionToken": token}
+        self._mark_held_part_submitted(parent, part, str(slurm_id))
+        return "submitted"
+
+    def _mark_held_part_submitted(self, parent: "Job", part: "Job",
+                                  slurm_id: str, *,
+                                  adopted: bool = False) -> None:
+        held = {key: value for key, value
+                in ((part.result or {}).get("held") or {}).items()
+                if key != "attempt"}
+        now = time.time()
+        part.executor_job_id = slurm_id
+        part.status = "submitted"
+        part.result = {**{key: value for key, value in (part.result or {}).items()
+                          if key != "held"},
+                       # Provenance: how long the part waited, and why.
+                       "heldBeforeSubmit": {**held, "submittedAt": now}}
+        how = ("found already submitted, by its submission name, as"
+               if adopted else "submitted as")
+        part.log(f"held {self._part_label(part)} {how} Slurm job {slurm_id}: "
+                 "a slot freed under the cluster's job limit")
+        self.store.update(part)
+        self._held_notes.pop(part.id, None)
+        parent.log(f"{self._part_label(part)} ({part.id}) was held for the "
+                   f"cluster's job limit and is now Slurm job {slurm_id}")
+
+    def _withdraw_held_part(self, part: "Job", why: str) -> bool:
+        """Cancel a held part so it is never submitted. True when it is
+        stopped; False when an earlier attempt to submit it may have reached
+        the scheduler and the scheduler cannot yet say (the caller's cancel
+        is then unconfirmed and retried, as a refused scancel is)."""
+        held = dict((part.result or {}).get("held") or {})
+        known, found = self._find_held_attempt(held)
+        if not known:
+            part.log("cancel of this held part waits: an earlier attempt to "
+                     "submit it may have reached the scheduler, which has not "
+                     "yet said whether it did; checked again on the next pass")
+            return False
+        if found:
+            parent = self.get(str((part.requested_resources or {})
+                                  .get("parentJob") or ""))
+            self._mark_held_part_submitted(parent or part, part, found,
+                                           adopted=True)
+            return self._cancel_one(part)
+        held.pop("attempt", None)
+        now = time.time()
+        part._cancel.set()
+        self.store.mark_cancel_requested(part.id)
+        part.status = "cancelled"
+        part.finished_at = now
+        part.result = {**{key: value for key, value in (part.result or {}).items()
+                          if key != "held"},
+                       "heldWhenCancelled": {**held, "cancelledAt": now}}
+        part.log(f"cancelled before it was submitted ({why}): this part was "
+                 "held for the cluster's job limit and never reached the "
+                 "scheduler")
+        self.store.update(part)
+        self._held_notes.pop(part.id, None)
+        return True
+
+    def _hold_cancelled_part_again(self, part: "Job", *,
+                                   walltime: str | None = None) -> dict:
+        """A person resumes a cancelled split run, and ``part`` was held when
+        it was cancelled, so it never reached the scheduler: it continues as
+        a new held record, which the controller submits as any held part.
+        The cancelled record stays cancelled and links to it, as every
+        resumed part's does (``resumedAfterCancel``, which is also where the
+        part's records fold from now on)."""
+        now = time.time()
+        rr = dict(part.requested_resources or {})
+        chain = [str(x) for x in (rr.get("resubmitChain") or [])] + [part.id]
+        rr.pop("submissionToken", None)
+        rr.update({"resubmitOf": part.id, "resubmitChain": chain,
+                   "resubmitCount": int(rr.get("resubmitCount") or 0) + 1,
+                   "resumedAfterCancel": True, "manualResubmit": True})
+        if walltime:
+            rr["walltime"] = walltime
+            rr["walltimeOverride"] = walltime
+        was = (part.result or {}).get("heldWhenCancelled") or {}
+        held = {"reason": was.get("reason") or "clusterJobLimit", "since": now}
+        if was.get("schedulerMessage"):
+            held["schedulerMessage"] = was["schedulerMessage"]
+        result = {key: value for key, value in (part.result or {}).items()
+                  if key in ("runBundle", "slurmBundle", "recordsDirectory",
+                             "submissionDirectory", "parentJob", "shard")}
+        result["held"] = held
+        child = self.record_external(
+            part.kind, status="pending", executor="slurm",
+            requested_resources=rr, result=result,
+            log=(f"resumed after a cancel: {part.id} was held for the "
+                 "cluster's job limit and never reached the scheduler, so "
+                 "this part starts from the beginning. " + HELD_PART_NOTE[0]
+                 .upper() + HELD_PART_NOTE[1:]))
+        part.result = {**(part.result or {}), "resubmittedAs": child.id,
+                       "resumedAfterCancel": {
+                           "continuation": child.id, "at": now,
+                           "cancelledSchedulerJobID": None,
+                           "state": "unstarted", "endProof": None,
+                           "runDirectory": None, "completedRecords": None,
+                           "recordSha256": None}}
+        part.log(f"cancelled — resumed by a person as {child.id}, held "
+                 "again until the controller submits it. This record stays "
+                 "cancelled; the continuation carries the part")
+        self.store.update(part)
+        return {"ok": True, "jobId": child.id, "resubmitOf": part.id,
+                "slurmJobID": None, "held": True, "manualResubmit": True,
+                **({"walltime": walltime} if walltime else {})}
+
+    def _fail_fanout_from_held_part(self, parent: "Job", part: "Job",
+                                    why: str) -> str:
+        """A held part that cannot be submitted for a reason waiting would
+        not fix: the run cannot complete, so its parts are cancelled and the
+        parent fails with a plain account, exactly as a fan-out refused at
+        submission does."""
+        live = []
+        for cid in (parent.requested_resources or {}).get("shardChildren") or []:
+            child = self.get(str(cid))
+            if child is not None and self._chain_is_live(child):
+                live.append(str(cid))
+        note = (self.cancel_shards_honestly(parent, live) if live
+                else "no other part was running")
+        parent.status = "failed"
+        parent.error = (
+            f"{self._part_label(part)} ({part.id}) was held for the cluster's "
+            f"job limit and could not be submitted: {why} — {note}. Correct "
+            "what the scheduler said, then submit the study again")
+        parent.finished_at = time.time()
+        parent.log(parent.error)
+        self.store.update(parent)
+        return "failed"
 
     # --- sharded parents (multi-GPU fan-out, 2026-07-22) ----------------------
 
@@ -3538,6 +3925,14 @@ class JobManager:
                 f"job {job_id} already finished ({job.status}) — a terminal "
                 "job has nothing to resume; submit the study again for a "
                 "fresh run")
+        elif self.is_held(job):
+            # Issue #12: the controller submits a held part itself; a second
+            # submission here would run the same part twice.
+            raise ResubmitRefused(
+                f"job {job_id} is held by SteerLab: the cluster's job limit "
+                "is reached, so it has not been submitted yet. The controller "
+                "submits it on its own when a slot frees; there is nothing to "
+                "resume")
         elif job.status != "checkpointed":
             raise ResubmitRefused(
                 f"job {job_id} is {job.status} — resume applies only to a "
@@ -4118,13 +4513,21 @@ class JobManager:
                 "study again")
         after_cancel_tails: list[Job] = []
         checkpointed_tails: list[Job] = []
+        held_tails: list[Job] = []
         waits: list[str] = []
         blockers: list[str] = []
         for _cid, child in children:
             if self._shard_effective(child)[0] == "succeeded":
                 continue
             tail = self._shard_chain_tail(child)
-            if self._cancel_on_record(tail):
+            if (self._cancel_on_record(tail) and not tail.executor_job_id
+                    and isinstance((tail.result or {}).get("heldWhenCancelled"),
+                                   dict)):
+                # Issue #12: a part that was held for the cluster's job limit
+                # and cancelled never reached the scheduler. It is held
+                # again, and starts from the beginning when it is submitted.
+                held_tails.append(tail)
+            elif self._cancel_on_record(tail):
                 script = self._resubmit_script_candidate(tail)
                 try:
                     self._refuse_unresumable_cancelled_job(tail, from_parent=True)
@@ -4151,7 +4554,7 @@ class JobManager:
             raise ResubmitRefused(
                 f"run {parent.id} cannot be resumed yet: " + "; ".join(waits),
                 wait=True)
-        if not after_cancel_tails and not checkpointed_tails:
+        if not after_cancel_tails and not checkpointed_tails and not held_tails:
             raise ResubmitRefused(
                 f"run {parent.id} has no cancelled part left to resume — "
                 "its parts are finished or already running again; check the "
@@ -4164,6 +4567,9 @@ class JobManager:
                                              _from_parent=True))
             except Exception as exc:  # noqa: BLE001 - reported per part
                 not_resumed.append(f"{tail.id}: {exc}")
+        for tail in held_tails:
+            resumed.append(self._hold_cancelled_part_again(tail,
+                                                           walltime=walltime))
         if not resumed:
             raise ResubmitRefused(
                 f"no part of run {parent.id} could be resumed — "

@@ -4,9 +4,15 @@
 Environment protocol:
 - FAKE_SLURM_LOG:    directory; argv is appended to <dir>/sbatch.calls
 - FAKE_SLURM_JOB_ID: the job id to print (default 12345)
+- FAKE_SLURM_JOB_ID_FROM_CALL: when set, the printed id is FAKE_SLURM_JOB_ID
+  plus the call's number (1, 2, …), so each submission has its own id.
+  Requires FAKE_SLURM_LOG for the count.
 - FAKE_SBATCH_FAIL:  when set, print it on stderr and exit 1
 - FAKE_SBATCH_FAIL_AFTER: integer N; the first N calls succeed, later calls
   fail (mid-fan-out failure tests). Requires FAKE_SLURM_LOG for the count.
+- FAKE_SBATCH_FAIL_MESSAGE: what a FAKE_SBATCH_FAIL_AFTER failure prints on
+  stderr (default ``sbatch: error: fake quota exceeded``); ``\\n`` in it is a
+  line break, as sbatch prints its reason and its sentence on two lines.
 """
 import os
 import sys
@@ -30,9 +36,14 @@ def main() -> int:
         return 1
     fail_after = os.environ.get("FAKE_SBATCH_FAIL_AFTER")
     if fail_after and call_number > int(fail_after):
-        sys.stderr.write("sbatch: error: fake quota exceeded\n")
+        message = os.environ.get("FAKE_SBATCH_FAIL_MESSAGE",
+                                 "sbatch: error: fake quota exceeded")
+        sys.stderr.write(message.replace("\\n", "\n") + "\n")
         return 1
-    print("Submitted batch job " + os.environ.get("FAKE_SLURM_JOB_ID", "12345"))
+    job_id = os.environ.get("FAKE_SLURM_JOB_ID", "12345")
+    if os.environ.get("FAKE_SLURM_JOB_ID_FROM_CALL"):
+        job_id = str(int(job_id) + call_number)
+    print("Submitted batch job " + job_id)
     return 0
 
 

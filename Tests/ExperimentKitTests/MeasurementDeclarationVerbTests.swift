@@ -529,8 +529,9 @@ import Testing
     }
 
     /// The flag is declared on the verb (so the parser accepts it rather
-    /// than rejecting it as undeclared), and its help carries the field
-    /// caveat: a fan-out can partially fail while the submit exits 0.
+    /// than rejecting it as undeclared), and its help says what happens when
+    /// the cluster's job limit is reached part-way (issue #12): those parts
+    /// are held, and any other refusal fails the submit.
     @Test func theParallelFlagIsDeclaredAndItsHelpCarriesTheCaveat() throws {
         let spec = try #require(
             ExperimentCLIParser.specs.first {
@@ -539,7 +540,9 @@ import Testing
         #expect(spec.valueFlags.contains("--parallel"))
         #expect(CLIFlagVocabulary.metavar("--parallel") == "<n>")
         let help = CLIFlagVocabulary.purpose("--parallel")
-        #expect(help.contains("verify the shard jobs landed"))
+        #expect(help.contains("held by the server and submitted as slots free"))
+        #expect(help.contains("exits nonzero"))
+        #expect(!help.contains("still exits 0"))
     }
 
     // MARK: - remote submit-bundle --source
