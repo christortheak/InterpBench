@@ -178,6 +178,61 @@ public struct SubmissionOutcomeUnknown: Error, CustomStringConvertible, Localize
     }
 }
 
+/// Watches one submission request's network metrics, to tell a request that
+/// was never sent (its connection was never made) from one that may have
+/// reached the server. URLError's `.timedOut` covers both; only the second is
+/// "unknown". With no metrics (a stubbed session), it says nothing, and the
+/// request is treated as possibly sent.
+final class SubmissionSendProbe: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var transactions: [SubmissionSendProbe.Transaction] = []
+
+    /// What one attempt's metrics say about its connection and its request.
+    struct Transaction: Equatable {
+        var lookupStarted = false
+        var lookupEnded = false
+        var connectStarted = false
+        var connectEnded = false
+        var requestStarted = false
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        didFinishCollecting metrics: URLSessionTaskMetrics
+    ) {
+        let seen = metrics.transactionMetrics.map {
+            Transaction(
+                lookupStarted: $0.domainLookupStartDate != nil,
+                lookupEnded: $0.domainLookupEndDate != nil,
+                connectStarted: $0.connectStartDate != nil,
+                connectEnded: $0.connectEndDate != nil,
+                requestStarted: $0.requestStartDate != nil)
+        }
+        lock.lock()
+        transactions = seen
+        lock.unlock()
+    }
+
+    /// The request certainly never left this machine.
+    var neverSent: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return Self.neverSent(transactions)
+    }
+
+    /// No attempt began its request, and one stopped while looking up the
+    /// server's name or making its connection. Anything else, including no
+    /// metrics at all, may have been sent.
+    static func neverSent(_ transactions: [Transaction]) -> Bool {
+        guard !transactions.isEmpty, !transactions.contains(where: \.requestStarted)
+        else { return false }
+        return transactions.contains {
+            ($0.lookupStarted && !$0.lookupEnded)
+                || ($0.connectStarted && !$0.connectEnded)
+        }
+    }
+}
+
 extension SubmissionOutcomeUnknown {
     /// The app's words for it, the same as the command line's: the outcome
     /// is unknown, check the server's jobs first, and whether a repeat of

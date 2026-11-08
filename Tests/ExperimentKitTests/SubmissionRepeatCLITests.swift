@@ -197,6 +197,28 @@ import Testing
         #expect(outcome.envelope.error?.reason.contains("could not be read") == true)
     }
 
+    /// Only a request known to have been sent is unknown: `.timedOut` also
+    /// covers a connection never made, which the task's metrics show
+    /// (review round 3). No metrics at all (a stubbed session) is treated as
+    /// possibly sent.
+    @Test func aConnectionNeverMadeSentNothing() {
+        typealias T = SubmissionSendProbe.Transaction
+        #expect(SubmissionSendProbe.neverSent([T(lookupStarted: true, lookupEnded: true,
+                                                 connectStarted: true)]))
+        #expect(SubmissionSendProbe.neverSent([T(lookupStarted: true)]))
+        #expect(!SubmissionSendProbe.neverSent([T(
+            lookupStarted: true, lookupEnded: true, connectStarted: true,
+            connectEnded: true, requestStarted: true)]))
+        // A reused connection has no connect dates, and its request began.
+        #expect(!SubmissionSendProbe.neverSent([T(requestStarted: true)]))
+        #expect(!SubmissionSendProbe.neverSent([]))
+        #expect(!SubmissionSendProbe.neverSent([T()]))
+        // A retry on a second connection that did send.
+        #expect(!SubmissionSendProbe.neverSent([
+            T(connectStarted: true), T(connectStarted: true, connectEnded: true,
+                                       requestStarted: true)]))
+    }
+
     /// A request that cannot have reached the server stays what it is.
     @Test func aRefusedConnectionIsStillAFailure() async throws {
         let outcome = try await submit(behaviour: .fail(.cannotConnectToHost))

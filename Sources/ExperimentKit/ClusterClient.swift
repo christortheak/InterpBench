@@ -3247,10 +3247,22 @@ public struct ClusterClient: Sendable {
     private func postSubmission<Body: Encodable>(
         _ path: String, body: Body
     ) async throws -> RemoteStudySubmission {
+        // Whether the request can have reached the server: URLError's
+        // `.timedOut` also covers a connection that was never made, and only
+        // a request known to have been sent is "unknown" (review round 3).
+        let probe = SubmissionSendProbe()
         do {
-            return try await post(path, body: body, timeout: Self.studySubmissionTimeout)
+            var request = try makeRequest(path: path, method: "POST")
+            request.httpBody = try encoder.encode(body)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = Self.studySubmissionTimeout
+            let (data, response) = try await session.data(for: request, delegate: probe)
+            try validate(response: response, data: data)
+            return try decoder.decode(RemoteStudySubmission.self, from: data)
         } catch {
-            guard let cause = SubmissionOutcomeUnknown.cause(of: error) else { throw error }
+            guard let cause = SubmissionOutcomeUnknown.cause(of: error),
+                !probe.neverSent
+            else { throw error }
             let repeatIsSafe = (try? await capabilities())?.supportsSubmissionKey ?? false
             throw SubmissionOutcomeUnknown(
                 endpoint: profile.baseURL.absoluteString, cause: cause,
