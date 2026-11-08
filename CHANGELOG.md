@@ -60,13 +60,16 @@ migration that rewrites frozen bytes.
   not this study's. When its estimate, priced from past jobs of similar item
   length on the same model and GPU, and timed without the model load where
   the history records it, is
-  over the requested walltime, both clients print a plain warning. The
+  over the requested walltime, both clients and the app (batch and template
+  submissions included) show a plain warning. The
   warning gives the estimate, the walltime to ask for (rounded up to the
   hour), and splitting the study as the alternative; past twice the request
   it says the job is very likely to run out of time. It also says what
   happens at the walltime: a run keeps its finished records and can be
   resumed; a pipeline can be resumed only from its run stage; other steps,
-  sweeps included, stop and must be submitted again. Both
+  sweeps included, stop and must be submitted again. A GPU request of no
+  named type keeps its own throughput history, and history filed under its
+  old key is still read. Both
   clients also wait up to an hour for a resume, and report one that goes
   unanswered as an unknown outcome to check.
 - **A split run that meets the cluster's job limit waits instead of
