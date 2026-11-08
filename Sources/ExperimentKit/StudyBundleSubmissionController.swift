@@ -139,8 +139,7 @@ public final class StudyBundleSubmissionController {
             server: transport.origin?.connection.baseURL.absoluteString
                 ?? substrate ?? "the server")
         {
-            let line = refusal + " "
-                + SubstrateRouting.greedyRulesRepair(manifest: manifest)
+            let line = refusal.reason + " " + refusal.repair
             jobs.remoteStatus = line
             note(line, severity: .error)
             return .failure(StudyBatchSubmission.Failure(reason: line))

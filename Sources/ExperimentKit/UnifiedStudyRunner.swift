@@ -123,8 +123,7 @@ public final class UnifiedStudyRunner {
             manifest: manifest, verb: verb, capabilities: capabilities,
             server: client.profile.baseURL.absoluteString)
         {
-            let line = refusal + " "
-                + SubstrateRouting.greedyRulesRepair(manifest: manifest)
+            let line = refusal.reason + " " + refusal.repair
             statusLine = line
             note(line, .error)
             return

@@ -115,6 +115,27 @@ public enum StudySampling {
                 .generatesSampledText
     }
 
+    /// `verify`'s sentence for several samples per item at temperature 0,
+    /// where the run reads the count, or nil. Python twin:
+    /// `sampling.greedy_samples_problem`.
+    public static func greedySamplesProblem(_ manifest: ExperimentManifest) -> String? {
+        guard (manifest.samplesPerItem ?? 1) > 1, manifest.temperature <= 0,
+            samplesAreRead(manifest)
+        else { return nil }
+        return "samplesPerItem > 1 requires temperature > 0 "
+            + "(greedy decoding makes every sample identical)"
+    }
+
+    /// The repair for `greedySamplesProblem`: one sample per item, on a
+    /// duplicate when the study is frozen. Python twin:
+    /// `sampling.greedy_samples_repair`, as the Mac command line spells it.
+    public static func greedySamplesRepair(name: String, frozen: Bool) -> String {
+        let target = frozen ? "\(name)-v2" : name
+        return (frozen ? "steerlab-cli experiment duplicate \(name) \(target) && " : "")
+            + "steerlab-cli experiment set-sampling \(target) --samples-per-item 1"
+            + "  (one sample per item; or raise the temperature above 0 to sample several)"
+    }
+
     /// `verify`'s joint rules for several samples per item, in order: a
     /// temperature above 0 and the derived seed policy. Neither applies to a
     /// study whose run does not read the count (review round 3 of public
@@ -124,10 +145,8 @@ public enum StudySampling {
         guard let samples = manifest.samplesPerItem, samples > 1, samplesAreRead(manifest)
         else { return [] }
         var problems: [String] = []
-        if manifest.temperature <= 0 {
-            problems.append(
-                "samplesPerItem > 1 requires temperature > 0 "
-                    + "(greedy decoding makes every sample identical)")
+        if let greedy = greedySamplesProblem(manifest) {
+            problems.append(greedy)
         }
         if manifest.seedPolicy != "derivedSHA256" {
             problems.append(
@@ -144,17 +163,20 @@ public enum StudySampling {
     /// Python twin: `sampling.frozen_greedy_seed_list_advisory`, as the Mac
     /// command line spells the repair.
     public static func frozenGreedySeedListAdvisory(_ manifest: ExperimentManifest) -> String? {
-        guard manifest.status != .draft else { return nil }
-        // Never for a study whose declared chain has no run stage.
+        guard manifest.status != .draft,
+            let problem = greedySeedListProblem(manifest)
+        else { return nil }
+        // A study whose declared chain has no run stage is told too, worded
+        // for a run submitted on its own (round 4).
+        var when = "when its run is submitted or started"
         if let block = manifest.pipeline, block != .null,
             !(PipelineDraft.parse(block)?.stages.contains("run") ?? false)
         {
-            return nil
+            when = "when a run of it is submitted or started (its declared "
+                + "pipeline does not run it)"
         }
-        guard let problem = greedySeedListProblem(manifest) else { return nil }
-        return "this study will be refused when its run is submitted or "
-            + "started, because \(problem). To run it: "
-            + greedySeedListRepair(name: manifest.name, frozen: true)
+        return "this study will be refused \(when), because \(problem). To run "
+            + "it: " + greedySeedListRepair(name: manifest.name, frozen: true)
     }
 
     /// The run-start repair for `greedySeedListProblem`: one seed with

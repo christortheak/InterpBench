@@ -252,18 +252,52 @@ public enum SubstrateRouting {
         return manifest.seeds.count > 1 || (manifest.samplesPerItem ?? 1) > 1
     }
 
-    /// Old-server guard for the round-3 fix of public issue #9: refuses,
-    /// with the Python client's sentence (`sampling.greedy_rules_engine_reason`),
-    /// a study `greedyRulesNeeded` names for a server whose capabilities do
-    /// not list `remoteStudy.greedyRulesSampledTextOnly`. Nil otherwise.
+    /// What `greedyRulesSubmissionRefusal` refuses with: its gate, its
+    /// sentence, and its repair.
+    public struct GreedyRulesRefusal: Sendable, Equatable {
+        public let gate: LifecycleGate
+        public let reason: String
+        public let repair: String
+    }
+
+    /// Old-server guard for the round-3 fix of public issue #9: a study
+    /// `greedyRulesNeeded` names, sent to a server whose capabilities do not
+    /// list `remoteStudy.greedyRulesSampledTextOnly`, is refused before the
+    /// queue, worded by the study (round 4). One that generates sampled text
+    /// is refused by every engine, so it gets the rule's own sentence and
+    /// repair (`studyDeclaration`): updating would not help. A readout-only
+    /// study is refused only by an older engine, so it gets the old-engine
+    /// sentence (`missingPrerequisite`, as this command line's other
+    /// capability refusals). Nil otherwise. Python twin:
+    /// `sampling.greedy_rules_submission_refusal`.
     public static func greedyRulesSubmissionRefusal(
         manifest: ExperimentManifest, verb: String,
         capabilities: ClusterCapabilities?, server: String
-    ) -> String? {
+    ) -> GreedyRulesRefusal? {
         guard greedyRulesNeeded(manifest: manifest, verb: verb),
             capabilities?.supportsGreedyRulesSampledTextOnly != true
         else { return nil }
-        return "The engine at \(server) predates the fix for public issue #9 "
+        let frozen = manifest.status != .draft
+        if let problem = StudySampling.greedySeedListProblem(manifest) {
+            return .init(
+                gate: .studyDeclaration, reason: problem,
+                repair: StudySampling.greedySeedListRepair(name: manifest.name, frozen: frozen))
+        }
+        if let problem = StudySampling.greedySamplesProblem(manifest) {
+            return .init(
+                gate: .studyDeclaration, reason: problem,
+                repair: StudySampling.greedySamplesRepair(name: manifest.name, frozen: frozen))
+        }
+        return .init(
+            gate: .missingPrerequisite,
+            reason: oldEngineGreedyRulesReason(server: server),
+            repair: greedyRulesRepair(manifest: manifest))
+    }
+
+    /// The old-engine sentence, the Python client's
+    /// (`sampling.greedy_rules_engine_reason`).
+    static func oldEngineGreedyRulesReason(server: String) -> String {
+        "The engine at \(server) predates the fix for public issue #9 "
             + "that lets an answer-token readout study run at temperature 0 "
             + "with several seeds or several samples per item: its capabilities "
             + "do not list remoteStudy.greedyRulesSampledTextOnly, so it would "

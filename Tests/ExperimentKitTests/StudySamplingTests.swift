@@ -103,6 +103,7 @@ struct StudySamplingTests {
             let seedPolicy: String?
             let seeds: [UInt64]
             let outcomeInstruments: [String]?
+            let pipeline: JSONValue?
         }
 
         /// A sampled record (`sampleIndex`, `seed`), or, for a study of
@@ -132,6 +133,7 @@ struct StudySamplingTests {
         manifest.seedPolicy = fields.seedPolicy
         manifest.seeds = fields.seeds
         manifest.outcomeInstruments = fields.outcomeInstruments
+        manifest.pipeline = fields.pipeline
         return manifest
     }
 
@@ -141,7 +143,7 @@ struct StudySamplingTests {
     /// items with the same text and different IDs draw different streams.
     @Test func seedRuleMatchesThePythonEngineOnTheSharedFixture() throws {
         let fixture = try seedFixture()
-        #expect(fixture.cases.count >= 15)
+        #expect(fixture.cases.count >= 16)
         #expect(Set(fixture.prompts.map(\.prompt)).count == 1)
         for value in fixture.cases {
             let study = manifest(value.manifest)
@@ -198,6 +200,7 @@ struct StudySamplingTests {
         #expect(Set(refused.map(\.label)) == [
             "manifestSeeds, greedy, seed list", "derivedSHA256, greedy, seed list",
             "undeclared, greedy, seed list", "readout and sampled text, greedy, seed list",
+            "undeclared, greedy, seed list, chain without run",
         ])
         // Readouts alone read each item once: never refused, and told the
         // list is not used.

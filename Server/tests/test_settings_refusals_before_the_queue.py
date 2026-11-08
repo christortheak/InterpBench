@@ -1054,3 +1054,83 @@ def test_a_readout_only_study_with_several_samples_runs_and_is_advised(
     assert ("samplesPerItem > 1 requires temperature > 0 (greedy decoding "
             "makes every sample identical)") in both.verify()
     assert study_admission.settings_refusal(both) is not None
+
+
+# --- review round 4 -----------------------------------------------------------------
+
+def test_a_refused_resume_leaves_its_ledger_and_manifest_untouched(
+        tmp_path, monkeypatch):
+    """The refusal sat below the epoch guard and the parked-stamp clear, so a
+    parked chain with its run still ahead lost its `parked` stamp (and could
+    gain a drift stamp or a restored pin) before it was refused."""
+    from steerlab_server.experiment import pipeline_ledger
+    from steerlab_server.experiment.pipeline_workflow import (PipelineModels,
+                                                              pipeline)
+    root = str(tmp_path)
+    _frozen_under_an_older_release(
+        root, "greedy", monkeypatch, temperature=0.0, seeds=[11, 22, 33],
+        pipeline={"stages": ["extract", "run", "analyze"]})
+    directory = _parked_chain(root, "greedy", {
+        "extract": {"status": "completed",
+                    "runDirectory": os.path.join(root, "runs", "x")}})
+    # Parked by the reconcile, and stamped with a manifest hash the live one
+    # does not match, so the drift stamp would be written on the way through.
+    ledger = pipeline_ledger.read_pipeline_ledger(directory)
+    ledger["parked"] = {"reason": "the orphan reconcile parked it"}
+    ledger["experimentHash"] = "0" * 64
+    pipeline_ledger.write_pipeline_ledger(directory, ledger)
+    ledger_path = pipeline_ledger.pipeline_ledger_path(directory)
+    manifest_path = os.path.join(root, "experiments", "greedy",
+                                 "experiment.json")
+    with open(ledger_path, "rb") as handle:
+        ledger_before = handle.read()
+    with open(manifest_path, "rb") as handle:
+        manifest_before = handle.read()
+    with pytest.raises(lifecycle_gates.LifecycleError) as refused:
+        pipeline("greedy", root, pipeline_run_directory=directory,
+                 stages=_chain_stages(),
+                 models=PipelineModels(acquire=_unexpected,
+                                       pin_revision=_unexpected),
+                 log=lambda _: None)
+    assert str(refused.value) == GREEDY_THREE
+    with open(ledger_path, "rb") as handle:
+        assert handle.read() == ledger_before
+    with open(manifest_path, "rb") as handle:
+        assert handle.read() == manifest_before
+
+
+def test_the_old_engine_refusal_is_worded_by_the_study(tmp_path):
+    """A study with sampled text that every engine refuses is told the
+    rule's own sentence, since updating the engine would not help; only a
+    readout-only study is told the engine predates the fix. Both are refused
+    before the queue."""
+    from steerlab_server.client import runner as runner_api
+    root = str(tmp_path)
+    _study(root, "sampled", temperature=0.0, seeds=[11], samplesPerItem=3,
+           seedPolicy="derivedSHA256")
+    staged = {"experiment": "sampled", "experimentContentHash":
+              Manifest.load("sampled", root).content_hash()}
+    older = {"remoteStudy": {"declaredSeedPolicy": True}}
+    with pytest.raises(runner_api.RunnerRefusal) as refused:
+        runner_api.require_greedy_rules(staged, "run", older,
+                                        "http://runner.invalid", root)
+    assert refused.value.code == "studyDeclaration"
+    assert str(refused.value) == (
+        "samplesPerItem > 1 requires temperature > 0 (greedy decoding makes "
+        "every sample identical)")
+    assert "--samples-per-item 1" in refused.value.repair_action
+    assert "predates" not in str(refused.value)
+    # The function on both branches, and on a several-seed sampled study.
+    manifest = Manifest.load("sampled", root)
+    code, reason, _ = sampling.greedy_rules_submission_refusal(manifest, "here")
+    assert (code, reason) == ("studyDeclaration", str(refused.value))
+    seeds = _manifest(temperature=0.0, seeds=[11, 22, 33])
+    code, reason, repair = sampling.greedy_rules_submission_refusal(seeds, "here")
+    assert (code, reason) == ("studyDeclaration", GREEDY_THREE)
+    readout = _manifest(temperature=0.0, seeds=[11, 22, 33],
+                        outcomeInstruments=["answerTokenLogprob"])
+    code, reason, repair = sampling.greedy_rules_submission_refusal(readout,
+                                                                    "here")
+    assert code == "greedyRulesUnsupported"
+    assert reason.startswith("The engine at here predates the fix")
+    assert "cluster push --site <id>, then restart its controller" in repair
