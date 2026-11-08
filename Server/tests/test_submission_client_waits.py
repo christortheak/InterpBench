@@ -207,3 +207,41 @@ def test_runner_submit_exits_12_with_the_unknown_outcome(slow_runner,
     assert document["state"] == "pending"
     assert document["error"]["code"] == "submitOutcomeUnknown"
     assert document["result"]["repeatIsSafe"] is True
+
+
+def test_runner_submit_says_plainly_when_it_was_already_submitted(
+        slow_runner, monkeypatch, capsys, tmp_path):
+    """A runner that recognised the key answers with the existing job: the
+    verb says so, and reports nothing changed."""
+    from steerlab_server import client_cli
+
+    handler, url = slow_runner
+    monkeypatch.delenv(client_cli.RUNNER_TOKEN_ENV, raising=False)
+    note = ("Already submitted: this request was submitted before as job "
+            "job-slow-1, which is running. Nothing was submitted again.")
+    original = handler._answer
+
+    def answer(self, document):
+        if document.get("jobId") == "job-slow-1":
+            document = {**document, "alreadySubmitted": True,
+                        "alreadySubmittedNote": note,
+                        "currentJobID": "job-slow-1",
+                        "currentStatus": "running"}
+        original(self, document)
+
+    monkeypatch.setattr(handler, "_answer", answer)
+    monkeypatch.setattr(runner_api.RunnerClient, "info", lambda self: {
+        "service": "steerlab-server", "engineVersion": "test", "root": "/srv",
+        "capabilities": {}})
+    workspace = str(tmp_path / "ws")
+    os.makedirs(workspace)
+    code = client_cli.main(
+        ["runner", "submit", "--runner", url, "--bundle-path",
+         "/runs/b.tar.gz", "--bundle-sha", "d" * 64, "--verb", "run",
+         "--executor", "slurm", "--root", workspace, "--json"])
+    document = json.loads(capsys.readouterr().out)
+    assert code == 0, document
+    assert document["changed"] is False
+    assert document["result"]["alreadySubmitted"] is True
+    assert document["result"]["alreadySubmittedNote"] == note
+    assert document["message"].startswith("already submitted:")

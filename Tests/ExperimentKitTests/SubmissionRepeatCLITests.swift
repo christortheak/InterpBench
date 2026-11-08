@@ -235,6 +235,41 @@ import Testing
         #expect(outcome.stderr.contains("note: \(note)"))
     }
 
+    /// The server-resident submission (the app's Server Jobs panel) waits
+    /// as long, and carries a key derived from the server's own manifest.
+    @Test func theServerResidentSubmissionWaitsAndCarriesAKey() async throws {
+        let seen = WiringLocked<[(TimeInterval, [String: JSONValue])]>([])
+        RepeatURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/experiment/demo/manifest":
+                return (Data(#"{"name":"demo"}"#.utf8), 200)
+            case "/api/studies/submit":
+                let data = SubmitBundleExecutorWiringTests.bodyData(from: request) ?? Data()
+                let body = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                seen.withLock { $0.append((request.timeoutInterval, body)) }
+                return (Data(#"{"jobId":"id","experiment":"demo","verb":"verify","executor":"local","dryRun":true,"runBundle":{},"command":[],"recordsDirectory":"/r","submissionDirectory":"/s"}"#.utf8), 200)
+            default:
+                return (Data(#"{"detail":"no such route"}"#.utf8), 404)
+            }
+        }
+        defer { RepeatURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RepeatURLProtocol.self]
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: URLSession(configuration: configuration))
+        _ = try await client.submitStudy(
+            experiment: "demo", verb: "verify", executor: "local", dryRun: true)
+        let sent = seen.withLock { $0 }
+        #expect(sent.count == 1)
+        #expect(sent.first?.0 == 3600)
+        // By hand (printf … | shasum -a 256): the body without its key, plus
+        // the digest of the manifest bytes the server returned
+        // (d7d234f7…0602 for {"name":"demo"}) and the derivation's version.
+        #expect(sent.first?.1["submissionKey"] == .string(
+            "63982d06bf44e20eb7402e2c86e2233e7574543fecff94597d44313776405f2b"))
+    }
+
     // MARK: - The walltime notice
 
     @Test func theWalltimeNoticeReachesStderrAndTheEnvelope() async throws {
