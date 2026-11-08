@@ -824,6 +824,12 @@ def test_an_untyped_gpu_request_has_no_gpu_type():
     assert hk.parse_gpu_type("1") is None
     assert hk.parse_gpu_type("gpu") is None
     assert hk.parse_gpu_type("gpu:A100:1") == "A100"
+    assert hk.parse_gpu_type("gpu:2") is None
+    assert hk.parse_gpu_type("8") is None
+    # A type named by a number is a type (review round 6).
+    assert hk.parse_gpu_type("gpu:3090:1") == "3090"
+    assert hk.parse_gpu_type("3090") == "3090"
+    assert hk.throughput_gpu_bucket("gpu:3090:1") == "3090"
     assert hk.requests_gpu("gpu:1") is True
     assert hk.requests_gpu(None) is False
     assert hk.throughput_gpu_bucket("gpu:1") == hk.UNTYPED_GPU_BUCKET
@@ -860,3 +866,31 @@ def test_the_history_job_cap_is_defined_once():
              for target in node.targets if isinstance(target, ast.Name)]
     assert names.count("PROMPT_HISTORY_JOBS") == 1
     assert hk.PROMPT_HISTORY_JOBS == 64
+
+
+def test_legacy_untyped_keys_are_counts_and_gpu():
+    assert hk.is_legacy_untyped_key("1") is True
+    assert hk.is_legacy_untyped_key("2") is True
+    assert hk.is_legacy_untyped_key("gpu") is True
+    assert hk.is_legacy_untyped_key("3090") is False
+    assert hk.is_legacy_untyped_key("A100") is False
+    assert hk.is_legacy_untyped_key(None) is False
+    assert hk.is_legacy_untyped_key(hk.UNTYPED_GPU_BUCKET) is False
+
+
+def test_the_fold_adopts_legacy_untyped_history(meta, tmp_path):
+    """Review round 6: history filed under the pre-round-5 key ``1`` is
+    folded into, and renamed to, the untyped bucket, so a new untyped job
+    adds to it rather than starting a bucket that hides it. A job of 10
+    records in 360 s is 100 an hour: (10 × 3 + 100) ÷ 4 = 32.5."""
+    _seed(meta, [{"modelId": MODEL, "gpuType": "1", "recordsPerHour": 10.0,
+                  "samples": 3, "updatedAt": "2026-10-01T00:00:00+00:00"}])
+    store = DurableJobStore(str(tmp_path / "legacy.sqlite"))
+    store.insert(Job(id="u2", kind="study-submit-bundle", status="succeeded",
+                     result={"elapsedSeconds": 360, "recordCount": 10},
+                     requested_resources={"modelID": MODEL, "gres": "gpu:1"},
+                     executor="slurm", _store=store))
+    table = hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    assert [(e["gpuType"], e["samples"], e["recordsPerHour"])
+            for e in table["entries"]] == [(hk.UNTYPED_GPU_BUCKET, 4, 32.5)]
+    assert hk.throughput_lookup(MODEL, hk.UNTYPED_GPU_BUCKET)["samples"] == 4

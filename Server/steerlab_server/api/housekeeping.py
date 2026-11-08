@@ -630,6 +630,12 @@ def _gres_token(gres: str | None) -> str | None:
     return value
 
 
+def _is_gpu_count(token: str) -> bool:
+    """A whole number small enough to be a count of GPUs (``1``, ``8``), not
+    a type named by a number (``3090``)."""
+    return token.isdigit() and int(token) < 100
+
+
 def requests_gpu(gres: str | None) -> bool:
     """Whether a gres asks for a GPU at all, typed or not (``gpu:1`` does)."""
     return bool(_gres_token(gres))
@@ -637,12 +643,32 @@ def requests_gpu(gres: str | None) -> bool:
 
 def parse_gpu_type(gres: str | None) -> str | None:
     """``gpu:A100:1`` / ``gpu:A100`` / ``A100`` → ``A100``; None when absent,
-    and None for an untyped request (``gpu:1``, ``1``, ``gpu``): a count is
-    not a GPU type."""
-    token = _gres_token(gres)
-    if token is None or token.isdigit() or token.lower() == "gpu":
+    and None for a request of no named type (``gpu:1``, ``gpu``), since a
+    count is not a GPU type. The middle field of ``gpu:<type>:<count>`` is a
+    type even when it is a number (``gpu:3090:1`` → ``3090``); a bare value
+    is a type, as the executor renders it (``gpu:<value>:<n>``), unless it
+    is a small count."""
+    if not gres or not str(gres).strip():
         return None
-    return token
+    value = str(gres).strip()
+    if value.startswith("gpu:"):
+        parts = value.split(":")
+        token = parts[1] if len(parts) > 1 else ""
+        if not token or (len(parts) == 2 and token.isdigit()):
+            return None
+        return token
+    if value.lower() == "gpu" or _is_gpu_count(value):
+        return None
+    return value
+
+
+def no_gpu_type_words(gres: str | None) -> str:
+    """Why a request has no GPU type to compare against VRAM, said plainly:
+    no GPU asked for, or a GPU asked for without its type (``gpu:1``)."""
+    if requests_gpu(gres):
+        return (f"the GPU request {str(gres).strip()!r} names no GPU type "
+                "(name one, such as gpu:A100:1)")
+    return "no GPU type is requested (gres unset)"
 
 
 #: The throughput history's GPU key for a request that asks for a GPU
@@ -661,6 +687,29 @@ def throughput_gpu_bucket(gres: str | None) -> str | None:
     return UNTYPED_GPU_BUCKET if requests_gpu(gres) else None
 
 
+def is_legacy_untyped_key(key) -> bool:
+    """Whether a history entry's GPU key was written, before review round 5,
+    for a request of no named type: the count ``gpu:1`` parsed to (``1``),
+    or ``gpu``. Such history is read as the :data:`UNTYPED_GPU_BUCKET`."""
+    return isinstance(key, str) and (key.lower() == "gpu"
+                                     or _is_gpu_count(key))
+
+
+def _history_entry(entries: list, model_id: str, gpu_type: str | None,
+                   instrument_family: str | None) -> dict | None:
+    """The entry kept for (model, GPU key, family): the one under the key
+    itself, else, for the untyped bucket, the most-sampled entry under a
+    legacy untyped key (review round 6)."""
+    same = [e for e in entries
+            if e.get("modelId") == model_id
+            and e.get("instrumentFamily") == instrument_family]
+    exact = next((e for e in same if e.get("gpuType") == gpu_type), None)
+    if exact is not None or gpu_type != UNTYPED_GPU_BUCKET:
+        return exact
+    legacy = [e for e in same if is_legacy_untyped_key(e.get("gpuType"))]
+    return max(legacy, key=lambda e: int(e.get("samples") or 0), default=None)
+
+
 def throughput_lookup(model_id: str, gpu_type: str | None,
                       profile: ServerProfile | None = None,
                       instrument_family: str | None = None) -> dict | None:
@@ -673,12 +722,8 @@ def throughput_lookup(model_id: str, gpu_type: str | None,
     A family that has never been folded returns None, and the caller is
     expected to fall back to the global entry and SAY it fell back.
     """
-    for entry in read_throughput(profile)["entries"]:
-        if (entry.get("modelId") == model_id
-                and entry.get("gpuType") == gpu_type
-                and entry.get("instrumentFamily") == instrument_family):
-            return entry
-    return None
+    return _history_entry(read_throughput(profile)["entries"], model_id,
+                          gpu_type, instrument_family)
 
 
 def _number(value) -> bool:
@@ -843,10 +888,11 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
             tokens = stamped_max_tokens(job.requested_resources)
             prompt_tokens = stamped_prompt_tokens(job.requested_resources)
             for bucket in (None, family) if family else (None,):
-                entry = next((e for e in entries
-                              if e.get("modelId") == model_id
-                              and e.get("gpuType") == gpu_type
-                              and e.get("instrumentFamily") == bucket), None)
+                entry = _history_entry(entries, model_id, gpu_type, bucket)
+                if entry is not None and entry.get("gpuType") != gpu_type:
+                    # Legacy untyped history is adopted into the bucket, so
+                    # the next lookup still finds all of it.
+                    entry["gpuType"] = gpu_type
                 if entry is None:
                     minted = {
                         "modelId": model_id,

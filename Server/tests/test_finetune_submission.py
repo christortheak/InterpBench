@@ -565,6 +565,15 @@ def test_memory_fit_degrades_without_a_vram_entry(cached_27b):
     assert "no VRAM entry for H100" in check["message"]
 
 
+def test_memory_fit_names_a_gpu_request_of_no_type(cached_27b):
+    check = ft._check_lora_memory_fit(
+        _config(), dtype="bfloat16", revision=REVISION,
+        resources=_resources(gres="gpu:1"))
+    assert check["status"] == "warn"
+    assert "the GPU request 'gpu:1' names no GPU type" in check["message"]
+    assert "gres unset" not in check["message"]
+
+
 def test_walltime_estimates_from_the_declared_throughput_table(cached_27b):
     check = ft._check_lora_walltime(_config(), total_steps=1000,
                                     dtype="bfloat16", revision=REVISION,

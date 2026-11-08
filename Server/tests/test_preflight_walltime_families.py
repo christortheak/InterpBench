@@ -74,8 +74,8 @@ def _entry(rate, family=None, gpu="A100", samples=3):
 
 
 def _walltime(manifest, records, *, verb="run", walltime="04:00:00",
-              shard_count=1):
-    return sub._check_walltime(manifest, _resources(walltime), records,
+              shard_count=1, gres="gpu:A100:1"):
+    return sub._check_walltime(manifest, _resources(walltime, gres), records,
                                ServerProfile.from_env(), verb,
                                shard_count=shard_count)
 
@@ -129,6 +129,55 @@ def test_an_observed_rendering_rate_beats_the_declared_constant(meta):
     assert check["data"]["rateSource"] == "family"
     assert check["data"]["recordsPerHour"] == 600.0
     assert "observed packet-rendering rate over 2 job(s)" in check["message"]
+
+
+def test_both_paths_report_the_same_gpu_type(meta):
+    """Review round 6: the parked-judgment path reported the history's key
+    (``unknownGPU``) as ``data.gpuType`` where the main path reports the
+    request's type, None for ``gpu:1``. Both report the type now, and both
+    still read the untyped bucket's history."""
+    _seed(meta, [_entry(220.0, gpu="unknownGPU"),
+                 _entry(600.0, family=fam.PARKED_JUDGMENT, gpu="unknownGPU",
+                        samples=2)])
+    parked = _walltime(_manifest(judges=EXTERNAL_PANEL), 600, verb="evaluate",
+                       gres="gpu:1")
+    main = _walltime(_manifest(outcomeInstruments=["answerTokenLogprob"]), 600,
+                     gres="gpu:1")
+    assert parked["data"]["instrumentFamily"] == fam.PARKED_JUDGMENT
+    assert parked["data"]["gpuType"] is None
+    assert main["data"]["gpuType"] is None
+    assert parked["data"]["rateSource"] == "family"
+    assert parked["data"]["recordsPerHour"] == 600.0
+    assert main["data"]["recordsPerHour"] == 220.0
+    typed = _walltime(_manifest(judges=EXTERNAL_PANEL), 600, verb="evaluate")
+    assert typed["data"]["gpuType"] == "A100"
+
+
+def test_history_under_a_legacy_untyped_key_is_still_found(meta):
+    """Before review round 5 a ``gpu:1`` request was filed under the key
+    ``1``. That history is read as the untyped bucket, on both paths."""
+    _seed(meta, [_entry(220.0, gpu="1"),
+                 _entry(600.0, family=fam.PARKED_JUDGMENT, gpu="1", samples=2)])
+    main = _walltime(_manifest(outcomeInstruments=["answerTokenLogprob"]), 600,
+                     gres="gpu:1")
+    assert main["data"]["recordsPerHour"] == 220.0
+    assert "no throughput history" not in main["message"]
+    parked = _walltime(_manifest(judges=EXTERNAL_PANEL), 600, verb="evaluate",
+                       gres="gpu:1")
+    assert parked["data"]["rateSource"] == "family"
+    assert parked["data"]["recordsPerHour"] == 600.0
+
+
+def test_a_type_named_by_a_number_is_never_untyped_history(meta):
+    """A site may name a GPU type by a number (``gpu:3090:1``): its history
+    is that type's, and never read as the untyped bucket."""
+    _seed(meta, [_entry(50.0, gpu="3090")])
+    manifest = _manifest(outcomeInstruments=["answerTokenLogprob"])
+    untyped = _walltime(manifest, 600, gres="gpu:1")
+    assert "no throughput history" in untyped["message"]
+    typed = _walltime(manifest, 600, gres="gpu:3090:1")
+    assert typed["data"]["gpuType"] == "3090"
+    assert typed["data"]["recordsPerHour"] == 50.0
 
 
 def test_a_local_judge_evaluate_keeps_generation_pricing(meta):

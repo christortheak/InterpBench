@@ -674,9 +674,9 @@ def _check_lora_memory_fit(config: lora_train.LoRAConfig, *, dtype: str,
     data["gpuCount"] = gpu_count
     if gpu_type is None:
         return _check(check_id, "warn",
-                      f"needs ≈{_gb(estimate):.1f} GB but no GPU type is "
-                      "requested (gres unset) — cannot compare against VRAM",
-                      data)
+                      f"needs ≈{_gb(estimate):.1f} GB but "
+                      f"{housekeeping.no_gpu_type_words(resources.gres)} — "
+                      "cannot compare against VRAM", data)
     vram_gb = (resources.gpu_vram_gb or {}).get(gpu_type)
     if vram_gb is None:
         return _check(check_id, "warn",

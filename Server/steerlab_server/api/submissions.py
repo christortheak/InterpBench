@@ -2495,9 +2495,9 @@ def _check_memory_fit(manifest: Manifest | None,
                      f"{context:,} tokens ({_gb(kv):.1f})")
     if gpu_type is None:
         return _check(check_id, "warn",
-                      f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but no "
-                      "GPU type is requested (gres unset) — cannot compare "
-                      "against VRAM" + unmeasured_note, data)
+                      f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but "
+                      f"{housekeeping.no_gpu_type_words(resources.gres)} — "
+                      "cannot compare against VRAM" + unmeasured_note, data)
     if vram_gb is None:
         return _check(check_id, "warn",
                       f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but "
@@ -2731,7 +2731,7 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
     if family is not None and family.id == instrument_family.PARKED_JUDGMENT:
         return _check_parked_judgment_walltime(
             manifest, resources, planned_records, profile, gpu_bucket,
-            family, family_data)
+            family, family_data, gpu_type=gpu_type)
 
     entry = None
     rate_source = "global"
@@ -2993,16 +2993,22 @@ def _check_parked_judgment_walltime(manifest: Manifest | None,
                                     resources: SlurmResources,
                                     planned_records: int,
                                     profile: ServerProfile,
-                                    gpu_type: str | None,
-                                    family, family_data: dict) -> dict:
+                                    gpu_bucket: str | None,
+                                    family, family_data: dict, *,
+                                    gpu_type: str | None = None) -> dict:
     """Open issues §4: price packet RENDERING, not generation.
+
+    ``gpu_bucket`` is the history's key (:func:`housekeeping.
+    throughput_gpu_bucket`); ``gpu_type`` is the type reported in
+    ``data.gpuType``, None for a request of no named type, as on the main
+    path (review round 6).
 
     An observed ``parkedJudgment`` rate for this model+GPU wins over the
     declared constant as soon as one has been folded — the constant exists
     because the first such job has to be priced too.
     """
     entry = housekeeping.throughput_lookup(
-        manifest.model_id, gpu_type, profile,
+        manifest.model_id, gpu_bucket, profile,
         instrument_family=instrument_family.PARKED_JUDGMENT)
     observed = float(entry.get("recordsPerHour", 0)) if entry else 0.0
     if observed > 0:
