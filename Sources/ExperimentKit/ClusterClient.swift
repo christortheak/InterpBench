@@ -684,11 +684,22 @@ public struct RemoteJobCancelResume: Codable, Sendable, Equatable {
     public var explanation: String?
     /// The job that is carrying the run, once this one has been resumed.
     public var continuation: String?
+    /// Issue #12: a split run that stopped after a day of refusals that gave
+    /// no reason. A plain Resume would ask for the walltime those refusals
+    /// met, and the server refuses that unless the request acknowledges it.
+    public var needsWalltime: Bool?
+    /// That walltime, when the server recorded it.
+    public var refusedWalltime: String?
 
-    public init(offered: Bool, explanation: String? = nil, continuation: String? = nil) {
+    public init(
+        offered: Bool, explanation: String? = nil, continuation: String? = nil,
+        needsWalltime: Bool? = nil, refusedWalltime: String? = nil
+    ) {
         self.offered = offered
         self.explanation = explanation
         self.continuation = continuation
+        self.needsWalltime = needsWalltime
+        self.refusedWalltime = refusedWalltime
     }
 }
 
@@ -940,6 +951,40 @@ public enum RemoteJobStatusClass: Sendable, Equatable {
             return resubmittedAs == nil ? .afterCancel : .notOffered(note: nil)
         }
         return .notOffered(note: cancelResume.explanation)
+    }
+
+    /// Issue #12, review round 8: the walltime a run that gave up after a
+    /// day of unexplained refusals may be retried at, when the app can send
+    /// the acknowledgement the server needs (after a plain confirmation).
+    /// Nil for every other job. The app has no walltime field, so a
+    /// different walltime is the command line's (the row's line says how).
+    public static func refusedWalltimeRetry(
+        cancelResume: RemoteJobCancelResume?
+    ) -> String? {
+        guard let cancelResume, !cancelResume.offered,
+            cancelResume.needsWalltime == true,
+            let walltime = cancelResume.refusedWalltime, !walltime.isEmpty
+        else { return nil }
+        return walltime
+    }
+
+    /// The control's help text for that retry.
+    public static let refusedWalltimeRetryHelp =
+        "retry this run at the walltime the scheduler refused without a "
+        + "reason — right if the cause was the cluster's job limit and slots "
+        + "have freed; asks you to confirm first"
+
+    /// What the confirmation says before the app retries a refused walltime.
+    public static func refusedWalltimeRetryConsequence(
+        walltime: String, jobID: String
+    ) -> String {
+        "The scheduler refused this run's parts at walltime \(walltime), "
+            + "without a reason, for a day. If the cause was the cluster's "
+            + "job limit and slots have freed, retrying the same walltime lets "
+            + "the run continue. If the walltime is above the cluster's limit "
+            + "for one job, the parts will be refused again, for up to another "
+            + "day. To resume with a different walltime, run: steerlab-cli "
+            + "remote resubmit \(jobID) --walltime HH:MM:SS"
     }
 
     /// The Resume control's help text for a cancelled job that can continue.
@@ -3426,18 +3471,25 @@ public struct ClusterClient: Sendable {
     /// sbatch's command line, so the rendered script is still re-submitted
     /// byte-for-byte.
     public func resubmitJob(
-        _ id: String, walltime: String? = nil
+        _ id: String, walltime: String? = nil, retryRefusedWalltime: Bool = false
     ) async throws -> RemoteJobResubmission {
         let previous: JSONValue = try await get("/api/jobs/\(id)")
         try await requireInstrumentation(previous)
         struct Body: Encodable {
             var walltime: String?
+            /// Issue #12, review round 8: resume a run that gave up after a
+            /// day of unexplained refusals at that same walltime, on purpose.
+            /// Encoded only when true, so older servers see the request they
+            /// always saw.
+            var retryRefusedWalltime: Bool?
         }
         do {
             // A resume can run sbatch inside the request (review round 4):
             // the long wait, and an unanswered request is an unknown outcome.
             return try await postAwaitingAnswer(
-                "/api/jobs/\(id)/resubmit", body: Body(walltime: walltime)
+                "/api/jobs/\(id)/resubmit",
+                body: Body(walltime: walltime,
+                           retryRefusedWalltime: retryRefusedWalltime ? true : nil)
             ) { cause in
                 ResumeOutcomeUnknown(
                     endpoint: self.profile.baseURL.absoluteString, jobID: id,

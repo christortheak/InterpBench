@@ -561,6 +561,7 @@ public enum ExperimentCLIParser {
             purpose: "Resume a checkpointed or cancelled job: the server "
                 + "re-submits the job's own rendered sbatch script "
                 + "byte-for-byte, optionally under a longer walltime.",
+            booleanFlags: ["--retry-refused-walltime"],
             valueFlags: remoteConnection.union(["--walltime"])),
         .init(
             namespace: "remote", verb: "fetch", positional: "<artifact-path>",

@@ -3185,7 +3185,11 @@ public struct ExperimentCLIRunner: Sendable {
             let resubmission: RemoteJobResubmission
             do {
                 resubmission = try await client.resubmitJob(
-                    resubmitJobID, walltime: walltimeRequested)
+                    resubmitJobID, walltime: walltimeRequested,
+                    // Issue #12, review round 8: a run that gave up after a
+                    // day of unexplained refusals, retried at that walltime
+                    // on purpose.
+                    retryRefusedWalltime: args.contains("--retry-refused-walltime"))
             } catch let unknown as ResumeOutcomeUnknown {
                 // Review round 4: a resume that was sent and never answered
                 // may have resumed the job. `pending` (12); look first.

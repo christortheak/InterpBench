@@ -33,6 +33,13 @@ struct ServerJobsPanelView: View {
         let kind: String
     }
     @State private var cancelTarget: CancelTarget?
+    /// Issue #12, review round 8: a retry at the walltime the scheduler
+    /// refused without a reason for a day, parked behind its confirmation.
+    private struct RetryRefusedTarget: Identifiable {
+        let id: String
+        let walltime: String
+    }
+    @State private var retryRefusedTarget: RetryRefusedTarget?
     @State private var recoveryTarget: RecoveryTarget?
     @State private var diagnosticTarget: DiagnosticTarget?
     @State private var jobs: [RemoteJobRecord] = []
@@ -163,6 +170,25 @@ struct ServerJobsPanelView: View {
         } message: { _ in
             Text(RemoteJobStatusClass.cancelConsequence(
                 substrate: service.cluster.substrateLabel))
+        }
+        .confirmationDialog(
+            retryRefusedTarget.map {
+                "Retry job \($0.id) at walltime \($0.walltime)?"
+            } ?? "Retry at the same walltime?",
+            isPresented: retryRefusedPresented,
+            titleVisibility: .visible,
+            presenting: retryRefusedTarget
+        ) { target in
+            Button("Retry at \(target.walltime)") {
+                let origin = jobsOrigin
+                Task {
+                    await resubmit(target.id, origin: origin, retryRefusedWalltime: true)
+                }
+            }
+            Button("Don't retry", role: .cancel) {}
+        } message: { target in
+            Text(RemoteJobStatusClass.refusedWalltimeRetryConsequence(
+                walltime: target.walltime, jobID: target.id))
         }
         .sheet(item: $recoveryTarget) { target in
             JobRecoverySheet(client: target.client, jobID: target.jobID)
@@ -333,6 +359,12 @@ struct ServerJobsPanelView: View {
         Binding(
             get: { cancelTarget != nil },
             set: { if !$0 { cancelTarget = nil } })
+    }
+
+    private var retryRefusedPresented: Binding<Bool> {
+        Binding(
+            get: { retryRefusedTarget != nil },
+            set: { if !$0 { retryRefusedTarget = nil } })
     }
 
     /// Server-side bookkeeping repair, with the re-entry guard the button
@@ -598,8 +630,20 @@ struct ServerJobsPanelView: View {
         case .notOffered:
             // A cancelled job that was resumed says so in the line under
             // the row (`cancelResumeLine`); this chip is the checkpointed
-            // job's, as before.
-            if let continuation = job.resubmittedAs,
+            // job's, as before. A run that gave up after a day of
+            // unexplained refusals offers only a confirmed retry at that
+            // walltime (issue #12, review round 8); a different walltime is
+            // the command line's, and the line under the row says how.
+            if let walltime = RemoteJobStatusClass.refusedWalltimeRetry(
+                cancelResume: job.cancelResume)
+            {
+                Button("Retry at \(walltime)…") {
+                    retryRefusedTarget = RetryRefusedTarget(id: job.id, walltime: walltime)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help(RemoteJobStatusClass.refusedWalltimeRetryHelp)
+            } else if let continuation = job.resubmittedAs,
                 RemoteJobStatusClass.classify(status: job.status) == .resumable
             {
                 Text("resumed → \(continuation)")
@@ -634,7 +678,14 @@ struct ServerJobsPanelView: View {
             }
             .help(RemoteJobStatusClass.resumeAfterCancelHelp)
         case .notOffered:
-            EmptyView()
+            if let walltime = RemoteJobStatusClass.refusedWalltimeRetry(
+                cancelResume: job.cancelResume)
+            {
+                Button("Retry at Walltime \(walltime)…") {
+                    retryRefusedTarget = RetryRefusedTarget(id: job.id, walltime: walltime)
+                }
+                .help(RemoteJobStatusClass.refusedWalltimeRetryHelp)
+            }
         }
     }
 
@@ -1271,10 +1322,13 @@ struct ServerJobsPanelView: View {
         .frame(maxHeight: 320)
     }
 
-    private func resubmit(_ jobID: String, origin: EvidenceImportOrigin?) async {
+    private func resubmit(
+        _ jobID: String, origin: EvidenceImportOrigin?, retryRefusedWalltime: Bool = false
+    ) async {
         guard let client = clientForRows(origin: origin) else { return }
         do {
-            let result = try await client.resubmitJob(jobID)
+            let result = try await client.resubmitJob(
+                jobID, retryRefusedWalltime: retryRefusedWalltime)
             guard service.cluster.evidenceImportOrigin == origin else { return }
             status = RemoteJobStatusClass.resumedStatusLine(
                 jobID: jobID, result: result)

@@ -401,6 +401,11 @@ public enum CLIFlagVocabulary {
         "--temperature": "Sampling temperature.",
         "--threshold": "Minimum cosine below which the comparison refuses.",
         "--token": "Bearer token for --url; --site reads it from the Keychain instead.",
+        "--retry-refused-walltime":
+            "Resume a split run that stopped after a day of refusals that gave "
+            + "no reason at that same walltime, on purpose: right when the cause "
+            + "was the cluster's job limit and slots have freed. Without it, "
+            + "such a Resume is refused.",
         "--url": "Name an unmanaged server by URL.",
         "--validation-count": "How many held-out probe rows the prompt asks for.",
         "--variant": "The server-resident variant to generate through.",

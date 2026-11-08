@@ -13,6 +13,8 @@ import Testing
         var envelope: SteerLabCLIEnvelope
         var stdout: String
         var stderr: String
+        /// The body of every POST, by path, in order.
+        var posted: [String: [Data]] = [:]
     }
 
     static let heldMessage =
@@ -45,8 +47,13 @@ import Testing
             routeData[path] = (status, try JSONSerialization.data(withJSONObject: body))
         }
         let served = routeData
+        let posted = WiringLocked<[String: [Data]]>([:])
         HeldShardsStubURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
+            if request.httpMethod == "POST" {
+                let body = SubmitBundleExecutorWiringTests.bodyData(from: request) ?? Data()
+                posted.withLock { $0[path, default: []].append(body) }
+            }
             if path == "/api/capabilities" { return (capabilityData, 200) }
             if path == "/api/bundles/inspect" {
                 return (Data(#"{"kind":"runBundle","experiment":"demo"}"#.utf8), 200)
@@ -80,7 +87,7 @@ import Testing
         }
         return Outcome(
             envelope: result.envelope, stdout: stdout.withLock { $0 },
-            stderr: stderr.withLock { $0 })
+            stderr: stderr.withLock { $0 }, posted: posted.withLock { $0 })
     }
 
     let submit = ["submit-bundle", "/srv/b.tar.gz", "--verb", "run",
@@ -265,18 +272,73 @@ import Testing
     /// the row shows the server's line naming the command that helps.
     @Test func aGaveUpRunOffersNoResumeAndNamesTheCommand() throws {
         let explanation =
-            "This run stopped because the scheduler refused a part at walltime "
-            + "00:30:00 for a day without saying why. Resume it with a walltime "
-            + "within the cluster's limit for one job: steerlab-cli remote "
-            + "resubmit parent01 --walltime HH:MM:SS. The responses it completed "
-            + "are kept."
+            "This run stopped because the scheduler refused its parts at "
+            + "walltime 00:30:00, without a reason, for a day. Choose one: "
+            + "resume it with a walltime within the cluster's limit for one job "
+            + "(steerlab-cli remote resubmit parent01 --walltime HH:MM:SS), or, "
+            + "if the cause was the job limit and slots have freed, retry the "
+            + "same walltime (steerlab-cli remote resubmit parent01 "
+            + "--retry-refused-walltime). The responses it completed are kept."
         let hint = try JSONDecoder().decode(
             RemoteJobCancelResume.self,
             from: JSONSerialization.data(withJSONObject: [
                 "offered": false, "needsWalltime": true, "explanation": explanation,
+                "refusedWalltime": "00:30:00",
             ]))
         #expect(RemoteJobStatusClass.resumeOffer(status: "failed", cancelResume: hint)
             == .notOffered(note: explanation))
+        #expect(hint.refusedWalltime == "00:30:00")
+    }
+
+    /// Review round 8: the app offers the same-walltime retry only for a run
+    /// that gave up, and only when the server named the walltime.
+    @Test func theRefusedWalltimeRetryIsOfferedOnlyForAGaveUpRun() {
+        let gaveUp = RemoteJobCancelResume(
+            offered: false, explanation: "stopped", needsWalltime: true,
+            refusedWalltime: "1-00:00:00")
+        #expect(RemoteJobStatusClass.refusedWalltimeRetry(cancelResume: gaveUp)
+            == "1-00:00:00")
+        // An older server's hint carries no walltime: nothing to confirm.
+        let unnamed = RemoteJobCancelResume(
+            offered: false, explanation: "stopped", needsWalltime: true)
+        #expect(RemoteJobStatusClass.refusedWalltimeRetry(cancelResume: unnamed) == nil)
+        let resumable = RemoteJobCancelResume(
+            offered: true, needsWalltime: true, refusedWalltime: "00:30:00")
+        #expect(RemoteJobStatusClass.refusedWalltimeRetry(cancelResume: resumable) == nil)
+        let plain = RemoteJobCancelResume(
+            offered: false, explanation: "finished", refusedWalltime: "00:30:00")
+        #expect(RemoteJobStatusClass.refusedWalltimeRetry(cancelResume: plain) == nil)
+        #expect(RemoteJobStatusClass.refusedWalltimeRetry(cancelResume: nil) == nil)
+        let consequence = RemoteJobStatusClass.refusedWalltimeRetryConsequence(
+            walltime: "00:30:00", jobID: "parent01")
+        #expect(consequence.contains("refused this run's parts at walltime 00:30:00"))
+        #expect(consequence.contains("steerlab-cli remote resubmit parent01 --walltime"))
+        #expect(!consequence.contains("refused its walltime"))
+    }
+
+    /// Review round 8: `--retry-refused-walltime` is the acknowledgement the
+    /// server needs, sent only when the person gives it.
+    @Test func theRetryFlagSendsTheAcknowledgementOnlyWhenGiven() async throws {
+        let routes: [String: (Int, Any)] = [
+            "/api/jobs/parent01": (200, ["id": "parent01", "status": "failed"]),
+            "/api/jobs/parent01/resubmit": (200, Self.resumed(heldUnexplained: false)),
+        ]
+        for flag in [true, false] {
+            let outcome = try await run(
+                ["resubmit", "parent01"] + (flag ? ["--retry-refused-walltime"] : [])
+                    + ["--json"],
+                routes: routes)
+            #expect(outcome.envelope.exitCode == 0, "\(flag)")
+            let bodies = outcome.posted["/api/jobs/parent01/resubmit"] ?? []
+            #expect(bodies.count == 1, "\(flag)")
+            let body = bodies.first.flatMap {
+                (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any]
+            }
+            #expect(body != nil, "\(flag)")
+            #expect((body?["retryRefusedWalltime"] as? Bool) == (flag ? true : nil),
+                    "\(flag)")
+            #expect(body?["walltime"] == nil, "\(flag)")
+        }
     }
 
     @Test func aResumeWhosePartsContinueIsReady() async throws {
