@@ -649,37 +649,46 @@ def throughput_lookup(model_id: str, gpu_type: str | None,
     return None
 
 
-def prompt_history(entry: dict | None) -> dict | None:
-    """A family entry's pooled prompt reading (``promptTokens``, issue #11)
-    as ``{"tokensPerHour", "minPerRecord", "maxPerRecord", "samples"}``, or
-    None when it has none (or only a shape this release does not read)."""
+#: How many stamped jobs a family entry keeps for pricing by prompt length
+#: (issue #11): the most recent, oldest dropped first.
+PROMPT_HISTORY_JOBS = 64
+
+
+def prompt_history(entry: dict | None) -> list[dict] | None:
+    """A family entry's stamped jobs (``promptTokens.jobs``, issue #11), each
+    ``{"perRecord", "records", "hours", "hoursPerRecord"}``: the prompt tokens
+    each record read, how many records the job wrote, and how long it took.
+    None when the entry has none, or only a shape this release does not
+    read (a development build's pooled block)."""
     block = (entry or {}).get("promptTokens")
-    if not isinstance(block, dict):
+    jobs = block.get("jobs") if isinstance(block, dict) else None
+    if not isinstance(jobs, list):
         return None
-    tokens, hours = block.get("tokens"), block.get("hours")
-    low, high = block.get("minPerRecord"), block.get("maxPerRecord")
-    if not all(isinstance(v, (int, float)) and v > 0
-               for v in (tokens, hours, low, high)):
-        return None
-    return {"tokensPerHour": float(tokens) / float(hours),
-            "minPerRecord": low, "maxPerRecord": high,
-            "samples": int(block.get("samples") or 0)}
+    out = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        per, records, hours = (job.get("perRecord"), job.get("records"),
+                               job.get("hours"))
+        if all(isinstance(v, (int, float)) and v > 0
+               for v in (per, records, hours)):
+            out.append({"perRecord": per, "records": records, "hours": hours,
+                        "hoursPerRecord": float(hours) / float(records)})
+    return out or None
 
 
 def _fold_prompt_tokens(entry: dict, prompt_tokens: int, records: int,
                         elapsed_seconds: float) -> None:
-    """Add one job's prompt reading to an entry's pooled ``promptTokens``."""
-    block = entry.get("promptTokens")
-    if prompt_history(entry) is None:
-        block = {"tokens": 0, "hours": 0.0, "samples": 0,
-                 "minPerRecord": prompt_tokens, "maxPerRecord": prompt_tokens}
-    block = dict(block)
-    block["tokens"] = int(block["tokens"]) + int(records) * int(prompt_tokens)
-    block["hours"] = round(float(block["hours"]) + elapsed_seconds / 3600.0, 6)
-    block["samples"] = int(block["samples"]) + 1
-    block["minPerRecord"] = min(int(block["minPerRecord"]), int(prompt_tokens))
-    block["maxPerRecord"] = max(int(block["maxPerRecord"]), int(prompt_tokens))
-    entry["promptTokens"] = block
+    """Keep one job's prompt length and pace on its family entry. Jobs are
+    kept apart, never pooled: a record's time is not proportional to its
+    prompt's length (a short item is mostly a fixed cost, a long one mostly
+    reading), so the estimator prices from the jobs nearest a submission's
+    length (``submissions._prompt_length_pricing``)."""
+    kept = [{k: job[k] for k in ("perRecord", "records", "hours")}
+            for job in (prompt_history(entry) or [])]
+    kept.append({"perRecord": int(prompt_tokens), "records": int(records),
+                 "hours": round(elapsed_seconds / 3600.0, 6)})
+    entry["promptTokens"] = {"jobs": kept[-PROMPT_HISTORY_JOBS:]}
 
 
 def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
@@ -704,18 +713,14 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
     (records-per-hour is taken as inverse-linear in generated tokens).
     The global entry never carries a basis: it keeps its historical meaning.
 
-    Since public issue #11 a family entry also carries ``promptTokens``, the
-    prompt reading its stamped jobs did, pooled so that every job counts with
-    its own prompt length and none is the basis for the rest:
-    ``{"tokens", "hours", "minPerRecord", "maxPerRecord", "samples"}`` —
-    the prompt tokens those jobs read (records × prompt tokens per record),
-    the hours they took, and the shortest and longest prompt tokens per
-    record among them. ``tokens / hours`` is the family's reading rate; the
-    range is how far an estimate from it may be trusted. Order-independent:
-    the same jobs fold to the same block in any order. The block is additive
-    and separate from the entry's historical mean, so an entry folded before
-    prompt lengths were stamped gains one from its next stamped job, and an
-    older reader never sees its mean change.
+    Since public issue #11 a family entry also carries ``promptTokens``:
+    ``{"jobs": [{"perRecord", "records", "hours"}, …]}``, one row per stamped
+    job (the most recent :data:`PROMPT_HISTORY_JOBS`), kept apart rather than
+    pooled, because a record's time is not proportional to its prompt's
+    length. The block is additive and separate from the entry's historical
+    mean, so an entry folded before prompt lengths were stamped gains one
+    from its next stamped job, and an older reader never sees its mean
+    change.
     """
     from .jobs import TERMINAL  # local import: jobs.py imports us lazily
     from .instrument_family import (stamped_family, stamped_max_tokens,
