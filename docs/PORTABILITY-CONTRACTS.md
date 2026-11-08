@@ -753,7 +753,7 @@ invents a wire format makes the engine's tests stop being the client's tests.
 | `capabilities()` | `GET /api/capabilities` | → the capability snapshot `info()` also embeds |
 | `upload_run_bundle(path)` | `POST /api/bundles/upload` | raw octet-stream body + `X-SteerLab-Filename`; → `path`, `filename`, `sha256`, `bytes`, `bundle` (inspected), `executable`, `stagingDirectory` |
 | `inspect_remote_bundle(p)` | `POST /api/bundles/inspect` | `{bundlePath}` → the bundle metadata + recomputed `bundleSha256` |
-| `submit_uploaded_bundle(…)` | `POST /api/studies/submit-bundle` | `{bundlePath, verb, executor, dryRun, targetRoot, dtype, device, promptsPath, sourcePath, packageEvidence, parallelJobs, force, resources, env}` → `StudySubmission.to_dict()` (`jobId`, `experiment`, `verb`, `executor`, `dryRun`, `runBundle`, `slurmBundle`, `slurmJobID`, `command`, `recordsDirectory`, `submissionDirectory`, `preflight`, `shardJobIDs`) |
+| `submit_uploaded_bundle(…)` | `POST /api/studies/submit-bundle` | `{bundlePath, verb, executor, dryRun, targetRoot, dtype, device, promptsPath, sourcePath, packageEvidence, parallelJobs, force, resources, env}` → `StudySubmission.to_dict()` (`jobId`, `experiment`, `verb`, `executor`, `dryRun`, `runBundle`, `slurmBundle`, `slurmJobID`, `command`, `recordsDirectory`, `submissionDirectory`, `preflight`, `shardJobIDs`, `shardsHeld`) |
 | `job(id)` | `GET /api/jobs/{id}` | → `Job.to_dict()` (incl. `status`, `result`, `logTail`) |
 | `jobs()` | `GET /api/jobs` | → `{jobs: […]}`, each with a tail |
 | `cancel_job(id)` | `POST /api/jobs/{id}/cancel` | → `{ok: true}`; a 502 means `scancel` did not confirm and is **not** swallowed |
