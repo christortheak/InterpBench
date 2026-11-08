@@ -7,8 +7,9 @@ went on and created it. Submitted again, the same study became a second job.
 
 Each client therefore sends a **submission key** with the request
 (``submissionKey``): the SHA-256 of the request itself, with the staged
-bundle's path replaced by the bundle's own digest, so the same request for
-the same bundle always carries the same key, and any change to what is
+bundle's path replaced by the bundle's CONTENT identity (its files' digests,
+never its packaging time), so the same request for the same study carries
+the same key however often it is repackaged, and any change to what is
 submitted (the verb, the resources, the number of parts, the target, a dry
 run) changes it. This module answers a repeat:
 
@@ -21,13 +22,21 @@ run) changes it. This module answers a repeat:
 
 A request without a key (every older client) is submitted exactly as before.
 The key is persisted in the job record's requested resources
-(``submissionKey``), beside a compact copy of the first answer
-(``submissionAnswer``), so a repeat after a server restart is still
-recognised. Capability: ``cluster.submissionKey``.
+(``submissionKey``) when the record is created, and a compact copy of the
+first answer (``submissionAnswer``) is kept beside it, so a repeat after a
+server restart is still recognised. A repeat is answered with what is true
+NOW: the job's status, the job carrying it, and a split run's held parts.
+Capability: ``cluster.submissionKey``.
+
+A key is only as good as its derivation, and each client derives it from
+what it sends: the same command with the same flags, from the same client,
+carries the same key; a request from the other client is a different body
+and carries a different one.
 """
 
 from __future__ import annotations
 
+import contextvars
 import re
 import threading
 
@@ -89,6 +98,21 @@ class _Preparing:
 _GUARD = threading.Lock()
 _PREPARING: dict[str, _Preparing] = {}
 
+#: The key of the submission being prepared on this thread, so the job record
+#: carries it from the moment it is created (``keyed``), not from a second
+#: write after the submission returns.
+CURRENT_KEY: contextvars.ContextVar = contextvars.ContextVar(
+    "steerlab_submission_key", default=None)
+
+
+def keyed(requested_resources: dict) -> dict:
+    """``requested_resources`` with this submission's key, when it has one.
+    Called where a submission creates its own job record (never a part's)."""
+    key = CURRENT_KEY.get()
+    if key is None:
+        return requested_resources
+    return {**requested_resources, RECORD_KEY: key}
+
 
 def _chain_tail(jobs, job):
     """The job carrying a resumed submission now: a checkpointed or cancelled
@@ -137,19 +161,87 @@ def _compact_answer(answer: dict) -> dict:
 
 
 def _stamp(jobs, answer: dict, key: str) -> None:
+    """Keep the first answer beside the key the record already carries. A
+    failure here never turns a job that landed into an error: the key was
+    written with the record, and a repeat is answered from the record."""
     job = jobs.get(answer.get("jobId"))
     if job is None:
         return
-    job.requested_resources = {**(job.requested_resources or {}),
-                               RECORD_KEY: key,
-                               ANSWER_KEY: _compact_answer(answer)}
-    jobs.store.update(job)
+    try:
+        job.requested_resources = {**(job.requested_resources or {}),
+                                   RECORD_KEY: key,
+                                   ANSWER_KEY: _compact_answer(answer)}
+        jobs.store.update(job)
+    except Exception as exc:  # noqa: BLE001 - the job landed; say so, answer
+        try:
+            job.log(f"the first answer to this submission could not be kept "
+                    f"beside its key ({type(exc).__name__}: {exc}); a repeat "
+                    "is answered from the job record")
+        except Exception:  # noqa: BLE001
+            pass
 
 
-def _already_submitted(job, current, *, verb: str, dry_run: bool,
+def _answer_from_record(job, *, verb: str, dry_run: bool) -> dict:
+    """A repeat's answer when the first one was not kept: the same fields,
+    read from the job record."""
+    result = job.result if isinstance(job.result, dict) else {}
+    resources = job.requested_resources or {}
+    bundle = result.get("runBundle") if isinstance(result.get("runBundle"), dict) else {}
+    merge = resources.get("shardMerge") if isinstance(resources.get("shardMerge"), dict) else {}
+    children = resources.get("shardChildren")
+    return {"jobId": job.id,
+            "experiment": bundle.get("experiment") or merge.get("experiment") or "",
+            "verb": verb, "executor": job.executor, "dryRun": bool(dry_run),
+            "runBundle": bundle, "slurmBundle": result.get("slurmBundle"),
+            "slurmJobID": job.executor_job_id,
+            "command": result.get("command") or [],
+            "recordsDirectory": (result.get("recordsDirectory")
+                                 or resources.get("recordsDirectory") or ""),
+            "submissionDirectory": result.get("submissionDirectory") or "",
+            "shardJobIDs": list(children) if isinstance(children, list) else None}
+
+
+def _held_now(jobs, job) -> dict | None:
+    """The split run's held parts as they are NOW (issue #12): the first
+    answer's count goes stale as soon as the controller submits one."""
+    resources = job.requested_resources or {}
+    children = resources.get("shardChildren")
+    if not isinstance(children, list) or not children:
+        return None
+    is_held = getattr(jobs, "is_held", None)
+    if is_held is None:
+        return None
+    held = []
+    stamp = None
+    for cid in children:
+        child = jobs.get(str(cid))
+        if child is None:
+            continue
+        tail = _chain_tail(jobs, child)
+        if is_held(tail):
+            held.append(tail.id)
+            stamp = stamp or (tail.result or {}).get("held")
+    if not held:
+        return None
+    from .submissions import _held_parts_summary
+    parts = int(resources.get("parallelJobs") or len(children))
+    summary = _held_parts_summary(stamp, held, parts)
+    count = len(held)
+    summary["message"] = (
+        f"{parts - count} of {parts} parts have been submitted; {count} "
+        f"{'is' if count == 1 else 'are'} still held by SteerLab because the "
+        "cluster's job limit is reached. The controller submits each held "
+        "part, in order, when a slot frees; while the controller is not "
+        "running they wait. The run is merged when every part has finished.")
+    return summary
+
+
+def _already_submitted(jobs, job, current, *, verb: str, dry_run: bool,
                        arrived_while_preparing: bool) -> dict:
     resources = job.requested_resources or {}
-    answer = dict(resources.get(ANSWER_KEY) or {"jobId": job.id})
+    kept = resources.get(ANSWER_KEY)
+    answer = (dict(kept) if isinstance(kept, dict)
+              else _answer_from_record(job, verb=verb, dry_run=dry_run))
     if answer.get("verb") not in (None, verb) \
             or bool(answer.get("dryRun")) != bool(dry_run):
         raise SubmissionKeyError(
@@ -162,6 +254,9 @@ def _already_submitted(job, current, *, verb: str, dry_run: bool,
                 "derive the key from this request (each client does), or "
                 "leave submissionKey out"))
     answer.setdefault("preflight", resources.get("preflight"))
+    # What changes after the first answer is answered as it is now: the
+    # job's status, the job carrying it, and a split run's held parts.
+    answer["shardsHeld"] = _held_now(jobs, job)
     status = current.status
     if arrived_while_preparing:
         state = "was being prepared when this request arrived"
@@ -171,13 +266,17 @@ def _already_submitted(job, current, *, verb: str, dry_run: bool,
         state = f"is {status}"
     note = (f"Already submitted: this request was submitted before as job "
             f"{job.id}, which {state}. Nothing was submitted again.")
+    # Worded for either client: each names its own status and resume verbs.
     if status == "checkpointed":
-        note += (f" It stopped at a checkpoint: resume it with remote "
-                 f"resubmit {current.id}, or cancel it before submitting "
+        note += (f" It stopped at a checkpoint: resume job {current.id} with "
+                 "your client's resubmit verb, or cancel it before submitting "
                  "again.")
     elif status not in TERMINAL:
-        note += (" Follow it with remote status, or cancel it before "
+        note += (" Follow it in the server's job list, or cancel it before "
                  "submitting again.")
+    held = answer.get("shardsHeld")
+    if isinstance(held, dict) and held.get("message"):
+        note += " " + held["message"]
     answer.update({"alreadySubmitted": True, "alreadySubmittedNote": note,
                    "currentJobID": current.id, "currentStatus": status})
     return answer
@@ -197,7 +296,7 @@ def submit_once(key: str | None, *, jobs, verb: str, dry_run: bool,
                 live = live_submission(jobs, key)
                 if live is not None:
                     return _already_submitted(
-                        *live, verb=verb, dry_run=dry_run,
+                        jobs, *live, verb=verb, dry_run=dry_run,
                         arrived_while_preparing=False)
                 mine = _Preparing()
                 _PREPARING[key] = mine
@@ -212,16 +311,18 @@ def submit_once(key: str | None, *, jobs, verb: str, dry_run: bool,
                 job = jobs.get(waiting_on.job_id)
                 if job is not None:
                     return _already_submitted(
-                        job, _chain_tail(jobs, job), verb=verb,
+                        jobs, job, _chain_tail(jobs, job), verb=verb,
                         dry_run=dry_run, arrived_while_preparing=True)
             continue
+        token = CURRENT_KEY.set(key)
         try:
             submission = submit()
+            mine.job_id = submission.job_id
             answer = submission.to_dict()
             _stamp(jobs, answer, key)
-            mine.job_id = submission.job_id
             return answer
         finally:
+            CURRENT_KEY.reset(token)
             with _GUARD:
                 if _PREPARING.get(key) is mine:
                     del _PREPARING[key]

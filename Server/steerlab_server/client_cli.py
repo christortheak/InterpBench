@@ -4027,6 +4027,32 @@ def _die(stages: dict, stage: str, *, code: str, reason: str, repair: str,
     return refusal
 
 
+def _same_command(invocation: Invocation) -> str:
+    """This invocation as a command a person or an agent can run again, with
+    every flag it was given and the workspace it ran in (issue #11): the
+    submission key is derived from all of them, so "the same command" must
+    mean exactly that. It carries no secret: this client takes a token only
+    by path or environment, never as a value."""
+    import shlex
+    spec = invocation.spec
+    words = [PROGRAM]
+    if invocation.workspace_root:
+        words += [ROOT_FLAG, invocation.workspace_root]
+    words.append(spec.family)
+    if spec.family not in SOLO_FAMILIES:
+        words.append(spec.verb)
+    words += [str(p) for p in invocation.positionals]
+    for flag, values in invocation.flags.items():
+        if flag in spec.boolean_flags:
+            words.append(flag)
+            continue
+        for value in values:
+            words += [flag, str(value)]
+    if invocation.json:
+        words.append(JSON_FLAG)
+    return " ".join(shlex.quote(word) for word in words)
+
+
 def _retry_once(call, *, transport_error, stage: str):
     """Run an IDEMPOTENT call, retrying once on a transport error.
 
@@ -4842,17 +4868,19 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             reread_choices=invocation.has("--reread-choices"),
             # Checked in `_run` before anything was built or sent.
             source_path=_source_run(invocation, study_verb, payload=dict(common)))
-    except runner_api.RunnerUnreachable as exc:
+    except runner_api.SubmitOutcomeUnknown as exc:
         # The one call in this machine whose failure is genuinely ambiguous:
-        # the request may have created a job (and on Slurm spent an
-        # allocation) before the connection died, and on a cluster the runner
-        # is usually still preparing it (issue #11). Not a failure: `pending`,
-        # exit 12. Never retried here; the repair is to LOOK, and a repeat is
-        # harmless only on a runner that recognises one.
+        # the request was sent, and may have created a job (and on Slurm
+        # spent an allocation) before the answer was lost; on a cluster the
+        # runner is usually still preparing it (issue #11). Not a failure:
+        # `pending`, exit 12. Never retried here; the repair is to LOOK. The
+        # repeat it offers is THIS command with every flag it was given: the
+        # key is derived from all of them, and from what the study contains,
+        # so it matches however often the study is repackaged. A request
+        # that was never sent is an ordinary connection failure, and reaches
+        # the machine's own handler as `runnerUnreachable`.
         safe = bool(exc.detail.get("repeatIsSafe"))
-        again = (f"{PROGRAM} runner submit --runner {client.base_url} "
-                 f"--bundle-path {staged} --bundle-sha {bundle_sha} --verb "
-                 f"{study_verb}")
+        again = _same_command(invocation)
         raise _die(
             stages, "submit", code=SUBMIT_OUTCOME_UNKNOWN_CODE,
             state="pending",
@@ -4861,17 +4889,20 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                     "created, and the runner may still be preparing it, so "
                     "nothing was retried"),
             repair=(f"{PROGRAM} runner jobs --runner {client.base_url}  (look "
-                    f"first). The bundle is already staged at {staged}. "
-                    + (f"This runner answers a repeat with the job the first "
-                       f"request created, so `{again}` is safe and names it."
+                    "first; the job usually appears within a few minutes). "
+                    + (f"If none appears once the runner has finished "
+                       f"measuring, run the same command again with the same "
+                       f"flags, `{again}`: this runner answers that repeat "
+                       "with the job the first request created. A command "
+                       "with any flag changed is a new submission."
                        if safe else
                        "This runner does not recognise a repeated "
                        "submission, so a second submit is a second study: "
-                       "only if no job appears within a few minutes, "
-                       f"`{again}` resumes from here.")),
+                       "only if no job appears within a few minutes, run "
+                       f"the same command again, `{again}`.")),
             common=common,
             facts={"runBundle": bundle_facts, "retried": False,
-                   "repeatIsSafe": safe}) from exc
+                   "repeatIsSafe": safe, "sameCommand": again}) from exc
 
     job_id = submission.get("jobId")
     # Where the job went, recorded in this workspace so the Mac app can import

@@ -221,6 +221,11 @@ public final class StudyBundleSubmissionController {
             {
                 submitted += " — \(stamp)"
             }
+            // Issue #11: the server recognised this as a submission it had
+            // already made, and answered with that job.
+            if let already = submission.alreadySubmittedStatus {
+                submitted = already
+            }
             jobs.remoteStatus = submitted
             note(submitted, severity: .info)
             jobs.noteRecentServerJob(
@@ -228,6 +233,14 @@ public final class StudyBundleSubmissionController {
                 study: manifest.name, state: "submitted")
             follow?(submission.jobId, submissionVerb, manifest.name, request.dryRun)
             return .success(submission.jobId)
+        } catch let unknown as SubmissionOutcomeUnknown {
+            // Issue #11: sent and not answered is not "nothing is running".
+            // The server may still be preparing the job; the researcher looks
+            // first, as the command line says.
+            jobs.remoteStatus = "submission outcome unknown — check the server's jobs"
+            let sentence = unknown.appSentence
+            note(sentence, severity: .warning)
+            return .failure(StudyBatchSubmission.Failure(reason: sentence))
         } catch {
             jobs.remoteStatus = "remote submit failed: \(error)"
             let refusal =

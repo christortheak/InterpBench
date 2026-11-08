@@ -101,7 +101,10 @@ def test_a_repeat_while_the_job_has_not_ended_is_answered_with_it(jobs):
     assert second["alreadySubmittedNote"] == (
         f"Already submitted: this request was submitted before as job "
         f"{first['jobId']}, which is submitted. Nothing was submitted again. "
-        "Follow it with remote status, or cancel it before submitting again.")
+        "Follow it in the server's job list, or cancel it before submitting "
+        "again.")
+    # Worded for either client: no Mac-only verb.
+    assert "remote " not in second["alreadySubmittedNote"]
     # The answer a client decodes is complete: the fields every client reads.
     for key in ("experiment", "verb", "executor", "dryRun", "runBundle",
                 "command", "recordsDirectory", "submissionDirectory",
@@ -299,8 +302,8 @@ def test_a_checkpointed_job_names_the_resume(jobs):
     jobs.store.update(record)
     second = _once(jobs, submit)
     assert submit.calls == 1
-    assert f"resume it with remote resubmit {record.id}" in \
-        second["alreadySubmittedNote"]
+    assert (f"resume job {record.id} with your client's resubmit verb"
+            in second["alreadySubmittedNote"])
 
 
 def test_a_key_reused_for_another_verb_is_refused(jobs):
@@ -386,3 +389,104 @@ def test_the_route_refuses_a_malformed_key_before_anything(route):
 def test_the_capability_is_advertised(route):
     capabilities = route["http"].get("/api/capabilities").json()
     assert capabilities["cluster"]["submissionKey"] is True
+
+
+# --- review round 2: the key on the record, and the current state ---------------
+
+
+from test_sharding import _manager, _staged_bundle, fake_slurm  # noqa: E402,F401
+
+
+def _real_submit(tmp_path, monkeypatch, *, name, parallel):
+    """The real bundle submission, on the committed fake scheduler."""
+    monkeypatch.setenv("STEERLAB_EXECUTOR", "slurm")
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path / "target"))
+    monkeypatch.setenv("FAKE_SLURM_JOB_ID", "7000")
+    monkeypatch.setenv("FAKE_SLURM_JOB_ID_FROM_CALL", "1")
+    os.makedirs(tmp_path / "target", exist_ok=True)
+    bundle_path = _staged_bundle(tmp_path, name=name)
+    jobs = _manager(tmp_path)
+
+    def submit():
+        return submissions.submit_run_bundle(
+            bundle_path, verb="run", jobs=jobs, executor="slurm",
+            target_root=str(tmp_path / "target"),
+            resources={"gres": "A100", "walltime": "00:30:00"},
+            parallel_jobs=parallel)
+
+    return jobs, submit
+
+
+def test_the_key_is_on_the_record_from_its_creation(tmp_path, monkeypatch,
+                                                    fake_slurm):
+    """Written with the record, not after: when keeping the first answer
+    fails, the landed job is still answered (never a 500), and a repeat is
+    answered from the record rather than submitted again."""
+    jobs, submit = _real_submit(tmp_path, monkeypatch, name="keyedone",
+                                parallel=1)
+    real_update = jobs.store.update
+    calls = {"n": 0}
+
+    def failing_update(job):
+        if (job.requested_resources or {}).get(submission_keys.ANSWER_KEY):
+            calls["n"] += 1
+            raise OSError("disk full")
+        return real_update(job)
+
+    monkeypatch.setattr(jobs.store, "update", failing_update)
+    first = _once(jobs, submit)
+    assert calls["n"] == 1, "keeping the answer was attempted and failed"
+    assert "alreadySubmitted" not in first
+    record = jobs.store.load_all()[first["jobId"]]
+    assert record.requested_resources["submissionKey"] == KEY
+    assert submission_keys.ANSWER_KEY not in record.requested_resources
+
+    monkeypatch.setattr(jobs.store, "update", real_update)
+    restarted = _manager(tmp_path)
+    repeat = _once(restarted, submit)
+    assert repeat["alreadySubmitted"] is True
+    assert repeat["jobId"] == first["jobId"]
+    for key in ("experiment", "verb", "executor", "dryRun", "runBundle",
+                "command", "recordsDirectory", "submissionDirectory"):
+        assert key in repeat, key
+    assert repeat["command"] == first["command"]
+    assert len(fake_slurm.calls("sbatch")) == 1
+
+
+def test_a_repeat_of_a_split_run_reports_its_held_parts_as_they_are(
+        tmp_path, monkeypatch, fake_slurm):
+    """A keyed split run with 2 of 4 parts held: a repeat before the tick
+    says 2 are held; after the tick has submitted them, a repeat says none
+    are, where the first answer (kept on the record) still said 2."""
+    from test_held_shards import _limited, _slot_frees, _tick
+    _limited(monkeypatch, accepted=2)
+    jobs, submit = _real_submit(tmp_path, monkeypatch, name="keyedheld",
+                                parallel=4)
+    first = _once(jobs, submit)
+    assert first["shardsHeld"]["count"] == 2
+    parent = jobs.get(first["jobId"])
+    assert parent.requested_resources["submissionKey"] == KEY
+    for child in first["shardJobIDs"]:
+        assert "submissionKey" not in jobs.get(child).requested_resources
+
+    before = _once(jobs, submit)
+    assert before["alreadySubmitted"] is True
+    assert before["shardsHeld"]["count"] == 2
+    assert before["shardsHeld"]["message"].startswith(
+        "2 of 4 parts have been submitted; 2 are still held by SteerLab")
+    assert "2 are still held" in before["alreadySubmittedNote"]
+
+    _slot_frees(monkeypatch)
+    _tick(jobs)
+    assert not [cid for cid in first["shardJobIDs"]
+                if jobs.is_held(jobs.get(cid))]
+    after = _once(jobs, submit)
+    assert after["alreadySubmitted"] is True
+    assert after["shardsHeld"] is None
+    assert "held" not in after["alreadySubmittedNote"]
+    # The kept first answer still says 2: the repeat did not replay it.
+    kept = jobs.get(first["jobId"]).requested_resources[
+        submission_keys.ANSWER_KEY]
+    assert kept["shardsHeld"]["count"] == 2
+    # Two repeats, no new parts: 2 accepted + 1 refused + 2 after the tick.
+    assert len(fake_slurm.calls("sbatch")) == 5

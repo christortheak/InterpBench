@@ -219,12 +219,19 @@ public final class UnifiedStudyRunner {
             if let summary = preflight?.inlineSummary {
                 submitted += " — \(summary)"
             }
+            // Issue #11: the server answered with a job it had already made.
+            if let already = submission.alreadySubmittedStatus {
+                submitted = already
+            }
             statusLine = submitted
             // Follow through the job controller so the log lands in the same
             // places the legacy flow used (remote log lines, reconnectable
             // job id), and the recent-jobs list learns about it.
             await jobs.reconnectRemoteJob(submission.jobId, client: client)
             await jobs.refreshRecentServerJobs(client: client)
+        } catch let unknown as SubmissionOutcomeUnknown {
+            // Issue #11: not a failure; the outcome is unknown.
+            statusLine = unknown.appSentence
         } catch let error as ClusterClient.ClientError {
             if case .badResponse(_, let body) = error,
                 let refused = PreflightPresentation.refusal(fromErrorBody: body)

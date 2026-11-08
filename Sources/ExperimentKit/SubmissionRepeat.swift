@@ -25,14 +25,50 @@ import Foundation
 // `SubmitOutcomeUnknown`, `submission_key`).
 
 /// The submission key: the SHA-256 of the request body itself, as canonical
-/// JSON (sorted keys), with the staged path replaced by the bundle's own
-/// digest. The same request for the same bundle always carries the same key
-/// (a re-upload stages the same bytes at a new path); any change to what is
-/// submitted — the verb, the resources, the number of parts, the target root,
-/// a dry run — changes it.
+/// JSON (sorted keys), with the staged path replaced by what the bundle
+/// CONTAINS (`bundleContentDigest`), never by its packaging time or its
+/// archive's digest, which every repackaging of an unchanged study changes.
+/// The same command with the same flags, from this client, carries the same
+/// key however often the study is packaged and uploaded; any change to what
+/// is submitted — the verb, the executor, the resources, the number of
+/// parts, the target root, a dry run — changes it. The other client sends a
+/// different body, so its key differs.
 public enum SubmissionKey {
-    /// The version of this derivation, hashed into every key.
-    public static let version = 1
+    /// The version of this derivation, hashed into every key. 2: the bundle
+    /// is named by its content, not by its archive digest.
+    public static let version = 2
+
+    /// What a run bundle contains, as one digest: its study's name and
+    /// content hash, and every packaged file's path and SHA-256 in path
+    /// order (the `entries` of `steerlab-bundle.json`, as the server's
+    /// inspection returns them). Nil when the metadata lists no files.
+    /// Python twin: `runner.bundle_content_digest`, pinned to the same
+    /// hand-computed digest.
+    public static func bundleContentDigest(_ metadata: JSONValue) -> String? {
+        guard case .object(let fields) = metadata,
+            case .array(let entries)? = fields["entries"], !entries.isEmpty
+        else { return nil }
+        func text(_ value: JSONValue?) -> String {
+            if case .string(let string)? = value { return string }
+            return ""
+        }
+        var rows: [[String: JSONValue]] = []
+        for entry in entries {
+            guard case .object(let row) = entry else { continue }
+            rows.append(["path": .string(text(row["path"])),
+                         "sha256": .string(text(row["sha256"]))])
+        }
+        rows.sort { text($0["path"]) < text($1["path"]) }
+        let document: [String: JSONValue] = [
+            "entries": .array(rows.map { .object($0) }),
+            "experiment": .string(text(fields["experiment"])),
+            "experimentContentHash": .string(text(fields["experimentContentHash"])),
+        ]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let canonical = try? encoder.encode(document) else { return nil }
+        return SHA256.hash(data: canonical).map { String(format: "%02x", $0) }.joined()
+    }
 
     /// The key for `body` (encoded without a key of its own). `identity`
     /// replaces the `pathKey` field: the bundle's digest on the bundle route,
@@ -97,9 +133,11 @@ public struct SubmissionOutcomeUnknown: Error, CustomStringConvertible, Localize
     public func repair(jobsCommand: String) -> String {
         if repeatIsSafe {
             return "\(jobsCommand)  (the job usually appears within a few "
-                + "minutes). Sending the same submission again is safe: this "
-                + "server answers a repeat with the job the first request "
-                + "created, and never submits it twice"
+                + "minutes). If none appears once the server has finished "
+                + "measuring, run the same command again with the same flags: "
+                + "this server answers that repeat with the job the first "
+                + "request created. A command with any flag changed is a new "
+                + "submission"
         }
         return "\(jobsCommand)  (look before you submit again: this server "
             + "does not recognise a repeated submission, so a second submit is "
@@ -112,10 +150,15 @@ public struct SubmissionOutcomeUnknown: Error, CustomStringConvertible, Localize
 
     /// Whether `error`, thrown by the submission request itself, means the
     /// request may have reached the server: the wait ran out, the connection
-    /// dropped mid-answer, the answer was unreadable, or a proxy in front of
-    /// the server stopped waiting (502, 504). A request that cannot have been
-    /// sent (no host, no route, refused connection) is not one.
+    /// dropped mid-answer, the answer was unreadable (including a success
+    /// answer this client could not decode: the job may well have landed),
+    /// or a proxy in front of the server stopped waiting (502, 504). A
+    /// request that cannot have been sent (no host, no route, refused
+    /// connection) is not one.
     public static func cause(of error: Error) -> String? {
+        if error is DecodingError {
+            return "the server's answer could not be read"
+        }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut: return "the wait for an answer ran out"
@@ -132,6 +175,35 @@ public struct SubmissionOutcomeUnknown: Error, CustomStringConvertible, Localize
             return "a proxy in front of the server answered \(status)"
         }
         return nil
+    }
+}
+
+extension SubmissionOutcomeUnknown {
+    /// The app's words for it, the same as the command line's: the outcome
+    /// is unknown, check the server's jobs first, and whether a repeat of
+    /// the same study is recognised here.
+    public var appSentence: String {
+        "The submission was sent, but the server did not answer (\(cause)). "
+            + "The outcome is unknown: the server may still be preparing the "
+            + "job. Check the server's jobs in Compute › Server Jobs before "
+            + "submitting again. "
+            + (repeatIsSafe
+                ? "This server recognises a repeat of the same study with the "
+                    + "same settings and answers it with the job it already "
+                    + "made."
+                : "This server does not recognise a repeat, so submitting "
+                    + "again would run the study twice; submit again only if "
+                    + "no job appears within a few minutes.")
+    }
+}
+
+extension RemoteStudySubmission {
+    /// The app's status line for an answer the server marked
+    /// `alreadySubmitted` (issue #11), or nil for a first submission.
+    public var alreadySubmittedStatus: String? {
+        guard alreadySubmitted == true else { return nil }
+        return alreadySubmittedNote
+            ?? "Already submitted as job \(jobId); nothing was submitted again."
     }
 }
 

@@ -790,14 +790,17 @@ def test_a_submit_transport_error_is_never_retried_and_says_to_look(
     Slurm it may already hold an allocation. Retrying would be a second study.
     The repair is to LOOK, and the exact command is in the document. Since
     public issue #11 it is ``pending`` (exit 12), never a failure: on a
-    cluster the runner is usually still preparing the job.
+    cluster the runner is usually still preparing the job. The adapter says
+    so with ``SubmitOutcomeUnknown``.
     """
-    script.submit_error = runner_api.RunnerUnreachable(
+    script.scheduler_mode = "slurm"
+    script.submit_error = runner_api.SubmitOutcomeUnknown(
         "ReadTimeout reaching /api/studies/submit-bundle",
-        repair_action="check the runner")
+        repair_action="look", detail={"repeatIsSafe": False})
 
-    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL], capsys,
-                             root=workspace)
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL,
+                              "--parallel", "4", "--executor", "slurm",
+                              "--no-evidence"], capsys, root=workspace)
 
     assert code == 12, document
     assert document["state"] == "pending"
@@ -809,12 +812,36 @@ def test_a_submit_transport_error_is_never_retried_and_says_to_look(
     assert document["result"]["retried"] is False
     repair = document["error"]["repairAction"]
     assert f"steerlab runner jobs --runner {RUNNER_URL}" in repair
-    assert "runner submit" in repair, \
-        "the repair should offer to resume from the already-staged bundle"
+    # The repeat it offers is THIS command, with every flag it was given:
+    # the key is derived from all of them (review round 2).
+    again = document["result"]["sameCommand"]
+    assert again in repair
+    assert again == (f"steerlab --root {workspace} run {STUDY_NAME} --runner "
+                     f"{RUNNER_URL} --parallel 4 --executor slurm "
+                     "--no-evidence --json")
     # Exactly one attempt, and no poll, no download, no cancel.
     assert len(script.submits) == 1
     assert script.job_polls == [] and script.downloads == []
     assert script.cancels == []
+
+
+def test_a_submit_that_was_never_sent_is_an_ordinary_connection_failure(
+        workspace, script, capsys):
+    """A refused connection sends nothing: `runnerUnreachable` (70), with the
+    repair to reach the runner — not "a job may exist"."""
+    unreachable = runner_api.RunnerUnreachable(
+        "ConnectError reaching /api/studies/submit-bundle",
+        repair_action="check that a runner is serving it")
+    unreachable.request_sent = False
+    script.submit_error = unreachable
+
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL], capsys,
+                             root=workspace)
+
+    assert code == 70, document
+    assert document["state"] == "failed"
+    assert document["error"]["code"] == "runnerUnreachable"
+    assert len(script.submits) == 1
 
 
 def test_an_upload_transport_error_is_retried_once(workspace, script, capsys,

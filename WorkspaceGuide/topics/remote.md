@@ -34,20 +34,27 @@ minutes or more; both clients wait up to an hour. A submission that was sent
 and never answered is `submitOutcomeUnknown`, state `pending` (exit 12), and
 not a failure: the server is probably still preparing the job. Look first,
 in this client's list of the server's jobs (below); the job usually appears
-within a few minutes. Every submission carries a
-submission key derived from what is submitted. A server that advertises
-`cluster.submissionKey` answers a repeat of the same submission with the job
-the first one created, while that job is being prepared or has not ended,
-and says so (`alreadySubmitted`); `result.repeatIsSafe` says whether this
-server does. On an older server, submit again only if no job appears.
+within a few minutes. Every submission carries a submission key derived
+from what the study contains and from every setting of the command, never
+from when it was packaged. A server that advertises `cluster.submissionKey`
+(`result.repeatIsSafe` is true) answers the same command with the same
+flags, from the same client, with the job the first one created, while that
+job is being prepared or has not ended, and says so (`alreadySubmitted`,
+with its parts as they are now). So if no job appears once the server has
+finished measuring, run the same command again with the same flags. A
+command with any setting changed, or the same study sent from the other
+client, is a new submission. On an older server, submit again only if no job
+appears.
 
 **A walltime estimate for long prompts.** The submission estimates the time
 its job needs from the cluster's own history for this kind of study. When
-that history came from much shorter items than this study's, or does not
-record how long its items were and these are long, the estimate says so in a
-plain warning (`promptLengthNotice`, echoed as `result.walltimeNotice`). Tell
-the researcher, and ask for more time than the estimate; a short pilot of a
-few items measures the real pace.
+that history came from much longer or much shorter items than this study's,
+or does not record how long its items were and these are long, the estimate
+says so in a plain warning (`promptLengthNotice`, echoed as
+`result.walltimeNotice`), and an estimate that far from its history never
+refuses a submission on its own. Tell the researcher, and ask for more time
+than the estimate or split the study; a short pilot of a few items measures
+the real pace.
 
 <!-- client: mac -->
 
@@ -71,8 +78,9 @@ the validate evidence came from the cluster's engine. Then package the frozen
 study, upload it, and submit `--verb run`. Analyze there too, with `--verb
 analyze`: this Mac reads a cluster run's results and does not re-measure
 them. A `submit-bundle` that answers `submitOutcomeUnknown` (exit 12) is
-followed by `steerlab-cli remote jobs --site <id> --json`, never by a second
-submit unless `result.repeatIsSafe` is true or no job appears. Without
+followed by `steerlab-cli remote jobs --site <id> --json`. A second submit
+is the same command with the same flags, and only when no job appears;
+where `result.repeatIsSafe` is false it is a second study. Without
 `--executor`, `submit-bundle` uses the server's own executor
 (Slurm on a cluster), except `analyze` and `verify`, which load no model and
 run on the controller. `--executor local` puts a model
@@ -201,7 +209,11 @@ steerlab bundle import <file.tar.gz> --sha256 <digest>
 **`runner submit` is not idempotent — never retry it blindly.** It creates a
 job and, on Slurm, spends an allocation. A `submitOutcomeUnknown` (exit 12)
 from `runner submit` or `run` means "look with `runner jobs`", not "submit
-again"; a repeat is harmless only where `result.repeatIsSafe` is true. Upload and evidence download are safe to retry. On
+again". If no job appears once the runner has finished measuring, run the
+command the repair names (`result.sameCommand` for `run`): the same command
+with the same flags, which a runner where `result.repeatIsSafe` is true
+answers with the job it already made. Upload and evidence download are safe
+to retry. On
 `bundle package` and `runner evidence`, `--out` names the archive, not the
 envelope's file. `runner jobs --cancel` needs a job id: this client will not
 cancel a runner's whole queue.

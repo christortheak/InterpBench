@@ -3352,17 +3352,20 @@ public struct ClusterClient: Sendable {
             parallelJobs: ShardedSubmission.encodedParallelJobs(
                 requested: parallelJobs, executor: executor, verb: verb),
             rereadChoices: rereadChoices ? true : nil)
-        // The staged bundle's own digest stands in for its path: a re-upload
-        // stages the same bytes at a new path.
-        var digest = path
-        if case .object(let metadata) = inspected,
+        // What the staged bundle CONTAINS stands in for its path: every
+        // packaging stamps its own time, so a repackaged, re-uploaded study
+        // has a new archive digest and the same content (review round 2).
+        var identity = path
+        if let content = SubmissionKey.bundleContentDigest(inspected) {
+            identity = content
+        } else if case .object(let metadata) = inspected,
             case .string(let sha)? = metadata["bundleSha256"], !sha.isEmpty
         {
-            digest = sha
+            identity = sha
         }
         body.submissionKey = try SubmissionKey.derive(
-            body: body, pathKey: "bundlePath", identityKey: "bundleSha256",
-            identity: digest)
+            body: body, pathKey: "bundlePath", identityKey: "bundleContent",
+            identity: identity)
         let submission = try await postSubmission("/api/studies/submit-bundle", body: body)
         // ...and after, when the rendered command does not carry the flag:
         // that job analyzes the stored choices.
