@@ -832,12 +832,35 @@ def test_a_day_of_unexplained_refusals_fails_the_run_resumably(
     assert ("Request a walltime within the cluster's limit for one job "
             "(--walltime), then resume the run") in parent.error
     assert parent.result["heldGaveUp"]["refusals"] == 2
+    assert parent.result["heldGaveUp"]["walltime"] == "00:30:00"
     assert not any(jobs.is_held(p) for p in _parts(jobs, submission))
-    assert cancel_resume_hint(parent)["offered"] is True
+    # Review round 7: the app's Resume sends no walltime, and resuming at the
+    # refused one would start another day of refusals. It is not offered
+    # there; the line names the command that helps.
+    hint = cancel_resume_hint(parent)
+    assert hint["offered"] is False and hint["needsWalltime"] is True
+    assert (f"steerlab-cli remote resubmit {submission.job_id} --walltime "
+            "HH:MM:SS") in hint["explanation"]
+    assert "at walltime 00:30:00" in hint["explanation"]
 
-    # It stays resumable: within the limit, the parts are held again and go.
+    # At the refused walltime (none given, or the same spelled another way),
+    # the Resume is refused at once, with the repair, and nothing moves.
     _slot_frees(monkeypatch)
-    answer = jobs.resubmit(submission.job_id)
+    calls = len(fake_slurm.calls("sbatch"))
+    for asked in (None, "30:00"):
+        with pytest.raises(ResubmitRefused) as refused:
+            jobs.resubmit(submission.job_id, walltime=asked)
+        message = str(refused.value)
+        assert "refused its walltime 00:30:00 for a day without saying why" \
+            in message
+        assert ("Resume it with a walltime within the cluster's limit for "
+                "one job: steerlab-cli remote resubmit "
+                f"{submission.job_id} --walltime HH:MM:SS") in message
+    assert len(fake_slurm.calls("sbatch")) == calls
+    assert jobs.get(submission.job_id).status == "failed"
+
+    # Within the limit, the parts are held again and go.
+    answer = jobs.resubmit(submission.job_id, walltime="00:20:00")
     assert answer["ok"] is True
     parent = jobs.get(submission.job_id)
     assert parent.status == "running"
@@ -847,6 +870,82 @@ def test_a_day_of_unexplained_refusals_fails_the_run_resumably(
     assert [tail.status for tail in
             (jobs._shard_chain_tail(p) for p in _parts(jobs, submission))] == [
         "submitted", "submitted"]
+
+
+def test_a_run_with_a_live_part_never_gives_up(tmp_path, monkeypatch,
+                                               fake_slurm):
+    """Review round 7: giving up cancels every live part. A run any part of
+    which is with the scheduler keeps waiting instead."""
+    _limited(monkeypatch, accepted=1)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldliveguard",
+                               parallel=2)
+    running, waiting = _parts(jobs, submission)
+    assert running.status == "submitted" and jobs.is_held(waiting)
+    # The held part asks for another walltime, so the running part's
+    # acceptance says nothing about it: its refusals stay unexplained.
+    _override_held_walltime(jobs, submission, "48:00:00")
+    _slot_frees(monkeypatch)
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=48:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", POLICY)
+    _due(jobs, waiting)
+    _tick(jobs)
+    held = dict(jobs.get(waiting.id).result["held"])
+    assert held["unexplainedRefusals"] == 1
+    held["unexplainedSince"] = held["lastAttemptAt"] - 24 * 3600 - 1
+    part = jobs.get(waiting.id)
+    part.result = {**part.result, "held": held}
+    jobs.store.update(part)
+    _due(jobs, waiting)
+    _tick(jobs)
+
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "submitted" and parent.error is None
+    assert "heldGaveUp" not in parent.result
+    assert fake_slurm.calls("scancel") == []
+    assert jobs.get(running.id).status == "submitted"
+    assert jobs.is_held(jobs.get(waiting.id))
+    assert jobs.get(waiting.id).result["held"]["unexplainedRefusals"] == 2
+    assert any("keeps waiting rather than stop them" in line
+               for line in jobs.get(waiting.id).all_logs())
+
+
+def test_a_resume_held_for_a_named_job_count_says_so(tmp_path, monkeypatch,
+                                                     fake_slurm):
+    """Review round 7: held for a job count is a success, worded as held
+    until a slot frees, never "N parts now continue"."""
+    jobs, submission = _cancelled_run_whose_ran_parts_finished(
+        tmp_path, monkeypatch, "heldresumecount")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=02:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", LIMIT)
+    answer = jobs.resubmit(submission.job_id, walltime="02:00:00")
+    assert answer["ok"] is True
+    assert answer["heldReason"] == "jobLimit"
+    assert "heldUnexplained" not in answer
+    assert "QOSMaxSubmitJobPerUserLimit" in answer["schedulerMessage"]
+    assert "2 parts are held until the cluster's job limit frees a slot" in \
+        answer["message"]
+    assert "now continue" not in answer["message"]
+    held = [jobs.get(entry["jobId"]) for entry in answer["resumedShards"]]
+    assert all(jobs.is_held(part) for part in held)
+
+
+def test_a_resume_whose_sbatch_went_unanswered_says_so(tmp_path, monkeypatch,
+                                                       fake_slurm):
+    jobs, submission = _cancelled_run_whose_ran_parts_finished(
+        tmp_path, monkeypatch, "heldresumesilent")
+
+    def unanswered(self, bundle, **kwargs):
+        raise executors.SchedulerSubmitError(
+            "sbatch did not answer within 120s and was abandoned",
+            returncode=executors.SCHEDULER_TIMEOUT_EXIT)
+
+    monkeypatch.setattr(executors.SlurmExecutor, "submit", unanswered)
+    answer = jobs.resubmit(submission.job_id, walltime="02:00:00")
+    assert answer["ok"] is True
+    assert answer["heldReason"] == "schedulerUnanswered"
+    assert "are held until the scheduler answers" in answer["message"]
+    assert "first checks whether that attempt landed" in answer["message"]
+    assert "now continue" not in answer["message"]
 
 
 def test_a_slot_that_frees_first_submits_the_part(tmp_path, monkeypatch,

@@ -115,6 +115,69 @@ def test_a_resume_held_without_a_reason_is_pending_with_the_repair(
         "limit for one job")
 
 
+def _cancelled_run_with_a_held_part(wired, tmp_path, monkeypatch, capsys,
+                                    name):
+    """A split run whose two submitted parts finished and whose third was
+    held, cancelled: a Resume continues only the held part."""
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "2")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", LIMIT)
+    code, document, _ = _submit_split_run(wired, tmp_path, monkeypatch,
+                                          capsys, name=name)
+    assert code == 0, document
+    parent_id = document["result"]["jobId"]
+    jobs = wired["state"].jobs
+    for child_id in document["result"]["shardJobIDs"][:2]:
+        child = jobs.get(child_id)
+        child.status, child.finished_at = "succeeded", 1.0
+        child.result = {**child.result, "runDirectory": str(tmp_path / child_id)}
+        jobs.store.update(child)
+    assert jobs.cancel(parent_id) is True
+    monkeypatch.delenv("FAKE_SBATCH_FAIL_AFTER")
+    return parent_id
+
+
+def _resubmit(parent_id, capsys):
+    code = client_cli.main(["runner", "resubmit", parent_id, "--walltime",
+                            "02:00:00", *RUNNER, "--json"])
+    return code, _documents(capsys.readouterr().out)[-1]
+
+
+def test_a_resume_held_for_a_job_count_is_a_success_worded_as_held(
+        wired_cli, fake_slurm, tmp_path, monkeypatch, capsys):
+    """Review round 7: held for a named job count is exit 0, as at
+    submission, and says the parts are held until a slot frees."""
+    parent_id = _cancelled_run_with_a_held_part(
+        wired_cli, tmp_path, monkeypatch, capsys, "clientresumecount")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=02:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", LIMIT)
+    code, envelope = _resubmit(parent_id, capsys)
+    assert code == 0, envelope
+    assert envelope["state"] == "ready"
+    assert envelope["result"]["response"]["heldReason"] == "jobLimit"
+    assert "is held until the cluster's job limit frees a slot" in \
+        envelope["message"]
+    assert "now continue" not in envelope["message"]
+
+
+def test_a_resume_whose_sbatch_went_unanswered_is_worded_as_held(
+        wired_cli, fake_slurm, tmp_path, monkeypatch, capsys):
+    from steerlab_server.api import executors
+    parent_id = _cancelled_run_with_a_held_part(
+        wired_cli, tmp_path, monkeypatch, capsys, "clientresumesilent")
+
+    def unanswered(self, bundle, **kwargs):
+        raise executors.SchedulerSubmitError(
+            "sbatch did not answer within 120s and was abandoned",
+            returncode=executors.SCHEDULER_TIMEOUT_EXIT)
+
+    monkeypatch.setattr(executors.SlurmExecutor, "submit", unanswered)
+    code, envelope = _resubmit(parent_id, capsys)
+    assert code == 0, envelope
+    assert envelope["result"]["response"]["heldReason"] == "schedulerUnanswered"
+    assert "is held until the scheduler answers" in envelope["message"]
+    assert "now continue" not in envelope["message"]
+
+
 def _documents(text: str) -> list:
     """Every JSON document printed, in order (the verb prints the runner's
     answer, then the envelope)."""
