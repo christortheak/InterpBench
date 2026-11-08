@@ -391,3 +391,20 @@ def test_any_verb_refreshes_an_older_guide_once_and_says_so(tmp_path, monkeypatc
     assert client_cli.main(['experiment', 'list', '--root', str(root), '--json']) == 0
     assert 'notice:' not in _document(capsys)[1]
     assert guide.read_text(encoding='utf-8') == '# AGENTS.md\n\nmy own notes\n'
+
+
+def test_the_held_resume_answers_are_named_where_they_are_described():
+    """Review round 8: the `pending` (12) sentence followed the one saying a
+    Resume at the refused walltime is refused, and read as describing that
+    Resume, which exits 65. The held Resume's answer comes first; the run
+    that gave up, its two ways on, and its refusal's exit come after."""
+    text = ' '.join((ROOT / 'WorkspaceGuide/topics/remote.md')
+                    .read_text(encoding='utf-8').split())
+    pending = text.index('(`heldUnexplained`), and is `pending` (12)')
+    gave_up = text.index('after 24 hours of such refusals')
+    retry = text.index('remote resubmit <job-id> --retry-refused-walltime')
+    refused = text.index('without the flag is refused (65)')
+    assert pending < gave_up < retry < refused
+    # The sentence that names `pending` describes the held Resume alone.
+    sentence = text[text.rfind('. ', 0, pending):pending]
+    assert 'refused walltime' not in sentence and 'gave up' not in sentence

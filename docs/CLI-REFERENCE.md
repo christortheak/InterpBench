@@ -216,7 +216,7 @@ steerlab runner cleanup-plan <job-id> --receipt-sha256 <value> --runner <url> [-
 steerlab runner cleanup-apply <job-id> --confirm-removal --plan-sha256 <value> --receipt-sha256 <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-plan <request.json> --runner <url> [--ca-bundle <path>] [--gpu-type <type>] [--timeout <seconds>] [--token-file <path>] [--walltime <value>]
 steerlab runner science-submit <request.json> --plan-sha256 <value> --runner <url> [--ca-bundle <path>] [--gpu-type <type>] [--timeout <seconds>] [--token-file <path>] [--walltime <value>]
-steerlab runner resubmit <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>] [--walltime <value>]
+steerlab runner resubmit <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>] [--walltime <value>] [--retry-refused-walltime]
 steerlab runner reconcile --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recovery <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recover <job-id> --confirm-owner-exited --reason <value> --review-token <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
@@ -2573,7 +2573,7 @@ steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote status <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote logs <job-id> [--site <id>] [--tail <n>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote resubmit <job-id> [--site <id>] [--token <token>] [--url <server>] [--walltime <hh:mm:ss>]
+steerlab-cli remote resubmit <job-id> [--retry-refused-walltime] [--site <id>] [--token <token>] [--url <server>] [--walltime <hh:mm:ss>]
 steerlab-cli remote fetch <artifact-path> [--out <dir>] [--path <server-path>] [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote import <server-evidence-path> [--out <dir>] [--path <server-path>] [--sha256 <hex>] [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote import-chain <pipeline-run-id-or-experiment> [--site <id>] [--token <token>] [--url <server>]
@@ -4499,14 +4499,25 @@ Consequences, stated plainly:
   waits longer than the last (1, 2, 4, 8, 16, then 30 minutes, stamped on
   the part as `unexplainedRefusals`, `unexplainedSince`, and
   `nextAttemptAt`), and 24 hours of them fail the run with the scheduler's
-  words and the walltime repair, unless another part of the run is with the
-  scheduler: a run with a live part never gives up, and keeps waiting. The
-  failed run stays resumable within the limit (`heldGaveUp`, with the refused
-  `walltime`): a Resume that would ask for that walltime again is refused at
-  once with the repair, so the app, whose Resume sends no walltime, offers
-  none and its line names `steerlab-cli remote resubmit <job-id> --walltime
-  HH:MM:SS` (review round 7). A named job count, or the part's acceptance,
-  ends the count. A Resume whose first held part is refused that way answers
+  words and a repair naming both ways on, unless another part of the run is
+  with the scheduler (submitted, running, or being cancelled; a checkpointed
+  part's job has ended): a run with a live part never gives up, and its log
+  says it keeps waiting. The failed run stays resumable (`heldGaveUp`, with
+  the `walltime` its parts were refused at). The cause may have been the job
+  limit, which frees, or a limit on that walltime, which does not, so a
+  Resume at the same walltime (compared in any Slurm spelling, so
+  `1-00:00:00` is `24:00:00`) is refused at once (65) unless it says so:
+  either resume with a walltime within the cluster's limit for one job
+  (`steerlab-cli remote resubmit <job-id> --walltime HH:MM:SS`, or `steerlab
+  runner resubmit <job-id> --walltime HH:MM:SS --runner <url>`), or, if the
+  cause was the job limit and slots have freed, retry the same walltime
+  (`--retry-refused-walltime` on either, sent as `retryRefusedWalltime:
+  true`). The app's Resume sends no walltime: for such a run its line names
+  both commands, and it offers a retry at the refused walltime only after a
+  confirmation that says what that risks, and only when the server named the
+  walltime (`cancelResume.refusedWalltime`; review rounds 7 and 8). A named
+  job count, or the part's acceptance, ends the count. A Resume whose first
+  held part is refused that way answers
   `heldUnexplained: true` with `schedulerMessage`, says the parts are held,
   not running, and both clients report it as `pending` (12) with the next
   step: read the run's status, and if its parts stay held, check the

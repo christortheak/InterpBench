@@ -141,15 +141,19 @@ repair in the run's error; report it, and do not wait for it. When the
 scheduler refuses with only "Job violates accounting/QOS policy" and no
 reason code, it may be the job limit or a limit on the request, so the part
 stays held and its note says the scheduler gave no reason; if it stays held,
-check the walltime against the cluster's limit for one job. SteerLab asks
-again less and less often, and after 24 hours of such refusals fails the run
-with the scheduler's words (never while another part of it runs). Resume it
-with a walltime within the cluster's limit for one job: `steerlab-cli remote
-resubmit <job-id> --walltime HH:MM:SS`; a Resume at the refused walltime is
-refused. A Resume answered that way says its parts are held, not running
-(`heldUnexplained`), and is `pending` (12): read the run's status, and tell
-the researcher. A Resume held for a job count, or for a scheduler that did
-not answer, says until what (`heldReason`) and succeeds. An engine older than this answers a
+check the walltime against the cluster's limit for one job. A Resume whose
+first part the scheduler refuses that way says its parts are held, not
+running (`heldUnexplained`), and is `pending` (12): read the run's status,
+and tell the researcher. A Resume held for a job count, or for a scheduler
+that did not answer, says until what (`heldReason`) and succeeds. SteerLab
+asks about a part refused without a reason less and less often, and after
+24 hours of such refusals fails the run with the scheduler's words (never
+while another part of it runs). To resume that run, choose: a walltime
+within the cluster's limit for one job (`steerlab-cli remote resubmit
+<job-id> --walltime HH:MM:SS`), or, if the cause was the job limit and slots
+have freed, the same walltime (`steerlab-cli remote resubmit <job-id>
+--retry-refused-walltime`). A Resume at that walltime without the flag is
+refused (65), and its reason names both choices. An engine older than this answers a
 refused fan-out as a success, so on one, check `steerlab-cli remote jobs`
 and count the parts. **And stagger submissions where the site caps queued jobs per user:**
 K shards are K independent scheduler submissions, so a fan-out that crosses
@@ -278,7 +282,11 @@ reason fails the submit with a nonzero exit. An older runner answers that
 case as a success, so on one, count the jobs with `steerlab runner jobs
 --runner <url>`. **And stagger submissions where the site caps queued jobs
 per user**; ask the researcher for the limit rather than guess. The merge is
-performed by the running runner service, not by the submitting process.
+performed by the running runner service, not by the submitting process. A
+run that stopped after a day of refusals without a reason resumes with
+`steerlab runner resubmit <job-id> --walltime HH:MM:SS --runner <url>` within
+the cluster's limit for one job, or, if the cause was the job limit, at the
+same walltime with `--retry-refused-walltime`.
 
 ### Resuming a checkpointed job
 
