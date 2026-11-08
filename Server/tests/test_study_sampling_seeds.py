@@ -87,20 +87,43 @@ def test_fixture_is_what_the_seed_rule_gives(case):
         == case["refusal"], REGENERATE
     assert ((case["refusal"] in manifest.verify())
             if case["refusal"] else True)
+    from steerlab_server.experiment import execution_plan
+    assert execution_plan.resolve(manifest.outcome_instruments) \
+        .generates_sampled_text == case["generatesSampledText"], REGENERATE
 
 
 def test_temperature_zero_with_several_seeds_is_refused_and_never_advised():
     refused = [c for c in _fixture()["cases"] if c["refusal"]]
     assert {c["label"] for c in refused} == {
         "manifestSeeds, greedy, seed list", "derivedSHA256, greedy, seed list",
-        "undeclared, greedy, seed list"}
+        "undeclared, greedy, seed list",
+        "readout and sampled text, greedy, seed list"}
     for case in refused:
         assert case["advisories"] == []
+        assert case["generatesSampledText"]
         assert case["refusal"].startswith(sampling.GREEDY_SEED_LIST_PREFIX)
         assert "3 identical records per item" in case["refusal"]
     # Every other case runs as before, unrefused.
     assert all(c["refusal"] is None for c in _fixture()["cases"]
                if c not in refused)
+
+
+def test_a_readout_only_study_is_told_its_seed_list_is_unused():
+    """Only sampled text loops over the seeds: an answer-token readout reads
+    each item once, so a readout-only study with several seeds runs (one
+    record per item) at any temperature and is advised, never refused."""
+    readouts = [c for c in _fixture()["cases"] if not c["generatesSampledText"]]
+    assert {c["label"] for c in readouts} == {
+        "readout only, greedy, seed list",
+        "readout only, warm, derivedSHA256, seed list"}
+    for case in readouts:
+        assert case["refusal"] is None
+        [note] = case["advisories"]
+        assert note == (
+            "the seed list (3 seeds) is not used: this study records "
+            "answer-token readouts only, and a readout reads each item once "
+            "and draws no seed at any temperature. To generate responses that "
+            "use the seeds, add sampledText to outcomeInstruments.")
 
 
 def test_the_two_items_share_their_text_and_differ_by_id():

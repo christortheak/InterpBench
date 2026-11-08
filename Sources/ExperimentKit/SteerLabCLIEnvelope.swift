@@ -295,10 +295,12 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// `source_snapshot`).
     case unfinishedSourceAnalyzed
 
-    /// A declared seed setting the run will not read. Today's two instances,
-    /// both under seedPolicy derivedSHA256: at temperature 0 decoding is
-    /// greedy and no seed is used, and above it the fixed seed list is set
-    /// aside for samplesPerItem derived seeds. Said at `verify` and at
+    /// A declared seed setting the run will not read: under seedPolicy
+    /// derivedSHA256, at temperature 0 decoding is greedy and no seed is
+    /// used, and above it the fixed seed list is set aside for samplesPerItem
+    /// derived seeds; and a study that records answer-token readouts only
+    /// reads each item once, so its list of several seeds is not used. Said
+    /// at `verify` and at
     /// `set-sampling`, never a refusal. Named for the MECHANISM; the detail is
     /// `StudySampling.unusedSeedSettings` (server twin
     /// `sampling.unused_seed_settings`), byte for byte.
@@ -324,6 +326,17 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// `ExperimentStore.baselineOnlyStudyAdvisory` (server twin
     /// `study_shape.BASELINE_ONLY_STUDY_ADVISORY`), byte for byte.
     case baselineOnlyStudy
+
+    /// A study frozen under an older release verifies, so its existing runs
+    /// stay readable, but a rule added since refuses it when it is submitted
+    /// or run: today, temperature 0 with several seeds on a study that
+    /// generates sampled text (public issue #9). Said at `verify` so the
+    /// reader learns before submitting; the detail names the rule's sentence
+    /// and the repair (duplicate, then set one seed). The detail is
+    /// `StudySampling.frozenGreedySeedListAdvisory` (server twin
+    /// `sampling.frozen_greedy_seed_list_advisory`), each client spelling its
+    /// own repair.
+    case refusedWhenRun
 
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }

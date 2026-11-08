@@ -16,6 +16,7 @@ temperature 0, and an ordinal scale with no declared aggregation. A concept
 study that declares no arm at all is now refused at submission too.
 """
 
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -456,3 +457,146 @@ def test_an_attention_check_rule_with_no_checked_item_is_refused_at_submission(
                              executor="slurm", dry_run=True,
                              prompts_path=prompts,
                              resources={"gres": "A100", "walltime": "00:30:00"})
+
+
+# --- only sampled text loops over the seeds (review round 1) ----------------------
+
+READOUT_ITEM = {"id": "item-1", "prompt": "Pick one.", "options": ["A", "B"],
+                "target": "A", "responseFormat": "label"}
+
+
+def _pin_items(root, name, prompts, item):
+    _write(prompts, json.dumps(item) + "\n")
+    raw = es.load_raw(name, root)
+    raw["taskPromptsFile"] = os.path.relpath(prompts, root)
+    with open(prompts, "rb") as handle:
+        raw["taskPromptsHash"] = hashlib.sha256(handle.read()).hexdigest()
+    es.save_raw(raw, root)
+
+
+def _frozen_readout_study(root, name):
+    """A readout-only study at temperature 0 with three seeds, its items
+    pinned, frozen. The seed rule does not apply to it, so it freezes with
+    no help from an older release."""
+    prompts = _study(root, name, temperature=0.0, seeds=[11, 22, 33],
+                     outcomeInstruments=["answerTokenLogprob"])
+    _pin_items(root, name, prompts, READOUT_ITEM)
+    assert Manifest.load(name, root).verify(root) == []
+    es.freeze(name, force=True, root=root)
+    assert es.load_raw(name, root)["status"] == "frozen"
+    return prompts
+
+
+def test_a_readout_only_study_with_several_seeds_is_not_refused():
+    """A readout reads each item once whatever the seeds, so the sentence
+    ("would write 3 identical records per item") would be false of it."""
+    for status in ("draft", "frozen"):
+        readout = _manifest(temperature=0.0, seeds=[11, 22, 33], status=status,
+                            outcomeInstruments=["answerTokenLogprob"])
+        assert sampling.manifest_greedy_seed_list_problem(readout) is None
+        assert not any(v.startswith(sampling.GREEDY_SEED_LIST_PREFIX)
+                       for v in readout.verify())
+        assert study_admission.settings_refusal(readout) is None
+        assert sampling.frozen_greedy_seed_list_advisory(readout) is None
+        [note] = sampling.manifest_unused_seed_settings(readout)
+        assert note.startswith("the seed list (3 seeds) is not used: this "
+                               "study records answer-token readouts only")
+    # A readout BESIDE sampled text still loops the text over the seeds.
+    both = _manifest(temperature=0.0, seeds=[11, 22, 33],
+                     outcomeInstruments=["answerTokenLogprob", "sampledText"])
+    assert sampling.manifest_greedy_seed_list_problem(both) == GREEDY_THREE
+    assert GREEDY_THREE in both.verify()
+
+
+def test_a_frozen_readout_only_study_with_several_seeds_runs_once_per_item(
+        tmp_path, monkeypatch):
+    """The old run-start check refused it unconditionally, after the model
+    load; it runs now, one readout record per arm and item."""
+    import steerlab_server.experiment.generate as generate
+    import steerlab_server.experiment.vector_materialization as materialization
+    from steerlab_server.experiment import logprob
+    from steerlab_server.steering.vector_store import ConceptVectors
+    root = str(tmp_path)
+    _frozen_readout_study(root, "readout")
+    bundle = materialization.ConceptVectorBundle(
+        vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
+        residual_norm_per_layer=[1.0] * 4, residual_norm_source="test",
+        stimulus_hash="h")
+    monkeypatch.setattr(materialization, "extract_all",
+                        lambda model, manifest, root: {"fear": bundle})
+    generated = []
+    monkeypatch.setattr(generate, "generate",
+                        lambda *args, **kwargs: generated.append(1) or "text")
+    read = []
+
+    def score_options(model, prompt, options, **kwargs):
+        read.append(prompt)
+        return logprob.ChoiceResult(
+            options=[logprob.OptionScore(option=o, token_ids=[i + 1],
+                                         token_logprobs=[-1.0 - i])
+                     for i, o in enumerate(options)],
+            prompt_token_count=3)
+    monkeypatch.setattr(logprob, "score_options", score_options)
+
+    @contextmanager
+    def fake_model(model_id, revision=None):
+        yield SimpleNamespace(model_id=model_id, revision=revision or "abc",
+                              tokenizer=object())
+
+    run_dir = tasks.run("readout", None, root, model_provider=fake_model,
+                        log=lambda *_: None)
+    with open(os.path.join(run_dir, "generations.jsonl"), encoding="utf-8") as h:
+        records = [json.loads(line) for line in h if line.strip()]
+    assert generated == []
+    # Two arms (baseline and fear-on), one item: each read once, not 3 times.
+    assert len(read) == 2
+    assert sorted(r["condition"] for r in records) == ["baseline", "fear-on"]
+
+
+def test_a_frozen_readout_only_study_is_not_refused_at_submission(server):
+    root, jobs = server
+    _frozen_readout_study(root, "readout")
+    submission = submissions.submit_study(
+        "readout", verb="run", jobs=jobs, executor="slurm", dry_run=True,
+        resources={"gres": "A100", "walltime": "00:30:00"})
+    assert submission.dry_run
+
+
+# --- verify warns of a frozen study the rule will refuse (review round 1) ---------
+
+FROZEN_NOTE = (
+    "this study will be refused when it is submitted or run, because "
+    + GREEDY_THREE + ". To run it: ")
+
+
+def test_verify_warns_of_a_frozen_study_the_seed_rule_refuses(
+        workspace, capsys, monkeypatch):
+    """It still verifies, so its runs stay readable, and the reader learns
+    at verify, not at submission."""
+    root = str(workspace)
+    _frozen_under_an_older_release(root, "greedy", monkeypatch,
+                                   temperature=0.0, seeds=[11, 22, 33])
+    capsys.readouterr()
+    code, document = _client(["experiment", "verify", "greedy"], capsys)
+    assert code == 0, document
+    assert document["state"] == "okWithAdvisories"
+    [note] = [a for a in document["advisories"]
+              if a["code"] == "refusedWhenRun"]
+    assert note["detail"] == FROZEN_NOTE + (
+        "steerlab experiment duplicate greedy greedy-v2 && steerlab "
+        "experiment set-protocol greedy-v2 --set seeds='[<n>]'  (one seed; or "
+        "raise the temperature above 0 to sample)")
+    # The engine's own verify says it too, with both clients' spellings.
+    monkeypatch.setenv("STEERLAB_ROOT", root)
+    from steerlab_server import cli
+    code = cli.main(["experiment", "verify", "greedy", "--json"])
+    engine = json.loads(capsys.readouterr().out)
+    assert code == 0, engine
+    [note] = [a for a in engine["advisories"] if a["code"] == "refusedWhenRun"]
+    assert note["detail"].startswith(FROZEN_NOTE + "on your authoring client: ")
+    # A draft is refused at verify instead, so it gets no such advisory; and
+    # a frozen study the rule does not refuse gets none.
+    assert sampling.frozen_greedy_seed_list_advisory(
+        _manifest(temperature=0.0, seeds=[11, 22, 33])) is None
+    assert sampling.frozen_greedy_seed_list_advisory(
+        _manifest(temperature=0.0, seeds=[11], status="frozen")) is None

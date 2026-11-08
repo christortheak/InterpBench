@@ -1957,14 +1957,16 @@ def _experiment(invocation: Invocation) -> CLIResult:
         # A seed setting the run will not read, said where it was written.
         # Swift twin: `set-sampling`'s advisories.
         if any(key in fields for key in (
-                "temperature", "samplesPerItem", "seedPolicy", "seeds")):
+                "temperature", "samplesPerItem", "seedPolicy", "seeds",
+                "outcomeInstruments")):
             from .experiment import sampling as _sampling
             for note in _sampling.unused_seed_settings(
                     document.get("temperature", 0.0),
                     document.get("samplesPerItem", 1),
                     document.get("seedPolicy"),
                     document.get("seeds") or [0],
-                    study_kind=document.get("studyKind")):
+                    study_kind=document.get("studyKind"),
+                    instruments=document.get("outcomeInstruments")):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("seedSettingNotUsed", note))
         return CLIResult(
@@ -2268,11 +2270,19 @@ def _experiment(invocation: Invocation) -> CLIResult:
                 advisories.append(_advisory("computeCannotRun", note))
             # A declared seed setting the run will not read (seedPolicy
             # derivedSHA256 at temperature 0, or beside a seed list it sets
-            # aside). Swift twin: the Mac `experiment verify`.
+            # aside; or a readout-only study's seed list). Swift twin: the
+            # Mac `experiment verify`.
             from .experiment import sampling as _sampling
             for note in _sampling.manifest_unused_seed_settings(manifest):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("seedSettingNotUsed", note))
+            # A study frozen under an older release that a rule added since
+            # refuses when it is submitted or run (public issue #9): it
+            # verifies, so its runs stay readable, and the reader learns here.
+            frozen_note = _sampling.frozen_greedy_seed_list_advisory(manifest)
+            if frozen_note:
+                sys.stderr.write(f"ADVISORY: {frozen_note}\n")
+                advisories.append(_advisory("refusedWhenRun", frozen_note))
             # A study that measures the baseline agent alone verifies, and
             # says what it is. Swift twin: the Mac `experiment verify`.
             from .experiment import manifest as _manifest_module

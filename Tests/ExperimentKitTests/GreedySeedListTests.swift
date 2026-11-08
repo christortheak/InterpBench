@@ -175,6 +175,7 @@ import Testing
         ("1.5", "'1.5' is not a whole number seed"),
         ("-1", "'-1' is not a whole number seed"),
         ("12,abc", "'abc' is not a whole number seed"),
+        ("+5", "'+5' is not a whole number seed"),
         ("18446744073709551616", "is not a whole number seed"),
     ])
     func aSeedListOutsideTheRulesIsMalformedAndWritesNothing(
@@ -205,6 +206,76 @@ import Testing
                 decoding: try JSONEncoder().encode(help.envelope.result), as: UTF8.self)
             #expect(page.contains("--seeds"), "\(page)")
             #expect(page.contains("<n>[,<n>…]"), "\(page)")
+        }
+    }
+
+    // MARK: - only sampled text loops over the seeds (review round 1)
+
+    /// A readout reads each item once whatever the seeds, so a readout-only
+    /// study at temperature 0 with several seeds ran correctly on this engine
+    /// before the rule, and still runs: never refused, told its list is not
+    /// used.
+    @Test func aReadoutOnlyStudyWithSeveralSeedsIsNotRefused() async throws {
+        try await withTempRoot { _ in
+            var readout = ExperimentManifest(
+                name: "readout", description: "", modelID: "test/model")
+            readout.temperature = 0
+            readout.seeds = [11, 22, 33]
+            readout.outcomeInstruments = ["answerTokenLogprob"]
+            for status in [ExperimentManifest.Status.draft, .frozen] {
+                readout.status = status
+                #expect(StudySampling.greedySeedListProblem(readout) == nil)
+                #expect(!ExperimentStore.verify(readout).contains {
+                    $0.hasPrefix(StudySampling.greedySeedListPrefix)
+                })
+                try ExperimentTasks.refuseGreedySeedList(readout)
+                #expect(StudySampling.frozenGreedySeedListAdvisory(readout) == nil)
+                #expect(
+                    StudySampling.unusedSeedSettings(readout) == [
+                        "the seed list (3 seeds) is not used: this study records "
+                            + "answer-token readouts only, and a readout reads each "
+                            + "item once and draws no seed at any temperature. To "
+                            + "generate responses that use the seeds, add "
+                            + "sampledText to outcomeInstruments."
+                    ])
+            }
+            // Beside sampled text, the text still loops over the seeds.
+            var both = readout
+            both.status = .draft
+            both.outcomeInstruments = ["answerTokenLogprob", "sampledText"]
+            #expect(StudySampling.greedySeedListProblem(both) == Self.threeGreedy)
+            #expect(ExperimentStore.verify(both).contains(Self.threeGreedy))
+        }
+    }
+
+    // MARK: - verify warns of a frozen study the rule will refuse (round 1)
+
+    @Test func verifyWarnsOfAFrozenStudyTheSeedRuleRefuses() async throws {
+        try await withTempRoot { root in
+            try await attachedDraft(root, "demo")
+            var manifest = try ExperimentStore.load(name: "demo")
+            manifest.seeds = [11, 22, 33]
+            manifest.status = .frozen
+            manifest.freezeHash = ExperimentStore.manifestHash(manifest)
+            try ExperimentStore.save(manifest)
+            let verified = await invoke(["verify", "demo"])
+            #expect(verified.envelope.exitCode == 0)
+            #expect(verified.envelope.state == .okWithAdvisories)
+            let notes = (verified.envelope.advisories ?? []).filter {
+                $0.code == CLIAdvisory.refusedWhenRun.rawValue
+            }
+            #expect(
+                notes.map(\.detail) == [
+                    "this study will be refused when it is submitted or run, "
+                        + "because \(Self.threeGreedy). To run it: "
+                        + "steerlab-cli experiment duplicate demo demo-v2 && "
+                        + "steerlab-cli experiment set-sampling demo-v2 --seeds <n>"
+                        + "  (one seed; or raise the temperature above 0 to sample)"
+                ])
+            // A draft is refused at verify instead, with no such advisory.
+            var draft = manifest
+            draft.status = .draft
+            #expect(StudySampling.frozenGreedySeedListAdvisory(draft) == nil)
         }
     }
 

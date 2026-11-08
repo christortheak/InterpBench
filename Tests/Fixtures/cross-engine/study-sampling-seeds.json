@@ -5,6 +5,7 @@
         "the seed list (3 seeds) is not used under seedPolicy derivedSHA256: each item runs samplesPerItem (1) time, each with its own seed derived from the study hash, condition, prompt ID, and sample index. To generate more responses per item, raise samplesPerItem."
       ],
       "derivesSeeds": true,
+      "generatesSampledText": true,
       "label": "derivedSHA256, one sample per item, warm, seed list",
       "manifest": {
         "samplesPerItem": 1,
@@ -49,6 +50,7 @@
     {
       "advisories": [],
       "derivesSeeds": true,
+      "generatesSampledText": true,
       "label": "derivedSHA256, one sample per item, warm, one seed",
       "manifest": {
         "samplesPerItem": 1,
@@ -91,6 +93,7 @@
     {
       "advisories": [],
       "derivesSeeds": true,
+      "generatesSampledText": true,
       "label": "derivedSHA256, three samples per item, warm",
       "manifest": {
         "samplesPerItem": 3,
@@ -181,6 +184,7 @@
     {
       "advisories": [],
       "derivesSeeds": false,
+      "generatesSampledText": true,
       "label": "manifestSeeds, warm",
       "manifest": {
         "seedPolicy": "manifestSeeds",
@@ -272,6 +276,7 @@
     {
       "advisories": [],
       "derivesSeeds": false,
+      "generatesSampledText": true,
       "label": "undeclared, warm",
       "manifest": {
         "seeds": [
@@ -364,6 +369,7 @@
         "seedPolicy derivedSHA256 has no effect at temperature 0: decoding is greedy and no seed is used. Seeds are derived per record only when the temperature is above 0."
       ],
       "derivesSeeds": false,
+      "generatesSampledText": true,
       "label": "derivedSHA256, greedy",
       "manifest": {
         "seedPolicy": "derivedSHA256",
@@ -405,6 +411,7 @@
     {
       "advisories": [],
       "derivesSeeds": false,
+      "generatesSampledText": true,
       "label": "undeclared, greedy",
       "manifest": {
         "seeds": [
@@ -445,6 +452,7 @@
     {
       "advisories": [],
       "derivesSeeds": false,
+      "generatesSampledText": true,
       "label": "manifestSeeds, greedy, seed list",
       "manifest": {
         "seedPolicy": "manifestSeeds",
@@ -536,6 +544,7 @@
     {
       "advisories": [],
       "derivesSeeds": false,
+      "generatesSampledText": true,
       "label": "derivedSHA256, greedy, seed list",
       "manifest": {
         "seedPolicy": "derivedSHA256",
@@ -627,8 +636,249 @@
     {
       "advisories": [],
       "derivesSeeds": false,
+      "generatesSampledText": true,
       "label": "undeclared, greedy, seed list",
       "manifest": {
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
+      "sampleCount": 3,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [
+        "the seed list (3 seeds) is not used: this study records answer-token readouts only, and a readout reads each item once and draws no seed at any temperature. To generate responses that use the seeds, add sampledText to outcomeInstruments."
+      ],
+      "derivesSeeds": false,
+      "generatesSampledText": false,
+      "label": "readout only, greedy, seed list",
+      "manifest": {
+        "outcomeInstruments": [
+          "answerTokenLogprob"
+        ],
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "refusal": null,
+      "sampleCount": 3,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [
+        "the seed list (3 seeds) is not used: this study records answer-token readouts only, and a readout reads each item once and draws no seed at any temperature. To generate responses that use the seeds, add sampledText to outcomeInstruments."
+      ],
+      "derivesSeeds": true,
+      "generatesSampledText": false,
+      "label": "readout only, warm, derivedSHA256, seed list",
+      "manifest": {
+        "outcomeInstruments": [
+          "choiceProbability"
+        ],
+        "seedPolicy": "derivedSHA256",
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.7
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 1060262012863694703
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 807249983815239017
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 5974560820258424598
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 315500303309602878
+        }
+      ],
+      "refusal": null,
+      "sampleCount": 1,
+      "seedPolicy": "derivedSHA256"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "generatesSampledText": true,
+      "label": "readout and sampled text, greedy, seed list",
+      "manifest": {
+        "outcomeInstruments": [
+          "answerTokenLogprob",
+          "sampledText"
+        ],
         "seeds": [
           11,
           22,
@@ -720,7 +970,7 @@
     "steered"
   ],
   "experimentHash": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
-  "note": "the seed rule of an ordinary study's sampled records: a declared derivedSHA256 above temperature 0 derives one seed per (condition, promptID, sampleIndex) for samplesPerItem samples, at any samplesPerItem; otherwise each item runs once per listed seed. At temperature 0 a study lists one seed, and one listing more is refused (refusal)",
+  "note": "the seed rule of an ordinary study's sampled records: a declared derivedSHA256 above temperature 0 derives one seed per (condition, promptID, sampleIndex) for samplesPerItem samples, at any samplesPerItem; otherwise each item runs once per listed seed. At temperature 0 a study that generates sampled text lists one seed, and one listing more is refused (refusal); a study of answer-token readouts alone reads each item once and writes no sampled records, so its seed list is unused (advisories)",
   "prompts": [
     {
       "id": "respondent-001",

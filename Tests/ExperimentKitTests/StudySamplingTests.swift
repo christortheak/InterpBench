@@ -80,6 +80,9 @@ struct StudySamplingTests {
             let derivesSeeds: Bool
             let seedPolicy: String
             let sampleCount: Int
+            /// Whether the study generates sampled text: only sampled text
+            /// loops over the seeds.
+            let generatesSampledText: Bool
             let records: [Record]
             let advisories: [String]
             /// The run-start, submission, and draft-verify refusal, or nil.
@@ -92,6 +95,7 @@ struct StudySamplingTests {
             let samplesPerItem: Int?
             let seedPolicy: String?
             let seeds: [UInt64]
+            let outcomeInstruments: [String]?
         }
 
         struct Record: Decodable, Equatable {
@@ -117,6 +121,7 @@ struct StudySamplingTests {
         manifest.samplesPerItem = fields.samplesPerItem
         manifest.seedPolicy = fields.seedPolicy
         manifest.seeds = fields.seeds
+        manifest.outcomeInstruments = fields.outcomeInstruments
         return manifest
     }
 
@@ -126,7 +131,7 @@ struct StudySamplingTests {
     /// items with the same text and different IDs draw different streams.
     @Test func seedRuleMatchesThePythonEngineOnTheSharedFixture() throws {
         let fixture = try seedFixture()
-        #expect(fixture.cases.count >= 10)
+        #expect(fixture.cases.count >= 13)
         #expect(Set(fixture.prompts.map(\.prompt)).count == 1)
         for value in fixture.cases {
             let study = manifest(value.manifest)
@@ -149,6 +154,9 @@ struct StudySamplingTests {
             #expect(records == value.records, "\(value.label)")
             #expect(StudySampling.unusedSeedSettings(study) == value.advisories, "\(value.label)")
             #expect(StudySampling.greedySeedListProblem(study) == value.refusal, "\(value.label)")
+            #expect(
+                ExecutionPlan.resolve(instruments: study.outcomeInstruments)
+                    .generatesSampledText == value.generatesSampledText, "\(value.label)")
         }
     }
 
@@ -158,8 +166,18 @@ struct StudySamplingTests {
         let refused = try seedFixture().cases.filter { $0.refusal != nil }
         #expect(Set(refused.map(\.label)) == [
             "manifestSeeds, greedy, seed list", "derivedSHA256, greedy, seed list",
-            "undeclared, greedy, seed list",
+            "undeclared, greedy, seed list", "readout and sampled text, greedy, seed list",
         ])
+        // Readouts alone read each item once: never refused, and told the
+        // list is not used.
+        let readouts = try seedFixture().cases.filter { !$0.generatesSampledText }
+        #expect(readouts.count == 2)
+        for value in readouts {
+            #expect(value.refusal == nil)
+            #expect(value.advisories.count == 1)
+            #expect(value.advisories.first?.hasPrefix("the seed list (3 seeds) is not used: "
+                + "this study records answer-token readouts only") == true)
+        }
         for value in refused {
             #expect(value.advisories.isEmpty)
             #expect(value.refusal?.hasPrefix(StudySampling.greedySeedListPrefix) == true)

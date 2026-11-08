@@ -1587,6 +1587,19 @@ STUDY_SAMPLING_CASES = [
       "seeds": [11, 22, 33]}),
     ("undeclared, greedy, seed list",
      {"temperature": 0.0, "seeds": [11, 22, 33]}),
+    # Only sampled text loops over the seeds: a study that measures
+    # answer-token readouts alone reads each item once, so its list is
+    # unused (an advisory), never refused. Its records below are what the
+    # seed rule would enumerate for sampled text; it writes none.
+    ("readout only, greedy, seed list",
+     {"temperature": 0.0, "seeds": [11, 22, 33],
+      "outcomeInstruments": ["answerTokenLogprob"]}),
+    ("readout only, warm, derivedSHA256, seed list",
+     {"temperature": 0.7, "seedPolicy": "derivedSHA256",
+      "seeds": [11, 22, 33], "outcomeInstruments": ["choiceProbability"]}),
+    ("readout and sampled text, greedy, seed list",
+     {"temperature": 0.0, "seeds": [11, 22, 33],
+      "outcomeInstruments": ["answerTokenLogprob", "sampledText"]}),
 ]
 
 
@@ -1594,7 +1607,7 @@ def study_sampling_case(label: str, fields: dict) -> dict:
     """One case through the Python engine's seed rule: the policy in effect,
     the per-item count, every sampled record's seed in emission order
     (condition, prompt, sample), and the advisories `verify` would give."""
-    from steerlab_server.experiment import sampling
+    from steerlab_server.experiment import execution_plan, sampling
     from steerlab_server.experiment.manifest import Manifest
 
     manifest = Manifest.from_dict({"name": "seeds", "modelID": "test/model",
@@ -1615,6 +1628,8 @@ def study_sampling_case(label: str, fields: dict) -> dict:
         "derivesSeeds": sampling.manifest_derives_seeds(manifest),
         "seedPolicy": policy,
         "sampleCount": sampling.sample_count(manifest),
+        "generatesSampledText": execution_plan.resolve(
+            manifest.outcome_instruments).generates_sampled_text,
         "records": records,
         "advisories": sampling.manifest_unused_seed_settings(manifest),
         # The run-start, submission, and draft-verify refusal, or null.
@@ -1636,8 +1651,11 @@ def study_sampling_seeds() -> None:
                 "declared derivedSHA256 above temperature 0 derives one seed "
                 "per (condition, promptID, sampleIndex) for samplesPerItem "
                 "samples, at any samplesPerItem; otherwise each item runs "
-                "once per listed seed. At temperature 0 a study lists one "
-                "seed, and one listing more is refused (refusal)",
+                "once per listed seed. At temperature 0 a study that "
+                "generates sampled text lists one seed, and one listing more "
+                "is refused (refusal); a study of answer-token readouts alone "
+                "reads each item once and writes no sampled records, so its "
+                "seed list is unused (advisories)",
         "experimentHash": STUDY_SAMPLING_EXPERIMENT_HASH,
         "prompts": STUDY_SAMPLING_PROMPTS,
         "conditions": list(STUDY_SAMPLING_CONDITIONS),

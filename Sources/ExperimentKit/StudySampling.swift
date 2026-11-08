@@ -75,25 +75,48 @@ public enum StudySampling {
     public static let greedySeedListPrefix =
         "at temperature 0 decoding is greedy, so every seed gives the same response"
 
-    /// Why an ordinary study at temperature 0 must list exactly one seed
-    /// (public issue #9), or nil. Under the fixed seed list an item runs once
-    /// per listed seed; at temperature 0 every seed gives the same greedy
-    /// response, so N seeds would write N identical records per item (each
-    /// stamped `seedInert`) and analysis would count them as N observations.
-    /// A panel never reads the list. One sentence everywhere: a `verify`
-    /// violation on a draft (so `freeze` refuses), the engine's submission
-    /// preflight, and both engines' run start. Byte-identical to the Python
-    /// twin `sampling.greedy_seed_list_problem`; the shared fixture
+    /// Why an ordinary study at temperature 0 that generates sampled text
+    /// must list exactly one seed (public issue #9), or nil. Under the fixed
+    /// seed list each item's sampled text runs once per listed seed; at
+    /// temperature 0 every seed gives the same greedy response, so N seeds
+    /// would write N identical records per item (each stamped `seedInert`)
+    /// and analysis would count them as N observations. Only sampled text
+    /// loops over the seeds: an answer-token readout reads each item once, so
+    /// a study that measures readouts alone (`ExecutionPlan`) is never
+    /// refused here, and its unused list is an advisory
+    /// (`unusedSeedSettings`). A panel never reads the list. One sentence
+    /// everywhere: a `verify` violation on a draft (so `freeze` refuses), the
+    /// engine's submission preflight, both engines' run start, and both
+    /// clients before they submit. Byte-identical to the Python twin
+    /// `sampling.greedy_seed_list_problem`; the shared fixture
     /// `Tests/Fixtures/cross-engine/study-sampling-seeds.json` pins both.
     public static func greedySeedListProblem(_ manifest: ExperimentManifest) -> String? {
         guard manifest.studyKind != .multiAgent, manifest.temperature <= 0 else {
             return nil
         }
         let count = manifest.seeds.count
-        guard count > 1 else { return nil }
+        guard count > 1,
+            ExecutionPlan.resolve(instruments: manifest.outcomeInstruments)
+                .generatesSampledText
+        else { return nil }
         return "\(greedySeedListPrefix), and the study's \(count) seeds would "
             + "write \(count) identical records per item. Set one seed, or "
             + "raise the temperature above 0 to sample"
+    }
+
+    /// What `verify` says of a study frozen under an older release that the
+    /// seed rule refuses, or nil: it still verifies (its runs stay
+    /// readable), so the reader learns here, not at submission, that running
+    /// it needs a duplicate with one seed. Advisory code `refusedWhenRun`.
+    /// Python twin: `sampling.frozen_greedy_seed_list_advisory`, as the Mac
+    /// command line spells the repair.
+    public static func frozenGreedySeedListAdvisory(_ manifest: ExperimentManifest) -> String? {
+        guard manifest.status != .draft,
+            let problem = greedySeedListProblem(manifest)
+        else { return nil }
+        return "this study will be refused when it is submitted or run, "
+            + "because \(problem). To run it: "
+            + greedySeedListRepair(name: manifest.name, frozen: true)
     }
 
     /// The run-start repair for `greedySeedListProblem`: one seed with
@@ -110,15 +133,28 @@ public enum StudySampling {
     /// Declared seed settings an ordinary study's run will not read — said
     /// at `verify` and at `set-sampling`, never refused (advisory code
     /// `seedSettingNotUsed`). A panel says nothing here: its turns take seeds
-    /// by their own rule. Nor does a temperature-0 study with several seeds:
-    /// it is refused (`greedySeedListProblem`), and a setting a study is
-    /// refused for is never called one with "no effect". Byte-identical to
-    /// the Python twin `sampling.unused_seed_settings`; the shared fixture
+    /// by their own rule. Nor does a temperature-0 study with several seeds
+    /// that generates sampled text: it is refused (`greedySeedListProblem`),
+    /// and a setting a study is refused for is never called one with "no
+    /// effect". A study that measures answer-token readouts alone is told
+    /// its list of several seeds is not used: a readout reads each item once,
+    /// at any temperature. Byte-identical to the Python twin
+    /// `sampling.unused_seed_settings`; the shared fixture
     /// `Tests/Fixtures/cross-engine/study-sampling-seeds.json` pins both.
     public static func unusedSeedSettings(_ manifest: ExperimentManifest) -> [String] {
-        guard manifest.seedPolicy == "derivedSHA256", manifest.studyKind != .multiAgent else {
-            return []
+        guard manifest.studyKind != .multiAgent else { return [] }
+        let count = manifest.seeds.count
+        let plan = ExecutionPlan.resolve(instruments: manifest.outcomeInstruments)
+        if !plan.generatesSampledText, plan.scoresDirectly, count > 1 {
+            return [
+                "the seed list (\(count) seeds) is not used: this study "
+                    + "records answer-token readouts only, and a readout reads each "
+                    + "item once and draws no seed at any temperature. To generate "
+                    + "responses that use the seeds, add sampledText to "
+                    + "outcomeInstruments."
+            ]
         }
+        guard manifest.seedPolicy == "derivedSHA256" else { return [] }
         guard manifest.temperature > 0 else {
             if greedySeedListProblem(manifest) != nil { return [] }
             return [
@@ -127,8 +163,7 @@ public enum StudySampling {
                     + "per record only when the temperature is above 0."
             ]
         }
-        let count = manifest.seeds.count
-        guard count > 1 else { return [] }
+        guard plan.generatesSampledText, count > 1 else { return [] }
         let runs = max(1, manifest.samplesPerItem ?? 1)
         return [
             "the seed list (\(count) seeds) is not used under seedPolicy "

@@ -4138,10 +4138,19 @@ public struct ExperimentCLIRunner: Sendable {
                 }
                 // A declared seed setting the run will not read (seedPolicy
                 // derivedSHA256 at temperature 0, or beside a seed list it
-                // sets aside). Server twin: the client's `verify`.
+                // sets aside; or a readout-only study's seed list). Server
+                // twin: the client's `verify`.
                 for note in StudySampling.unusedSeedSettings(manifest) {
                     sink.err("ADVISORY: \(note)\n")
                     capabilityAdvisories.append(.init(CLIAdvisory.seedSettingNotUsed, note))
+                }
+                // A study frozen under an older release that a rule added
+                // since refuses when it is submitted or run (public issue
+                // #9): it verifies, so its runs stay readable, and the reader
+                // learns here. Server twin: the client's `verify`.
+                if let note = StudySampling.frozenGreedySeedListAdvisory(manifest) {
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(.init(CLIAdvisory.refusedWhenRun, note))
                 }
                 // A study that measures the baseline agent alone verifies,
                 // and says what it is. Server twin: the client's `verify`.
@@ -4933,6 +4942,13 @@ public struct ExperimentCLIRunner: Sendable {
             {
                 instrumentAdvisories.append(
                     .init(CLIAdvisory.choiceItemsWithoutInstrument, inert))
+            }
+            // The instruments decide whether the seed list is read: a
+            // readout-only study reads each item once. Server twin:
+            // `set-protocol`'s advisories.
+            for note in StudySampling.unusedSeedSettings(updated) {
+                sink.err("ADVISORY: \(note)\n")
+                instrumentAdvisories.append(.init(CLIAdvisory.seedSettingNotUsed, note))
             }
             return ExperimentCLIResult(
                 message: instrumentLine, changed: true,

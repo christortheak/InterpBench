@@ -2400,6 +2400,14 @@ def _experiment(args: list[str]):
                 note = manifest_module.BASELINE_ONLY_STUDY_ADVISORY
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 verified_advisories.append(advisory("baselineOnlyStudy", note))
+            # A study frozen under an older release that the seed rule
+            # refuses when it is submitted or run (public issue #9): said
+            # here, as the clients' `verify` says it.
+            from .experiment import sampling as _sampling
+            frozen_note = _sampling.frozen_greedy_seed_list_advisory(manifest)
+            if frozen_note:
+                sys.stderr.write(f"ADVISORY: {frozen_note}\n")
+                verified_advisories.append(advisory("refusedWhenRun", frozen_note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
                 state="okWithAdvisories" if verified_advisories else "ready",

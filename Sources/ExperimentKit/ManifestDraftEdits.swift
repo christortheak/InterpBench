@@ -238,7 +238,11 @@ enum ManifestDraftEdits {
         for part in text.split(separator: ",", omittingEmptySubsequences: false) {
             let trimmed = part.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty { continue }
-            guard let seed = UInt64(trimmed) else {
+            // Digits only: `UInt64("+5")` reads 5, and the client's
+            // `--set seeds=[+5]` refuses, so a sign is refused here too.
+            guard trimmed.allSatisfy({ ("0"..."9").contains($0) }),
+                let seed = UInt64(trimmed)
+            else {
                 throw ExperimentError.malformed(
                     "'\(trimmed)' is not a whole number seed",
                     repair: "steerlab-cli experiment set-sampling \(experimentName) "

@@ -180,27 +180,40 @@ GREEDY_SEED_LIST_PREFIX = ("at temperature 0 decoding is greedy, so every "
                            "seed gives the same response")
 
 
-def greedy_seed_list_problem(temperature, seeds, study_kind=None) -> str | None:
-    """Why an ordinary study at temperature 0 must list exactly one seed
-    (public issue #9), or None.
+def greedy_seed_list_problem(temperature, seeds, study_kind=None,
+                             instruments=None) -> str | None:
+    """Why an ordinary study at temperature 0 that generates sampled text
+    must list exactly one seed (public issue #9), or None.
 
-    Under the fixed seed list an item runs once per listed seed. At
-    temperature 0 decoding is greedy and draws no random number, so every
-    seed gives the same response: N seeds would write N identical records per
-    item, and analysis would count them as N observations. Every arm runs at
-    the study's temperature (``condition_execution.
-    require_manifest_sampling_policy``), so the rule is the study's. A panel
-    (``multiAgent``) never reads the list: its turns take their seeds by their
-    own rule and stamp ``greedy`` at temperature 0 (``multi_agent``).
+    Under the fixed seed list each item's sampled text runs once per listed
+    seed. At temperature 0 decoding is greedy and draws no random number, so
+    every seed gives the same response: N seeds would write N identical
+    records per item, and analysis would count them as N observations. Every
+    arm runs at the study's temperature (``condition_execution.
+    require_manifest_sampling_policy``), so the rule is the study's.
+
+    Only sampled text loops over the seeds. An answer-token readout reads
+    each item once whatever the seeds (``condition_execution.
+    execute_condition``), so a study that measures readouts alone
+    (``instruments`` resolving to no sampled text, ``execution_plan``) is
+    never refused here; its unused list is an advisory
+    (:func:`unused_seed_settings`). ``instruments`` absent means the default,
+    sampled text. A panel (``multiAgent``) never reads the list: its turns
+    take their seeds by their own rule and stamp ``greedy`` at temperature 0
+    (``multi_agent``).
 
     One sentence everywhere: a ``verify`` violation on a draft (so ``freeze``
-    refuses), the engine's submission preflight, and both engines' run start.
-    Swift twin ``StudySampling.greedySeedListProblem``; the shared fixture
+    refuses), the engine's submission preflight, both engines' run start, and
+    both clients before they submit. Swift twin
+    ``StudySampling.greedySeedListProblem``; the shared fixture
     ``Tests/Fixtures/cross-engine/study-sampling-seeds.json`` pins both."""
     if study_kind == "multiAgent" or (temperature and temperature > 0):
         return None
     count = len(seeds or [])
     if count <= 1:
+        return None
+    from . import execution_plan
+    if not execution_plan.resolve(instruments).generates_sampled_text:
         return None
     return (f"{GREEDY_SEED_LIST_PREFIX}, and the study's {count} seeds would "
             f"write {count} identical records per item. Set one seed, or "
@@ -210,7 +223,25 @@ def greedy_seed_list_problem(temperature, seeds, study_kind=None) -> str | None:
 def manifest_greedy_seed_list_problem(manifest) -> str | None:
     """:func:`greedy_seed_list_problem` for a loaded manifest."""
     return greedy_seed_list_problem(manifest.temperature, manifest.seeds,
-                                    study_kind=manifest.study_kind)
+                                    study_kind=manifest.study_kind,
+                                    instruments=manifest.outcome_instruments)
+
+
+def frozen_greedy_seed_list_advisory(manifest) -> str | None:
+    """What ``verify`` says of a study frozen under an older release that the
+    seed rule refuses, or None: it still verifies (its runs stay readable),
+    so the reader learns here, not at submission, that running it needs a
+    duplicate with one seed. Advisory code ``refusedWhenRun``. Swift twin
+    ``StudySampling.frozenGreedySeedListAdvisory``; the repair is spelled for
+    the client that shows it."""
+    if manifest.status == "draft":
+        return None
+    problem = manifest_greedy_seed_list_problem(manifest)
+    if problem is None:
+        return None
+    return (f"this study will be refused when it is submitted or run, "
+            f"because {problem}. To run it: "
+            + greedy_seed_list_repair(manifest.name, frozen=True))
 
 
 def greedy_seed_list_repair(name: str, *, frozen: bool = False) -> str:
@@ -256,26 +287,41 @@ def greedy_samples_repair(name: str, *, frozen: bool = False) -> str:
 
 
 def unused_seed_settings(temperature, samples_per_item, seed_policy, seeds,
-                         study_kind=None) -> list[str]:
+                         study_kind=None, instruments=None) -> list[str]:
     """Declared seed settings an ordinary study's run will not read — said at
     ``verify`` and at the sampling write, never refused (advisory code
     ``seedSettingNotUsed``). A panel (``multiAgent``) says nothing here: its
     turns take seeds by their own rule and never read the policy or the list.
-    A temperature-0 study with several seeds says nothing here either: it is
-    refused (:func:`greedy_seed_list_problem`), and a setting a study is
-    refused for is never called one with "no effect".
-    Byte-identical to the Swift twin ``StudySampling.unusedSeedSettings``; the
-    shared fixture ``Tests/Fixtures/cross-engine/study-sampling-seeds.json``
-    pins both."""
-    if seed_policy != DERIVED_SHA256 or study_kind == "multiAgent":
+    A temperature-0 study with several seeds that generates sampled text says
+    nothing here either: it is refused (:func:`greedy_seed_list_problem`),
+    and a setting a study is refused for is never called one with "no
+    effect". A study that measures answer-token readouts alone is told its
+    list of several seeds is not used: a readout reads each item once, at any
+    temperature. Byte-identical to the Swift twin
+    ``StudySampling.unusedSeedSettings``; the shared fixture
+    ``Tests/Fixtures/cross-engine/study-sampling-seeds.json`` pins both."""
+    if study_kind == "multiAgent":
+        return []
+    count = len(seeds or [])
+    from . import execution_plan
+    plan = execution_plan.resolve(instruments)
+    if not plan.generates_sampled_text and plan.scores_directly and count > 1:
+        return [f"the seed list ({count} seeds) is not used: this study "
+                "records answer-token readouts only, and a readout reads each "
+                "item once and draws no seed at any temperature. To generate "
+                "responses that use the seeds, add sampledText to "
+                "outcomeInstruments."]
+    if seed_policy != DERIVED_SHA256:
         return []
     if not temperature or temperature <= 0:
-        if greedy_seed_list_problem(temperature, seeds, study_kind):
+        if greedy_seed_list_problem(temperature, seeds, study_kind,
+                                    instruments):
             return []
         return ["seedPolicy derivedSHA256 has no effect at temperature 0: "
                 "decoding is greedy and no seed is used. Seeds are derived "
                 "per record only when the temperature is above 0."]
-    count = len(seeds or [])
+    if not plan.generates_sampled_text:
+        return []
     if count > 1:
         runs = max(1, samples_per_item or 1)
         return [f"the seed list ({count} seeds) is not used under seedPolicy "
@@ -291,7 +337,8 @@ def manifest_unused_seed_settings(manifest) -> list[str]:
     """:func:`unused_seed_settings` for a loaded manifest."""
     return unused_seed_settings(manifest.temperature, manifest.samples_per_item,
                                 manifest.seed_policy, manifest.seeds,
-                                study_kind=manifest.study_kind)
+                                study_kind=manifest.study_kind,
+                                instruments=manifest.outcome_instruments)
 
 
 @contextmanager
