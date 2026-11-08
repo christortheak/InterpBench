@@ -45,14 +45,16 @@ client, is a new submission. On an older server, submit again only if no job
 appears.
 
 **A walltime estimate for long prompts.** The submission estimates the time
-its job needs from the cluster's own history for this kind of study. When
-that history came from much longer or much shorter items than this study's,
-or does not record how long its items were and these are long, the estimate
-says so in a plain warning (`promptLengthNotice`, echoed as
-`result.walltimeNotice`), and an estimate that far from its history never
-refuses a submission on its own. Tell the researcher, and ask for more time
-than the estimate or split the study; a short pilot of a few items measures
-the real pace.
+its job needs from the cluster's own history for this kind of study, from the
+past jobs whose items were nearest this study's length. When no past job's
+items were within four times this length, or the history does not record how
+long its items were and these are long, the estimate says so in a plain
+warning (`promptLengthNotice`, echoed as `result.walltimeNotice`) and says
+which way it errs (`estimateBound`). A lower bound over the requested
+walltime is still refused before the queue, because the job needs at least
+that long; an upper bound over it is a warning. Tell the researcher, and ask
+for more time than the estimate or split the study; a short pilot of a few
+items measures the real pace.
 
 ## Runners
 

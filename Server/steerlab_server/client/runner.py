@@ -1180,6 +1180,19 @@ class RunnerClient:
             raise self._outcome_unknown(
                 f"a proxy answered {exc.status}: {exc.reason}",
                 remote_path=remote_path, verb=verb) from exc
+        except RunnerError as exc:
+            if exc.code != "notARunner":
+                raise
+            # A success this client could not read: the runner took the
+            # request, and the job may well have landed (as the Swift client
+            # reads an undecodable answer).
+            raise self._outcome_unknown(
+                "the runner's answer could not be read",
+                remote_path=remote_path, verb=verb) from exc
+        if not isinstance(submission, dict):
+            raise self._outcome_unknown(
+                "the runner's answer could not be read",
+                remote_path=remote_path, verb=verb)
         if reread_choices:
             confirm_reread(submission, self.base_url)
         return submission

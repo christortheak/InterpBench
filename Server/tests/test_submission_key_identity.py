@@ -243,3 +243,71 @@ def test_hashlib_agrees_with_the_hand_derivation_of_a_key():
                  '"submissionKeyVersion":2,"verb":"run"}')
     assert runner_api.submission_key(body, "f" * 64) == \
         hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def test_the_same_command_keeps_where_its_document_goes(wired, capsys,
+                                                       tmp_path):
+    """`--out` names where the document is written: kept in the repeat,
+    and not part of the key (it is never sent)."""
+    root, runner = wired
+    runner.unanswered = True
+    out = str(tmp_path / "doc.json")
+    code = client_cli.main(["--root", root, "run", STUDY_NAME, "--runner",
+                            RUNNER_URL, "--executor", "slurm", "--no-wait",
+                            "--json", "--out", out])
+    capsys.readouterr()
+    assert code == 12
+    with open(out, encoding="utf-8") as handle:
+        document = json.load(handle)
+    again = document["result"]["sameCommand"]
+    assert again.endswith(f"--json --out {out}")
+    import shlex
+    runner.unanswered = False
+    other = str(tmp_path / "other.json")
+    words = shlex.split(again.replace(out, other))
+    assert client_cli.main(words[1:]) == 12
+    capsys.readouterr()
+    assert runner.bodies[0]["submissionKey"] == runner.bodies[1]["submissionKey"]
+
+
+def _client(handler):
+    import httpx
+
+    class Staged(runner_api.RunnerClient):
+        def inspect_remote_bundle(self, remote_path):
+            return {"kind": "runBundle", "runtimeRequirements": [],
+                    "entries": [{"path": "a", "sha256": "1" * 64}]}
+
+    def route(request):
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json={"cluster": {"submissionKey": True}})
+        return handler(request)
+
+    return Staged(base_url="http://127.0.0.1:9",
+                  http_client=httpx.Client(transport=httpx.MockTransport(route)))
+
+
+def test_an_unreadable_success_is_an_unknown_outcome():
+    """The runner took the request and answered 200 with something this
+    client cannot read: the job may have landed (the Mac reads it so too)."""
+    import httpx
+    client = _client(lambda request: httpx.Response(200, text="<html>ok</html>"))
+    with pytest.raises(runner_api.SubmitOutcomeUnknown) as raised:
+        client.submit_uploaded_bundle(remote_path="/b.tar.gz", verb="run")
+    assert "could not be read" in raised.value.reason
+    assert raised.value.detail["repeatIsSafe"] is True
+
+
+def test_a_connect_timeout_sent_nothing():
+    """A connection that was never made sent nothing: an ordinary connection
+    failure, as the Mac reads one from its metrics."""
+    import httpx
+
+    def never(request):
+        raise httpx.ConnectTimeout("connect timed out", request=request)
+
+    with pytest.raises(runner_api.RunnerUnreachable) as raised:
+        _client(never).submit_uploaded_bundle(remote_path="/b.tar.gz",
+                                              verb="run")
+    assert not isinstance(raised.value, runner_api.SubmitOutcomeUnknown)
+    assert raised.value.request_sent is False

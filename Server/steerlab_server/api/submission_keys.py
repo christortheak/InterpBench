@@ -201,9 +201,36 @@ def _answer_from_record(job, *, verb: str, dry_run: bool) -> dict:
             "shardJobIDs": list(children) if isinstance(children, list) else None}
 
 
+#: Why a part is held, in a person's words, by the reason its latest
+#: refusal names (``executors.submit_refusal_kind``): the vocabulary of the
+#: controller's own notes on a held part.
+_HELD_REASONS = {
+    "clusterJobLimit": "the cluster's job limit is reached",
+    "maintenanceWindow": ("its walltime would cross a maintenance window, "
+                          "until the window no longer stands in the way"),
+    "schedulerUnavailable": "the scheduler did not take it just then",
+}
+
+
+def _held_reason(stamp: dict | None) -> str:
+    """A held part's current reason: its latest refusal's kind, else the
+    reason it was first held for."""
+    from .executors import submit_refusal_kind
+    stamp = stamp if isinstance(stamp, dict) else {}
+    kind = submit_refusal_kind(stamp.get("lastRefusal")
+                               or stamp.get("schedulerMessage"))
+    if kind == "maintenanceWindow":
+        return "maintenanceWindow"
+    if kind == "retryLater":
+        return "schedulerUnavailable"
+    return "clusterJobLimit"
+
+
 def _held_now(jobs, job) -> dict | None:
     """The split run's held parts as they are NOW (issue #12): the first
-    answer's count goes stale as soon as the controller submits one."""
+    answer's count goes stale as soon as the controller submits one, and a
+    part's reason can change while it waits (a job limit, then a maintenance
+    window)."""
     resources = job.requested_resources or {}
     children = resources.get("shardChildren")
     if not isinstance(children, list) or not children:
@@ -212,6 +239,7 @@ def _held_now(jobs, job) -> dict | None:
     if is_held is None:
         return None
     held = []
+    reasons: dict[str, int] = {}
     stamp = None
     for cid in children:
         child = jobs.get(str(cid))
@@ -220,19 +248,30 @@ def _held_now(jobs, job) -> dict | None:
         tail = _chain_tail(jobs, child)
         if is_held(tail):
             held.append(tail.id)
-            stamp = stamp or (tail.result or {}).get("held")
+            this = (tail.result or {}).get("held")
+            stamp = stamp or this
+            reason = _held_reason(this)
+            reasons[reason] = reasons.get(reason, 0) + 1
     if not held:
         return None
     from .submissions import _held_parts_summary
     parts = int(resources.get("parallelJobs") or len(children))
     summary = _held_parts_summary(stamp, held, parts)
     count = len(held)
+    order = [r for r in _HELD_REASONS if r in reasons]
+    if len(order) == 1:
+        why = " because " + _HELD_REASONS[order[0]]
+    else:
+        why = ": " + "; ".join(f"{reasons[r]} because {_HELD_REASONS[r]}"
+                                for r in order)
+    summary["reason"] = order[0]
+    summary["reasons"] = {r: reasons[r] for r in order}
     summary["message"] = (
         f"{parts - count} of {parts} parts have been submitted; {count} "
-        f"{'is' if count == 1 else 'are'} still held by SteerLab because the "
-        "cluster's job limit is reached. The controller submits each held "
-        "part, in order, when a slot frees; while the controller is not "
-        "running they wait. The run is merged when every part has finished.")
+        f"{'is' if count == 1 else 'are'} still held by SteerLab{why}. The "
+        "controller submits each held part, in order, when it can; while the "
+        "controller is not running they wait. The run is merged when every "
+        "part has finished.")
     return summary
 
 
