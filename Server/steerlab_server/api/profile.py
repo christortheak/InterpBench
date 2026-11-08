@@ -353,6 +353,11 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # "update" rather than a 404 that reads like "no such job".
             "jobStatus": True,
             "jobLogTail": True,
+            # Issue #11: a study submission may carry a submissionKey; a
+            # repeat of it while its job is being prepared or has not ended
+            # is answered with that job, never submitted again. A client
+            # that sees this flag knows a repeated submit is safe.
+            "submissionKey": True,
         },
         "workspace": {
             # Runtime workspace switching (POST /api/workspace/switch): the
