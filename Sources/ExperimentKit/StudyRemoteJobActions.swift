@@ -26,6 +26,15 @@ extension StudyRemoteJobController {
             // Review round 4: sent and not answered is not a failure.
             remoteStatus = "resume outcome unknown — check the job's status"
             actionNote(unknown.appSentence, severity: .warning)
+        } catch let refusal as ResubmitRefusal {
+            // Review round 10: a refusal that names its way on is still a
+            // refusal of this Resume; the status line says so, not the last
+            // thing that happened.
+            remoteStatus = "resume failed: \(refusal.detail)"
+            actionNote(
+                "Couldn't resume job \(id) — \(refusal.detail) — "
+                    + RefusalPresentation.sentence(refusal.repairAction),
+                severity: .error)
         } catch let error as ClusterClient.ClientError {
             // 409 details are the server's own plain-language refusal
             // (already resubmitted / still running / cancelled) — show its

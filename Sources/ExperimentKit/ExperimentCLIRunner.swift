@@ -749,16 +749,7 @@ public struct ExperimentCLIRunner: Sendable {
         detail: String, jobID: String = "<job-id>", target: String? = nil
     ) -> String {
         if detail.contains("--retry-refused-walltime") {
-            let command = "steerlab-cli remote resubmit \(jobID)"
-                + (target.map { " \($0)" } ?? "")
-            let refused = Self.refusedWalltime(inRefusal: detail)
-            return "choose one: resume it with a walltime within the cluster's "
-                + "limit for one job (\(command) --walltime HH:MM:SS --json), "
-                + "or, if the cause was the cluster's job limit and slots have "
-                + "freed, retry "
-                + (refused.map { "walltime \($0)" } ?? "the same walltime")
-                + " (\(command) --retry-refused-walltime --json). The responses "
-                + "it completed are kept either way; do not submit the study again"
+            return gaveUpRepair(detail: detail, jobID: jobID, target: target)
         }
         if detail.localizedCaseInsensitiveContains("then try again") {
             return "wait a minute for the cancelled job to stop, then run "
@@ -771,6 +762,48 @@ public struct ExperimentCLIRunner: Sendable {
             + "study run that kept the responses it completed. A succeeded "
             + "or failed job, or a cancelled one that kept nothing, is "
             + "re-run by submitting the study again"
+    }
+
+    /// The repair for a refusal the server typed (issue #12, review round
+    /// 10). Where the way on is this verb again, the Mac builds the command
+    /// itself, with this invocation's target and `--json`: the server's own
+    /// repair names both clients' commands and cannot know where this one
+    /// connected, so followed as written it would reach the default URL.
+    /// Every other typed repair (none names a command line today) is the
+    /// server's, verbatim.
+    static func resubmitRefusalRepair(
+        refusal: ResubmitRefusal, jobID: String, target: String?
+    ) -> String {
+        switch refusal.code {
+        case "refusedWalltime":
+            return gaveUpRepair(detail: refusal.detail, jobID: jobID, target: target)
+        case "unreadableWalltime":
+            return "resume it with an explicit walltime within the cluster's "
+                + "limit for one job ("
+                + resubmitCommand(jobID: jobID, target: target)
+                + " --walltime HH:MM:SS --json); the responses it completed are kept"
+        default:
+            return refusal.repairAction
+        }
+    }
+
+    /// `steerlab-cli remote resubmit <id>` aimed where this invocation is.
+    static func resubmitCommand(jobID: String, target: String?) -> String {
+        "steerlab-cli remote resubmit \(jobID)" + (target.map { " \($0)" } ?? "")
+    }
+
+    /// A split run that gave up after a day of refusals without a reason:
+    /// both ways on, as full commands for this server.
+    static func gaveUpRepair(detail: String, jobID: String, target: String?) -> String {
+        let command = resubmitCommand(jobID: jobID, target: target)
+        let refused = Self.refusedWalltime(inRefusal: detail)
+        return "choose one: resume it with a walltime within the cluster's "
+            + "limit for one job (\(command) --walltime HH:MM:SS --json), "
+            + "or, if the cause was the cluster's job limit and slots have "
+            + "freed, retry "
+            + (refused.map { "walltime \($0)" } ?? "the same walltime")
+            + " (\(command) --retry-refused-walltime --json). The responses "
+            + "it completed are kept either way; do not submit the study again"
     }
 
     /// The walltime a gave-up run's refusal names ("… refused its parts at
@@ -3237,13 +3270,18 @@ public struct ExperimentCLIRunner: Sendable {
                         "retried": .bool(false),
                     ])
             } catch let refusal as ResubmitRefusal {
-                // Review round 9: the server named the way on (a run that
-                // gave up at a walltime, a limit that never frees). Agents
-                // follow repairAction, so it is the server's, verbatim.
+                // Review rounds 9 and 10: the server named the way on (a run
+                // that gave up at a walltime, a limit that never frees).
+                // Agents follow repairAction: a way on that is this verb
+                // again is aimed at this invocation's server.
                 sink.err("steerlab-cli remote: \(refusal.detail)\n")
                 throw ExperimentCLIStop(
                     exitCode: 1, state: .refused, code: "resubmitRefused",
-                    reason: refusal.detail, repairAction: refusal.repairAction,
+                    reason: refusal.detail,
+                    repairAction: Self.resubmitRefusalRepair(
+                        refusal: refusal, jobID: resubmitJobID,
+                        target: siteID.map { "--site \($0)" }
+                            ?? "--url \(url.absoluteString)"),
                     payload: [
                         "jobID": .string(resubmitJobID),
                         "refusal": .string(refusal.code),

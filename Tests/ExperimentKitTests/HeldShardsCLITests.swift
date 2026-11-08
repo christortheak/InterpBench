@@ -359,30 +359,115 @@ import Testing
         + "runner resubmit parent01 --retry-refused-walltime --runner <url>). "
         + "Nothing was submitted, and the responses it completed are kept"
 
-    /// Review round 9: agents follow repairAction. For a run that gave up,
-    /// it is the server's own repair, naming both ways on, never "submit
-    /// the study again".
-    @Test func aRefusedRetryCarriesTheServersRepair() async throws {
-        let repair =
-            "Choose one: resume it with a walltime within the cluster's limit "
-            + "for one job (steerlab-cli remote resubmit parent01 --walltime "
-            + "HH:MM:SS), or retry walltime 1-00:00:00 (steerlab-cli remote "
-            + "resubmit parent01 --retry-refused-walltime)"
-        let outcome = try await run(
+    /// The server's typed repair for a run that gave up: both clients'
+    /// commands, aimed nowhere (it cannot know where a client connected).
+    static let serverGaveUpRepair =
+        "Choose one: resume it with a walltime within the cluster's limit "
+        + "for one job (steerlab-cli remote resubmit parent01 --walltime "
+        + "HH:MM:SS), or retry walltime 1-00:00:00 (steerlab-cli remote "
+        + "resubmit parent01 --retry-refused-walltime)"
+
+    func refused(code: String, detail: String, repair: String) async throws -> Outcome {
+        try await run(
             ["resubmit", "parent01", "--json"],
             routes: [
                 "/api/jobs/parent01": (200, ["id": "parent01", "status": "failed"]),
                 "/api/jobs/parent01/resubmit": (409, [
-                    "detail": Self.gaveUpRefusal, "code": "refusedWalltime",
-                    "repairAction": repair,
+                    "detail": detail, "code": code, "repairAction": repair,
                 ]),
             ])
+    }
+
+    /// Review rounds 9 and 10: agents follow repairAction. For a run that
+    /// gave up it names both ways on, never "submit the study again", as
+    /// commands aimed at this invocation's server: the server's own text
+    /// has no target, and followed as written it reaches the default URL.
+    @Test func aRefusedRetryNamesBothWaysOnForThisServer() async throws {
+        let outcome = try await refused(
+            code: "refusedWalltime", detail: Self.gaveUpRefusal,
+            repair: Self.serverGaveUpRepair)
         #expect(outcome.envelope.exitCode == 65)
         #expect(outcome.envelope.state == .refused)
         #expect(outcome.envelope.error?.code == "resubmitRefused")
         #expect(outcome.envelope.error?.reason == Self.gaveUpRefusal)
-        #expect(outcome.envelope.error?.repairAction == repair)
         #expect(outcome.envelope.result?["refusal"] == .string("refusedWalltime"))
+        let repair = outcome.envelope.error?.repairAction ?? ""
+        #expect(repair.contains(
+            "(steerlab-cli remote resubmit parent01 --url http://127.0.0.1:1 "
+                + "--walltime HH:MM:SS --json)"), "\(repair)")
+        #expect(repair.contains(
+            "retry walltime 1-00:00:00 (steerlab-cli remote resubmit parent01 "
+                + "--url http://127.0.0.1:1 --retry-refused-walltime --json)"),
+            "\(repair)")
+        #expect(repair != Self.serverGaveUpRepair)
+    }
+
+    /// Review round 10: a walltime SteerLab could not read is resumed with
+    /// an explicit one, aimed here; a typed repair that names no command is
+    /// the server's, verbatim.
+    @Test func otherTypedRepairsAreAimedHereOrPassedThrough() async throws {
+        let unreadable = try await refused(
+            code: "unreadableWalltime",
+            detail: "run parent01 was not resumed: SteerLab could not read the "
+                + "walltime its parts were refused at ('UNLIMITED')",
+            repair: "resume it with an explicit walltime within the cluster's "
+                + "limit for one job (steerlab-cli remote resubmit parent01 "
+                + "--walltime HH:MM:SS, or steerlab runner resubmit parent01 "
+                + "--walltime HH:MM:SS --runner <url>)")
+        #expect(unreadable.envelope.exitCode == 65)
+        #expect(unreadable.envelope.error?.repairAction.contains(
+            "(steerlab-cli remote resubmit parent01 --url http://127.0.0.1:1 "
+                + "--walltime HH:MM:SS --json)") == true)
+        let limit = "request a walltime within the cluster's limit for one job "
+            + "(--walltime), then resume the run again"
+        let scheduler = try await refused(
+            code: "schedulerRefused",
+            detail: "run parent01 was not resumed: the scheduler refuses what it "
+                + "asks for (QOSMaxWallDurationPerJobLimit)",
+            repair: limit)
+        #expect(scheduler.envelope.error?.repairAction == limit)
+    }
+
+    /// Review round 10: the study panel's Resume, refused with a typed
+    /// repair, says so on its status line instead of keeping the last one.
+    @MainActor @Test func theStudyPanelsStatusLineSaysTheResumeWasRefused() async throws {
+        let suite = "held-shards-resume-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let capability = try JSONSerialization.data(withJSONObject: [
+            "apiSchemaVersion": "2026-07-01", "engine": "python-hf-transformers",
+            "instrumentation": ["policy-evidence-v2", "policy-v1", "probe-readings-v1"],
+            "profile": ["profile": "cluster", "executor": "slurm"],
+            "cluster": ["jobStatus": true, "jobLogTail": true],
+            "remoteStudy": [:] as [String: Any],
+        ] as [String: Any])
+        let record = try JSONSerialization.data(withJSONObject: [
+            "id": "parent01", "status": "failed"])
+        let refusal = try JSONSerialization.data(withJSONObject: [
+            "detail": Self.gaveUpRefusal, "code": "refusedWalltime",
+            "repairAction": Self.serverGaveUpRepair])
+        HeldShardsStubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/capabilities": return (capability, 200)
+            case "/api/jobs/parent01": return (record, 200)
+            case "/api/jobs/parent01/resubmit": return (refusal, 409)
+            default: return (Data(#"{"detail":"no such route"}"#.utf8), 404)
+            }
+        }
+        defer { HeldShardsStubURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HeldShardsStubURLProtocol.self]
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://127.0.0.1:1")!),
+            session: URLSession(configuration: configuration))
+        let noWorkspace = FileManager.default.temporaryDirectory
+            .appending(component: "no-job-origins-\(UUID().uuidString)")
+        let jobs = StudyRemoteJobController(defaults: defaults, workspaceRoot: { noWorkspace })
+        jobs.recordOrigin(
+            .init(connection: client.profile, workspaceRoot: noWorkspace), jobID: "parent01")
+        jobs.remoteStatus = "submitted parent01"
+        await jobs.resume("parent01", client: client)
+        #expect(jobs.remoteStatus == "resume failed: \(Self.gaveUpRefusal)")
     }
 
     /// Review round 9: an older server sends the sentence alone. The repair
