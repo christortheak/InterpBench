@@ -122,6 +122,9 @@ def job_status(manager, job, *,
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
         document["shards"] = shards
+        held = [entry["jobId"] for entry in shards if entry.get("held")]
+        if held:
+            document["notes"].append(held_parts_note(len(held), len(shards)))
         late = [entry["jobId"] for entry in shards
                 if (entry.get("scheduler") or {}).get("timedOut")]
         if late:
@@ -157,6 +160,7 @@ def _unanswered(job, deadline_seconds: float) -> dict:
                                  "in a moment")},
         "schedulerOutcome": None, "schedulerOutcomeNote": None,
         "deathDetail": None, "progress": None, "notes": [],
+        **_held_fields(job),
     }
 
 
@@ -182,6 +186,7 @@ def _describe(manager, job, deadline: float | None = None) -> dict:
         "deathDetail": None,
         "progress": job_progress(job),
         "notes": [],
+        **_held_fields(job),
     }
     notes = entry["notes"]
     if result.get("resubmittedAs"):
@@ -199,8 +204,10 @@ def _describe(manager, job, deadline: float | None = None) -> dict:
         return _with_outcome_note(entry, waiting=False)
     slurm_id = job.executor_job_id
     if not slurm_id:
-        notes.append("no scheduler job id is on record yet (the submission "
-                     "may still be in progress, or it was a dry run)")
+        if not entry["held"]:
+            notes.append("no scheduler job id is on record yet (the "
+                         "submission may still be in progress, or it was a "
+                         "dry run)")
         return _with_outcome_note(entry, waiting=False)
     from .executors import is_scheduler_job_id
     if not is_scheduler_job_id(str(slurm_id)):
@@ -267,6 +274,34 @@ def _with_outcome_note(entry: dict, *, waiting: bool) -> dict:
         entry.get("schedulerOutcome"), waiting=waiting,
         cancel_requested=bool(entry.get("cancellationRequested")))
     return entry
+
+
+# --- held parts (issue #12) ---------------------------------------------------
+
+def _held_fields(job) -> dict:
+    """``held`` (the record's own stamp: ``reason``, ``since``,
+    ``schedulerMessage``, and the last refusal) and ``heldNote`` (a sentence)
+    for a part SteerLab holds because the cluster's job limit is reached;
+    both None otherwise. Beside the status, never a status value: a held
+    part reads ``pending``, which every client already treats as waiting."""
+    from .jobs import HELD_PART_NOTE, JobManager
+    if not JobManager.is_held(job):
+        return {"held": None, "heldNote": None}
+    stamp = job.result["held"]
+    held = {key: stamp.get(key) for key in
+            ("reason", "since", "schedulerMessage", "lastAttemptAt",
+             "lastRefusal") if stamp.get(key) is not None}
+    return {"held": held, "heldNote": HELD_PART_NOTE}
+
+
+def held_parts_note(held: int, parts: int) -> str:
+    """A split run's note when some of its parts are held."""
+    return (f"{held} of {parts} part{'' if parts == 1 else 's'} "
+            f"{'is' if held == 1 else 'are'} held by SteerLab: the cluster's "
+            "job limit is reached. The controller submits each held part, in "
+            "order, when a slot frees; while the controller is not running "
+            "they wait, and the run is merged only when every part has "
+            "finished")
 
 
 # --- progress ----------------------------------------------------------------

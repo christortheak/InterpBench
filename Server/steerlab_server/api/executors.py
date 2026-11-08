@@ -119,6 +119,85 @@ DEFAULT_SCHEDULER_TIMEOUT = 120.0
 SCHEDULER_TIMEOUT_EXIT = 124
 
 
+class SchedulerSubmitError(RuntimeError):
+    """sbatch did not accept a submission; the message is sbatch's own.
+
+    A ``RuntimeError``, so every caller that caught the plain one still does.
+    ``answered`` is False when sbatch never answered (it was abandoned at the
+    scheduler timeout): the submission may then have landed, and only a
+    search by its job name can say whether it did."""
+
+    def __init__(self, message: str, *, returncode: int | None = None):
+        super().__init__(message)
+        self.returncode = returncode
+
+    @property
+    def answered(self) -> bool:
+        return self.returncode != SCHEDULER_TIMEOUT_EXIT
+
+
+#: sbatch's words when the cluster refuses a job because this user, or this
+#: account, already has as many jobs submitted (waiting or running) as the
+#: scheduler allows (issue #12). The limit frees as those jobs leave the
+#: queue, so a part of a split run refused for one of these is HELD by
+#: SteerLab and submitted when a slot frees, never cancelled. The names are
+#: Slurm's own reason codes; matched case-insensitively anywhere in the
+#: message. The one list both the fan-out and the controller read.
+SUBMIT_LIMIT_REASONS = (
+    "QOSMaxSubmitJobPerUserLimit",
+    "QOSMaxSubmitJobPerAccountLimit",
+    "QOSGrpSubmitJobsLimit",
+    "AssocMaxSubmitJobLimit",
+    "AssocGrpSubmitJobsLimit",
+)
+
+#: sbatch's general sentence for an accounting or QOS refusal. On its own it
+#: does not say WHICH limit was met: a job count, which frees as jobs leave
+#: the queue, or a per-job size or time limit, which never does. So it is
+#: read as a job limit only once the same request has already been accepted
+#: (an earlier part of the same split run, which asks for exactly the same
+#: resources): only a count can then refuse it.
+SUBMIT_POLICY_REFUSAL = "Job violates accounting/QOS policy"
+
+#: Refusals that say "not now" rather than "never": the scheduler could not
+#: be reached, or the submission would cross a maintenance window. Read only
+#: by the controller's retry of a part it already holds, where cancelling
+#: accepted parts that have run for hours would throw away work that waiting
+#: keeps. A submission a person is waiting on answers them at once instead.
+SUBMIT_RETRY_LATER_MARKERS = (
+    "Unable to contact slurm controller",
+    "Socket timed out",
+    "temporarily unable to accept job",
+    "crosses a configured maintenance window",
+)
+
+
+def submit_refusal_kind(message: str | None) -> str | None:
+    """What an sbatch refusal says about waiting: ``"jobLimit"`` (a job-count
+    limit, by its reason code), ``"policy"`` (the general accounting/QOS
+    sentence, with no reason code), ``"retryLater"`` (the scheduler could not
+    be reached, or a maintenance window is in the way), or None (anything
+    else: waiting would not help)."""
+    text = (message or "").lower()
+    if any(reason.lower() in text for reason in SUBMIT_LIMIT_REASONS):
+        return "jobLimit"
+    if SUBMIT_POLICY_REFUSAL.lower() in text:
+        return "policy"
+    if any(marker.lower() in text for marker in SUBMIT_RETRY_LATER_MARKERS):
+        return "retryLater"
+    return None
+
+
+def is_job_limit_refusal(message: str | None, *,
+                         same_request_accepted: bool) -> bool:
+    """Whether an sbatch refusal means the cluster's job limit is reached, so
+    the part is held rather than the split run cancelled. The general
+    accounting/QOS sentence counts only when ``same_request_accepted``
+    (see ``SUBMIT_POLICY_REFUSAL``)."""
+    kind = submit_refusal_kind(message)
+    return kind == "jobLimit" or (kind == "policy" and same_request_accepted)
+
+
 def scheduler_timeout() -> float | None:
     raw = (os.environ.get(SCHEDULER_TIMEOUT_ENV) or "").strip()
     if not raw:
@@ -893,7 +972,9 @@ class SlurmExecutor:
                              capture_output=True, check=False,
                              cwd=bundle.bundle_dir)
         if proc.returncode != 0:
-            raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "sbatch failed")
+            raise SchedulerSubmitError(
+                proc.stderr.strip() or proc.stdout.strip() or "sbatch failed",
+                returncode=proc.returncode)
         return proc.stdout.strip().split()[-1]
 
     def find_job_by_name(self, name: str) -> str | None:

@@ -26,7 +26,7 @@ from . import housekeeping
 from . import instrument_family
 from .executors import (SlurmExecutor, SlurmResources, _parse_walltime,
                         first_crossing_window, normalized_dependency)
-from .jobs import JobManager
+from .jobs import HELD_PART_NOTE, JobManager
 from .profile import ServerProfile
 from .workspace_lock import submitting as _submitting_workspace
 
@@ -134,6 +134,10 @@ class StudySubmission:
     # Sharded fan-out (parallelJobs > 1): the K shard child JOB RECORD ids,
     # in shard order. None on unsharded submissions.
     shard_job_ids: list[str] | None = None
+    # Issue #12: the parts of a split run held by SteerLab because the
+    # cluster's job limit was reached (``_held_parts_summary``). None when
+    # every part was submitted, and on unsharded submissions.
+    shards_held: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -150,7 +154,23 @@ class StudySubmission:
             "submissionDirectory": self.submission_directory,
             "preflight": self.preflight,
             "shardJobIDs": self.shard_job_ids,
+            "shardsHeld": self.shards_held,
         }
+
+
+class ShardFanoutFailed(RuntimeError):
+    """A split run whose part the scheduler refused for a reason waiting
+    would not fix. The parts already submitted were cancelled and the parent
+    record is failed BEFORE this is raised, so the message names the record
+    and says what happened to each part. A ``RuntimeError``, so a submission
+    route answers it as it answers a refused single-job sbatch: an error,
+    never a 200 that a client would report as a success (issue #12).
+    ``submission`` is the failed parent's submission, for a caller that
+    reads the record back (``steerlab-server study submit``)."""
+
+    def __init__(self, message: str, *, submission: StudySubmission):
+        super().__init__(message)
+        self.submission = submission
 
 
 @_root_stays_put
@@ -954,6 +974,11 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
     shards still execute plain ``run``; the merge then seeds a pipeline
     ledger whose run stage is complete and submits ONE continuation job for
     the remaining stages.
+
+    A part the scheduler refuses for its job limit is held, with every part
+    after it, and the controller submits them as slots free (issue #12). A
+    part refused for any other reason cancels the parts already submitted,
+    fails the parent, and raises ``ShardFanoutFailed``.
     """
     status = "prepared" if dry_run else "submitted"
     # Failure-atomic fan-out (external review 2026-07-22, finding 3): the
@@ -1006,6 +1031,13 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
 
     child_ids: list[str] = []
     child_bundles: list = []
+    # Issue #12: once the scheduler refuses a part for its job limit, that
+    # part and every later one are HELD (a "pending" record that carries
+    # ``result.held``), never sent, and the controller submits them in order
+    # as slots free (``JobManager._submit_held_parts``). Accepted parts keep
+    # running: compute already granted is never cancelled when waiting does.
+    held: dict | None = None
+    held_ids: list[str] = []
     index = 0
     try:
         for index in range(parallel):
@@ -1032,26 +1064,42 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
             child_bundles.append(bundle)
             slurm_id: str | None = None
             log = (f"prepared shard {index}/{parallel} of {experiment}:{verb}")
-            if not dry_run:
-                slurm_id = SlurmExecutor(profile).submit(bundle)
-                log = (f"submitted shard {index}/{parallel} of "
-                       f"{experiment}:{verb} as Slurm job {slurm_id}")
+            if not dry_run and held is None:
+                try:
+                    slurm_id = SlurmExecutor(profile).submit(bundle)
+                except Exception as exc:  # noqa: BLE001 - re-raised unless held
+                    held = _held_for_job_limit(exc, accepted=len(child_ids))
+                    if held is None:
+                        raise
+                else:
+                    log = (f"submitted shard {index}/{parallel} of "
+                           f"{experiment}:{verb} as Slurm job {slurm_id}")
+            if held is not None:
+                log = (f"held shard {index}/{parallel} of {experiment}:{verb}: "
+                       + HELD_PART_NOTE + f" (the scheduler said: "
+                       f"{held['schedulerMessage']})")
             stamped = _stamped_resources(bundle, manifest, preflight, overridden,
                                          records_dir=records_dir,
                                          prompt_reading_plan=prompt_reading_plan)
             stamped.update({"shardIndex": index, "shardCount": parallel,
                             "parentJob": parent_job_id})
+            child_result = {"runBundle": meta, "slurmBundle": bundle.to_dict(),
+                            "recordsDirectory": records_dir,
+                            "submissionDirectory": submission_dir,
+                            "parentJob": parent_job_id,
+                            "shard": {"index": index, "count": parallel}}
+            if held is not None:
+                child_result["held"] = dict(held)
             jobs.record_external(
-                "study-submit-bundle-shard", status=status, executor="slurm",
-                executor_job_id=slurm_id, job_id=child_id,
-                requested_resources=stamped,
-                result={"runBundle": meta, "slurmBundle": bundle.to_dict(),
-                        "recordsDirectory": records_dir,
-                        "submissionDirectory": submission_dir,
-                        "parentJob": parent_job_id,
-                        "shard": {"index": index, "count": parallel}},
-                log=log)
+                "study-submit-bundle-shard",
+                # "pending": an existing status every reader already treats
+                # as waiting and not terminal. ``result.held`` says why.
+                status="pending" if held is not None else status,
+                executor="slurm", executor_job_id=slurm_id, job_id=child_id,
+                requested_resources=stamped, result=child_result, log=log)
             child_ids.append(child_id)
+            if held is not None:
+                held_ids.append(child_id)
             # Attach as we go: a crash/failure at shard k must leave the
             # already-submitted shards owned by (and visible under) the
             # parent record.
@@ -1075,10 +1123,17 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
         parent.finished_at = time.time()
         parent.log(parent.error)
         jobs.store.update(parent)
-        return StudySubmission(parent.id, experiment, verb, "slurm", dry_run,
-                               meta, None, None, [], records_dir,
-                               submission_dir, preflight=preflight,
-                               shard_job_ids=None)
+        failed = StudySubmission(parent.id, experiment, verb, "slurm", dry_run,
+                                 meta, None, None, [], records_dir,
+                                 submission_dir, preflight=preflight,
+                                 shard_job_ids=None)
+        # Issue #12: answered as an error, like a refused single-job sbatch,
+        # so no client reports a split run that never started as a success.
+        raise ShardFanoutFailed(
+            f"the split run was not started, and its record, job "
+            f"{parent.id}, is failed: {parent.error}. Correct what the "
+            "scheduler said, then submit the study again",
+            submission=failed) from exc
 
     log = (f"sharded across {parallel} GPU jobs: {experiment}:{verb} "
            f"fanned out as {parallel} sibling Slurm submissions "
@@ -1086,6 +1141,11 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
            "one run when every shard succeeds")
     if dry_run:
         log = f"prepared sharded submission ({parallel} shards, dry run)"
+    shards_held = None
+    if held_ids:
+        shards_held = _held_parts_summary(held, held_ids, parallel)
+        log = (f"sharded across {parallel} GPU jobs: {experiment}:{verb}; "
+               + shards_held["message"] + " Held: " + ", ".join(held_ids))
     if overridden:
         log += " (PREFLIGHT OVERRIDDEN: verdict fail, forced by caller)"
     parent.status = status
@@ -1099,7 +1159,42 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
     return StudySubmission(parent.id, experiment, verb, "slurm", dry_run,
                            meta, first.to_dict(), None, first.command,
                            records_dir, submission_dir, preflight=preflight,
-                           shard_job_ids=child_ids)
+                           shard_job_ids=child_ids, shards_held=shards_held)
+
+
+def _held_for_job_limit(exc: BaseException, *, accepted: int) -> dict | None:
+    """The ``result.held`` stamp for a part sbatch refused for the cluster's
+    job limit, or None when the refusal was for anything else (the fan-out
+    then cancels and fails, as before). ``accepted`` is how many parts of
+    this split run the scheduler has already taken: they asked for exactly
+    the same resources, so after one was accepted the scheduler's general
+    accounting sentence can only mean a job count."""
+    from .executors import is_job_limit_refusal
+    message = str(exc).strip()
+    if not is_job_limit_refusal(message, same_request_accepted=accepted > 0):
+        return None
+    return {"reason": "clusterJobLimit", "since": time.time(),
+            "schedulerMessage": message[:300]}
+
+
+def _held_parts_summary(held: dict | None, held_ids: list[str],
+                        parallel: int) -> dict:
+    """``StudySubmission.shards_held``: which parts wait, why, and one
+    sentence a client prints as it is."""
+    count = len(held_ids)
+    submitted = parallel - count
+    message = (
+        f"{submitted} of {parallel} parts were submitted now; {count} "
+        f"{'is' if count == 1 else 'are'} held by SteerLab because the "
+        "cluster's job limit is reached. The controller submits each held "
+        "part, in order, when a slot frees; while the controller is not "
+        "running they wait. The run is merged when every part has finished.")
+    return {"reason": (held or {}).get("reason", "clusterJobLimit"),
+            "count": count, "partCount": parallel,
+            "submittedCount": submitted, "jobIDs": list(held_ids),
+            "since": (held or {}).get("since"),
+            "schedulerMessage": (held or {}).get("schedulerMessage"),
+            "message": message}
 
 
 def _read_child_record(record_path: str) -> dict:
