@@ -739,9 +739,27 @@ public struct ExperimentCLIRunner: Sendable {
     }
 
     /// The repair for a refused `remote resubmit`, chosen from the server's
-    /// own sentence. A cancelled job the scheduler has not yet confirmed as
-    /// stopped needs only time; every other refusal points at the record.
-    static func resubmitRefusalRepair(detail: String) -> String {
+    /// own sentence, when the server sent none of its own (an older one). A
+    /// cancelled job the scheduler has not yet confirmed as stopped needs
+    /// only time. A split run that gave up after a day of refusals without
+    /// a reason has two ways on, named as full commands (issue #12, review
+    /// round 9): resubmitting the study would start it over. Every other
+    /// refusal points at the record.
+    static func resubmitRefusalRepair(
+        detail: String, jobID: String = "<job-id>", target: String? = nil
+    ) -> String {
+        if detail.contains("--retry-refused-walltime") {
+            let command = "steerlab-cli remote resubmit \(jobID)"
+                + (target.map { " \($0)" } ?? "")
+            let refused = Self.refusedWalltime(inRefusal: detail)
+            return "choose one: resume it with a walltime within the cluster's "
+                + "limit for one job (\(command) --walltime HH:MM:SS --json), "
+                + "or, if the cause was the cluster's job limit and slots have "
+                + "freed, retry "
+                + (refused.map { "walltime \($0)" } ?? "the same walltime")
+                + " (\(command) --retry-refused-walltime --json). The responses "
+                + "it completed are kept either way; do not submit the study again"
+        }
         if detail.localizedCaseInsensitiveContains("then try again") {
             return "wait a minute for the cancelled job to stop, then run "
                 + "the same `steerlab-cli remote resubmit` command again; "
@@ -753,6 +771,15 @@ public struct ExperimentCLIRunner: Sendable {
             + "study run that kept the responses it completed. A succeeded "
             + "or failed job, or a cancelled one that kept nothing, is "
             + "re-run by submitting the study again"
+    }
+
+    /// The walltime a gave-up run's refusal names ("… refused its parts at
+    /// walltime 1-00:00:00, without a reason …"), when it names one.
+    static func refusedWalltime(inRefusal detail: String) -> String? {
+        guard let start = detail.range(of: "at walltime ") else { return nil }
+        let rest = detail[start.upperBound...]
+        let value = rest.prefix { !$0.isWhitespace && $0 != "," }
+        return value.isEmpty ? nil : String(value)
     }
 
     /// A well-formed local workspace action the Python client declined
@@ -3168,7 +3195,8 @@ public struct ExperimentCLIRunner: Sendable {
             // sbatch's command line (flag beats header), never the script.
             guard args.count >= 2 else {
                 throw ExperimentError(
-                    reason: "usage: remote resubmit <job-id> [--walltime hh:mm:ss]")
+                    reason: "usage: remote resubmit <job-id> [--walltime hh:mm:ss] "
+                        + "[--retry-refused-walltime]")
             }
             let resubmitJobID = args[1]
             let walltimeRequested = flag("--walltime")
@@ -3208,6 +3236,18 @@ public struct ExperimentCLIRunner: Sendable {
                         "waitedSeconds": .number(unknown.waitedSeconds),
                         "retried": .bool(false),
                     ])
+            } catch let refusal as ResubmitRefusal {
+                // Review round 9: the server named the way on (a run that
+                // gave up at a walltime, a limit that never frees). Agents
+                // follow repairAction, so it is the server's, verbatim.
+                sink.err("steerlab-cli remote: \(refusal.detail)\n")
+                throw ExperimentCLIStop(
+                    exitCode: 1, state: .refused, code: "resubmitRefused",
+                    reason: refusal.detail, repairAction: refusal.repairAction,
+                    payload: [
+                        "jobID": .string(resubmitJobID),
+                        "refusal": .string(refusal.code),
+                    ])
             } catch let ClusterClient.ClientError.badResponse(status, detail)
                 where status == 409
             {
@@ -3221,7 +3261,10 @@ public struct ExperimentCLIRunner: Sendable {
                 throw ExperimentCLIStop(
                     exitCode: 1, state: .refused, code: "resubmitRefused",
                     reason: detail,
-                    repairAction: Self.resubmitRefusalRepair(detail: detail),
+                    repairAction: Self.resubmitRefusalRepair(
+                        detail: detail, jobID: resubmitJobID,
+                        target: siteID.map { "--site \($0)" }
+                            ?? "--url \(url.absoluteString)"),
                     payload: ["jobID": .string(resubmitJobID)])
             } catch let ClusterClient.ClientError.badResponse(status, detail)
                 where status == 404

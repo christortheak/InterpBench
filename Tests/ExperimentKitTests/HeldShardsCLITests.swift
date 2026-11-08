@@ -33,7 +33,10 @@ import Testing
         ]
     }
 
-    func run(_ args: [String], routes: [String: (Int, Any)]) async throws -> Outcome {
+    func run(
+        _ args: [String], routes: [String: (Int, Any)],
+        target: [String] = ["--url", "http://127.0.0.1:1", "--token", "stub"]
+    ) async throws -> Outcome {
         var capabilityBody: [String: Any] = [
             "apiSchemaVersion": "2026-07-01", "engine": "python-hf-transformers",
             "instrumentation": ["policy-evidence-v2", "policy-v1", "probe-readings-v1"],
@@ -83,7 +86,7 @@ import Testing
         let result = await ExperimentCLIRunner.$remoteSessionOverride.withValue(session) {
             await ExperimentCLIRunner(sink: sink).run(
                 namespace: "remote",
-                args + ["--url", "http://127.0.0.1:1", "--token", "stub"])
+                args + target)
         }
         return Outcome(
             envelope: result.envelope, stdout: stdout.withLock { $0 },
@@ -339,6 +342,106 @@ import Testing
                     "\(flag)")
             #expect(body?["walltime"] == nil, "\(flag)")
         }
+    }
+
+    static let gaveUpRefusal =
+        "run parent01 was not resumed: the scheduler refused its parts at "
+        + "walltime 1-00:00:00, without a reason, for a day (sbatch: error: "
+        + "Job violates accounting/QOS policy), and this Resume would ask for "
+        + "that walltime again. The cause may have been the cluster's job "
+        + "limit, which frees as jobs end, or a limit on that walltime, which "
+        + "does not. Choose one: resume it with a walltime within the "
+        + "cluster's limit for one job (steerlab-cli remote resubmit parent01 "
+        + "--walltime HH:MM:SS, or steerlab runner resubmit parent01 "
+        + "--walltime HH:MM:SS --runner <url>), or, if the cause was the job "
+        + "limit and slots have freed, retry walltime 1-00:00:00 (steerlab-cli "
+        + "remote resubmit parent01 --retry-refused-walltime, or steerlab "
+        + "runner resubmit parent01 --retry-refused-walltime --runner <url>). "
+        + "Nothing was submitted, and the responses it completed are kept"
+
+    /// Review round 9: agents follow repairAction. For a run that gave up,
+    /// it is the server's own repair, naming both ways on, never "submit
+    /// the study again".
+    @Test func aRefusedRetryCarriesTheServersRepair() async throws {
+        let repair =
+            "Choose one: resume it with a walltime within the cluster's limit "
+            + "for one job (steerlab-cli remote resubmit parent01 --walltime "
+            + "HH:MM:SS), or retry walltime 1-00:00:00 (steerlab-cli remote "
+            + "resubmit parent01 --retry-refused-walltime)"
+        let outcome = try await run(
+            ["resubmit", "parent01", "--json"],
+            routes: [
+                "/api/jobs/parent01": (200, ["id": "parent01", "status": "failed"]),
+                "/api/jobs/parent01/resubmit": (409, [
+                    "detail": Self.gaveUpRefusal, "code": "refusedWalltime",
+                    "repairAction": repair,
+                ]),
+            ])
+        #expect(outcome.envelope.exitCode == 65)
+        #expect(outcome.envelope.state == .refused)
+        #expect(outcome.envelope.error?.code == "resubmitRefused")
+        #expect(outcome.envelope.error?.reason == Self.gaveUpRefusal)
+        #expect(outcome.envelope.error?.repairAction == repair)
+        #expect(outcome.envelope.result?["refusal"] == .string("refusedWalltime"))
+    }
+
+    /// Review round 9: an older server sends the sentence alone. The repair
+    /// is still the two ways on, as full commands for this server.
+    @Test func aRefusedRetryFromAnOlderServerStillNamesBothWaysOn() async throws {
+        let outcome = try await run(
+            ["resubmit", "parent01", "--json"],
+            routes: [
+                "/api/jobs/parent01": (200, ["id": "parent01", "status": "failed"]),
+                "/api/jobs/parent01/resubmit": (409, ["detail": Self.gaveUpRefusal]),
+            ])
+        #expect(outcome.envelope.exitCode == 65)
+        let repair = outcome.envelope.error?.repairAction ?? ""
+        #expect(repair.contains(
+            "steerlab-cli remote resubmit parent01 --url http://127.0.0.1:1 "
+                + "--walltime HH:MM:SS --json"))
+        #expect(repair.contains(
+            "retry walltime 1-00:00:00 (steerlab-cli remote resubmit parent01 "
+                + "--url http://127.0.0.1:1 --retry-refused-walltime --json)"))
+        #expect(!repair.contains("re-run by submitting the study again"))
+        #expect(repair.contains("do not submit the study again"))
+        // Any other refusal keeps the record-pointing repair.
+        #expect(ExperimentCLIRunner.resubmitRefusalRepair(
+            detail: "job abc was already resubmitted as def")
+            .contains("re-run by submitting the study again"))
+        #expect(ExperimentCLIRunner.refusedWalltime(inRefusal: Self.gaveUpRefusal)
+            == "1-00:00:00")
+    }
+
+    /// Review round 9: the app shows the server's repair for such a refusal,
+    /// and labels the retry the same in its row and its menu.
+    @Test func theAppPresentsTheRepairAndOneLabel() {
+        let refusal = ResubmitRefusal(
+            detail: "run parent01 was not resumed", code: "refusedWalltime",
+            repairAction: "Choose one: resume it within the limit, or retry")
+        let presented = RefusalPresentation(refusal, context: "Couldn't resume job parent01.")
+        #expect(presented.whatToDo.hasPrefix("Choose one: resume it within the limit"))
+        #expect(presented.reason.contains("Run parent01 was not resumed"))
+        #expect(RemoteJobStatusClass.refusedWalltimeRetryLabel(walltime: "02:00:00")
+            == "Retry at 02:00:00…")
+        #expect(ResubmitRefusal.from(errorBody: #"{"detail":"no"}"#) == nil)
+        #expect(ResubmitRefusal.from(
+            errorBody: #"{"detail":"no","repairAction":"do this"}"#)
+            == ResubmitRefusal(detail: "no", code: "resubmitRefused", repairAction: "do this"))
+        let consequence = RemoteJobStatusClass.refusedWalltimeRetryConsequence(
+            walltime: "02:00:00", jobID: "parent01")
+        #expect(consequence.contains("Retrying asks for 02:00:00 again"))
+    }
+
+    /// Review round 9: `remote resubmit` with no job id names every flag it
+    /// takes. (No target flag, so the job id is missing; the stub session
+    /// answers anything that would be sent.)
+    @Test func theResubmitUsageNamesTheRetryFlag() async throws {
+        let outcome = try await run(["resubmit"], routes: [:], target: [])
+        #expect(outcome.envelope.exitCode != 0)
+        let said = outcome.stderr + (outcome.envelope.error?.reason ?? "")
+        #expect(said.contains(
+            "usage: remote resubmit <job-id> [--walltime hh:mm:ss] "
+                + "[--retry-refused-walltime]"), "\(said)")
     }
 
     @Test func aResumeWhosePartsContinueIsReady() async throws {

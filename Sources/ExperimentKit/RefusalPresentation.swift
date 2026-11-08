@@ -204,6 +204,8 @@ public struct RefusalPresentation: Codable, Sendable, Equatable, Hashable {
             return Parts(detail: error.reason, repair: error.repair)
         case let error as DemoWorkspace.Refusal:
             return Parts(detail: error.reason, repair: error.repair, code: error.code.rawValue)
+        case let error as ResubmitRefusal:
+            return Parts(detail: error.detail, repair: error.repairAction, code: error.code)
         case let error as DecodingError:
             return Parts(detail: describe(error))
         case let error as LocalizedError:

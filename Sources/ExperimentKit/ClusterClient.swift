@@ -703,6 +703,44 @@ public struct RemoteJobCancelResume: Codable, Sendable, Equatable {
     }
 }
 
+/// A resume the server refused and named the way on for (issue #12, review
+/// round 9): `detail` is its sentence, `repairAction` its repair, `code`
+/// what kind of refusal it was (`refusedWalltime`, `schedulerRefused`).
+/// Thrown by `resubmitJob` only for a 409 that carries `repairAction`
+/// beside its plain `detail`; every other refusal, and every refusal from an
+/// older server, is still `ClientError.badResponse(409, detail)`.
+public struct ResubmitRefusal: Error, CustomStringConvertible, LocalizedError, Equatable {
+    public let detail: String
+    public let code: String
+    public let repairAction: String
+
+    public init(detail: String, code: String, repairAction: String) {
+        self.detail = detail
+        self.code = code
+        self.repairAction = repairAction
+    }
+
+    public var description: String { detail }
+    public var errorDescription: String? { detail }
+
+    /// The refusal a 409 body carries with its repair; nil for a body
+    /// without one.
+    public static func from(errorBody: String) -> ResubmitRefusal? {
+        struct Body: Decodable {
+            var detail: String
+            var code: String?
+            var repairAction: String?
+        }
+        guard let data = errorBody.data(using: .utf8),
+            let body = try? JSONDecoder().decode(Body.self, from: data),
+            let repair = body.repairAction?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !repair.isEmpty
+        else { return nil }
+        return ResubmitRefusal(
+            detail: body.detail, code: body.code ?? "resubmitRefused", repairAction: repair)
+    }
+}
+
 /// `POST /api/jobs/{id}/cancel` — the server's answer to an accepted cancel.
 /// For a study run it says that completed responses are kept and whether
 /// the run can be resumed; older servers answer `{"ok": true}` alone.
@@ -968,6 +1006,12 @@ public enum RemoteJobStatusClass: Sendable, Equatable {
         return walltime
     }
 
+    /// The retry's label, the same on the row's button and in its menu
+    /// (review round 9).
+    public static func refusedWalltimeRetryLabel(walltime: String) -> String {
+        "Retry at \(walltime)…"
+    }
+
     /// The control's help text for that retry.
     public static let refusedWalltimeRetryHelp =
         "retry this run at the walltime the scheduler refused without a "
@@ -979,12 +1023,12 @@ public enum RemoteJobStatusClass: Sendable, Equatable {
         walltime: String, jobID: String
     ) -> String {
         "The scheduler refused this run's parts at walltime \(walltime), "
-            + "without a reason, for a day. If the cause was the cluster's "
-            + "job limit and slots have freed, retrying the same walltime lets "
-            + "the run continue. If the walltime is above the cluster's limit "
-            + "for one job, the parts will be refused again, for up to another "
-            + "day. To resume with a different walltime, run: steerlab-cli "
-            + "remote resubmit \(jobID) --walltime HH:MM:SS"
+            + "without a reason, for a day. Retrying asks for \(walltime) "
+            + "again. If the cause was the cluster's job limit and slots have "
+            + "freed, the run continues. If the walltime is above the cluster's "
+            + "limit for one job, the parts will be refused again, for up to "
+            + "another day. To resume with a different walltime, run: "
+            + "steerlab-cli remote resubmit \(jobID) --walltime HH:MM:SS"
     }
 
     /// The Resume control's help text for a cancelled job that can continue.
@@ -3496,6 +3540,13 @@ public struct ClusterClient: Sendable {
                     cause: cause, waitedSeconds: Self.studySubmissionTimeout)
             }
         } catch let error as ClientError {
+            // Review round 9: a refusal that names its way on keeps it, so
+            // the command line's repairAction is the server's.
+            if case .badResponse(409, let text) = error,
+                let refusal = ResubmitRefusal.from(errorBody: text)
+            {
+                throw refusal
+            }
             throw Self.unwrappingDetail(error)
         }
     }

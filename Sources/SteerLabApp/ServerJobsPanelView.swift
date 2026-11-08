@@ -637,7 +637,7 @@ struct ServerJobsPanelView: View {
             if let walltime = RemoteJobStatusClass.refusedWalltimeRetry(
                 cancelResume: job.cancelResume)
             {
-                Button("Retry at \(walltime)…") {
+                Button(RemoteJobStatusClass.refusedWalltimeRetryLabel(walltime: walltime)) {
                     retryRefusedTarget = RetryRefusedTarget(id: job.id, walltime: walltime)
                 }
                 .buttonStyle(.borderless)
@@ -681,7 +681,7 @@ struct ServerJobsPanelView: View {
             if let walltime = RemoteJobStatusClass.refusedWalltimeRetry(
                 cancelResume: job.cancelResume)
             {
-                Button("Retry at Walltime \(walltime)…") {
+                Button(RemoteJobStatusClass.refusedWalltimeRetryLabel(walltime: walltime)) {
                     retryRefusedTarget = RetryRefusedTarget(id: job.id, walltime: walltime)
                 }
                 .help(RemoteJobStatusClass.refusedWalltimeRetryHelp)
