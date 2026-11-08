@@ -49,12 +49,16 @@ migration that rewrites frozen bytes.
   submission, which the server answers only after measuring every task
   prompt. A submission that was sent but not answered is reported as
   `submitOutcomeUnknown` (pending, exit 12), with advice to list the jobs
-  before submitting again. A server that advertises `cluster.submissionKey`
-  answers a repeat of the same submission with the job it already made.
-  Prompts are counted once per submission, and faster, with identical
-  counts. The walltime estimate for answer-token readouts now scales with
-  prompt length, and says plainly when its history came from much shorter
-  items.
+  before submitting again. The Python client's `run` gives the exact
+  command to repeat. A server that advertises `cluster.submissionKey`
+  answers the same command with the same flags, from the same client, with
+  the job it already made, however often the study is repackaged, and
+  reports the job as it is now. A repeat from the other client is not
+  recognised. Prompts are counted once per submission, and faster, with
+  identical counts. The walltime estimate for answer-token readouts now
+  scales with prompt length, pooled across the whole history. When the
+  items are far longer or shorter than anything the history read, it warns
+  in plain words rather than refusing on the estimate alone.
 - **A split run that meets the cluster's job limit waits instead of
   cancelling itself** (public issue #12). When the scheduler refuses a part
   of a `--parallel` run because your job limit is reached, the parts already
@@ -63,7 +67,13 @@ migration that rewrites frozen bytes.
   part. Held parts survive a controller restart, cancelling the run
   withdraws them, and Resume on a cancelled run holds them again. A part
   refused for any other reason still cancels the run, and the submission now
-  exits nonzero on both clients.
+  exits nonzero on both clients. A held part that the scheduler refuses for
+  a limit that never frees, such as a walltime above the cluster's maximum
+  for one job, fails its run with the scheduler's words and a repair. It
+  never holds up another run's parts, and a Resume that asks for such a
+  walltime is refused at once. The searches that keep a part from being
+  submitted twice now reach back to their own record's time, across
+  midnight, and an inconclusive search is never read as absence.
 
 ## [0.9.21] — 2026-11-06
 
