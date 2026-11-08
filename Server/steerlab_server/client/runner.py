@@ -839,6 +839,24 @@ class RunnerClient:
         return self.scrub(json.dumps(body, sort_keys=True)[:500]
                           if body is not None else "")
 
+    def _repair_of(self, response) -> str | None:
+        """The runner's own repair for a refusal, when it sends one: a
+        ``repairAction`` beside ``detail``, or inside a structured
+        ``detail`` (review round 9). None otherwise, and for any body this
+        cannot read."""
+        try:
+            body = response.json()
+        except Exception:      # noqa: BLE001 - no repair is not an error
+            return None
+        if not isinstance(body, dict):
+            return None
+        detail = body.get("detail")
+        for holder in (body, detail if isinstance(detail, dict) else {}):
+            repair = holder.get("repairAction")
+            if isinstance(repair, str) and repair.strip():
+                return self.scrub(repair.strip()[:1000])
+        return None
+
     def _raise_for_status(self, response, *, url: str) -> None:
         if response.status_code < 400:
             return
@@ -884,7 +902,7 @@ class RunnerClient:
         if status < 500:
             raise RunnerHTTPError(
                 status, detail, url=url, code="runnerRefused", state="refused",
-                repair_action=(
+                repair_action=self._repair_of(response) or (
                     "the runner declined this request — read its reason "
                     "above; it is the engine's own sentence, not this "
                     "client's paraphrase of one."))

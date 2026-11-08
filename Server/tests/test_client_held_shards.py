@@ -185,9 +185,10 @@ POLICY = ("sbatch: error: Batch job submission failed: Job violates "
 
 def test_a_gave_up_run_retries_the_same_walltime_only_when_asked(
         wired_cli, fake_slurm, tmp_path, monkeypatch, capsys):
-    """Review round 8: a run that gave up after a day of refusals without a
-    reason is refused at the same walltime (65) with both ways on named,
-    and resumes at it with --retry-refused-walltime."""
+    """Review rounds 8 and 9: a run that gave up after a day of refusals
+    without a reason is refused at the same walltime (65) with both ways on
+    named in the reason and the repair, and resumes at exactly that walltime
+    with --retry-refused-walltime."""
     monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "0")
     monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", LIMIT)
     code, document, _ = _submit_split_run(wired_cli, tmp_path, monkeypatch,
@@ -224,18 +225,30 @@ def test_a_gave_up_run_retries_the_same_walltime_only_when_asked(
             "for a day") in envelope["error"]["reason"]
     assert (f"steerlab runner resubmit {parent_id} --retry-refused-walltime "
             "--runner <url>") in envelope["error"]["reason"]
+    # Review round 9: the repair is the runner's, naming both ways on, not
+    # the client's generic "read its reason".
+    repair = envelope["error"]["repairAction"]
+    assert repair.startswith("Choose one: resume it with a walltime within")
+    assert (f"steerlab runner resubmit {parent_id} --walltime HH:MM:SS "
+            "--runner <url>") in repair
+    assert f"retry walltime {walltime} (" in repair
     assert len(fake_slurm.calls("sbatch")) == calls
 
     code = client_cli.main(["runner", "resubmit", parent_id,
                             "--retry-refused-walltime", *RUNNER, "--json"])
     envelope = _documents(capsys.readouterr().out)[-1]
     assert code == 0, envelope
-    resumed = envelope["result"]["response"]["resumedShards"]
-    assert [entry["held"] for entry in resumed] == [True, True, True]
-    # At the parts' own walltime, the controller submits them, in order.
+    response = envelope["result"]["response"]
+    assert response["retriedRefusedWalltime"] == walltime
+    resumed = response["resumedShards"]
+    # Review round 9: the first part is handed to the scheduler in the
+    # request, at the walltime that was refused; the controller submits the
+    # rest, in order, at it.
+    assert [entry["held"] for entry in resumed] == [False, True, True]
     jobs._held_retry_after = 0.0
     jobs.poll_slurm()
-    assert len(fake_slurm.calls("sbatch")) == calls + 3
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 3 and all(f"--time={walltime}" in call for call in sent)
     assert all(jobs.get(entry["jobId"]).status == "submitted"
                for entry in resumed)
 
