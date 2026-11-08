@@ -148,12 +148,15 @@ and tell the researcher. A Resume held for a job count, or for a scheduler
 that did not answer, says until what (`heldReason`) and succeeds. SteerLab
 asks about a part refused without a reason less and less often, and after
 24 hours of such refusals fails the run with the scheduler's words (never
-while another part of it runs). To resume that run, choose: a walltime
-within the cluster's limit for one job (`steerlab-cli remote resubmit
-<job-id> --walltime HH:MM:SS`), or, if the cause was the job limit and slots
-have freed, the same walltime (`steerlab-cli remote resubmit <job-id>
---retry-refused-walltime`). A Resume at that walltime without the flag is
-refused (65), and its reason names both choices. An engine older than this answers a
+while another part of it is with the scheduler). To resume that run, choose:
+a walltime within the cluster's limit for one job (`steerlab-cli remote
+resubmit <job-id> --walltime HH:MM:SS`), or, if the cause was the job limit
+and slots have freed, the walltime that was refused (`steerlab-cli remote
+resubmit <job-id> --retry-refused-walltime`, which asks for exactly that
+walltime, even one an earlier `--walltime` set, and answers with what the
+scheduler did with it). A Resume at that walltime without the flag is
+refused (65), and its reason and repair name both choices. An engine older
+than this answers a
 refused fan-out as a success, so on one, check `steerlab-cli remote jobs`
 and count the parts. **And stagger submissions where the site caps queued jobs per user:**
 K shards are K independent scheduler submissions, so a fan-out that crosses
@@ -286,7 +289,7 @@ performed by the running runner service, not by the submitting process. A
 run that stopped after a day of refusals without a reason resumes with
 `steerlab runner resubmit <job-id> --walltime HH:MM:SS --runner <url>` within
 the cluster's limit for one job, or, if the cause was the job limit, at the
-same walltime with `--retry-refused-walltime`.
+walltime that was refused with `--retry-refused-walltime`.
 
 ### Resuming a checkpointed job
 

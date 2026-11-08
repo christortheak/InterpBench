@@ -4510,12 +4510,22 @@ Consequences, stated plainly:
   either resume with a walltime within the cluster's limit for one job
   (`steerlab-cli remote resubmit <job-id> --walltime HH:MM:SS`, or `steerlab
   runner resubmit <job-id> --walltime HH:MM:SS --runner <url>`), or, if the
-  cause was the job limit and slots have freed, retry the same walltime
-  (`--retry-refused-walltime` on either, sent as `retryRefusedWalltime:
-  true`). The app's Resume sends no walltime: for such a run its line names
-  both commands, and it offers a retry at the refused walltime only after a
+  cause was the job limit and slots have freed, retry the walltime that was
+  refused (`--retry-refused-walltime` on either, sent as
+  `retryRefusedWalltime: true`). The refusal's 409 carries the same two
+  choices typed beside its `detail` (`code: "refusedWalltime"`,
+  `repairAction`), and both clients make that their `repairAction`; a Mac
+  client facing an older server builds the same choices as full commands.
+  A retry without `--walltime` asks for exactly the walltime in `heldGaveUp`,
+  even one an earlier Resume's `--walltime` set, and hands the first part to
+  the scheduler in the request, as an explicit `--walltime` does: the answer
+  carries `retriedRefusedWalltime` and says what the scheduler did (the parts
+  continue, are held for the job limit with `heldReason`, are held without a
+  reason with `heldUnexplained`, or the Resume is refused, and the run stays
+  stopped). The app's Resume sends no walltime: for such a run its line names
+  both commands, and it offers "Retry at <walltime>…" only after a
   confirmation that says what that risks, and only when the server named the
-  walltime (`cancelResume.refusedWalltime`; review rounds 7 and 8). A named
+  walltime (`cancelResume.refusedWalltime`; review rounds 7 to 9). A named
   job count, or the part's acceptance, ends the count. A Resume whose first
   held part is refused that way answers
   `heldUnexplained: true` with `schedulerMessage`, says the parts are held,

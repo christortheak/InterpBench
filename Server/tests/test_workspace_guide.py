@@ -408,3 +408,8 @@ def test_the_held_resume_answers_are_named_where_they_are_described():
     # The sentence that names `pending` describes the held Resume alone.
     sentence = text[text.rfind('. ', 0, pending):pending]
     assert 'refused walltime' not in sentence and 'gave up' not in sentence
+    # Review round 9: a queued part keeps a run from giving up too, and the
+    # retry asks for the walltime that was refused, whatever set it.
+    assert '(never while another part of it is with the scheduler)' in text
+    assert 'while another part of it runs' not in text
+    assert 'which asks for exactly that walltime, even one an earlier `--walltime` set' in text
