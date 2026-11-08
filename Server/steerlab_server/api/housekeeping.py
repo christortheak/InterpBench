@@ -670,9 +670,21 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
     stamped samples are normalized to that basis before entering the mean
     (records-per-hour is taken as inverse-linear in generated tokens).
     The global entry never carries a basis: it keeps its historical meaning.
+
+    Since public issue #11 a family entry also carries ``promptTokens``:
+    ``{"basis", "recordsPerHour", "samples"}``, from the jobs whose preflight
+    stamped the prompt tokens per record they read. ``basis`` is the first
+    such job's; for a family whose record time grows with prompt length
+    (``PROMPT_BOUNDED_FAMILIES``) each later sample is normalized to it
+    (records-per-hour taken as inverse-linear in prompt tokens) before it
+    enters that block's own mean. The block is additive and separate from the
+    entry's historical mean, so an entry folded before prompt lengths were
+    stamped gains a prompt basis from its next stamped job, and an older
+    reader never sees its mean change.
     """
     from .jobs import TERMINAL  # local import: jobs.py imports us lazily
-    from .instrument_family import stamped_family, stamped_max_tokens
+    from .instrument_family import (PROMPT_BOUNDED_FAMILIES, stamped_family,
+                                    stamped_max_tokens, stamped_prompt_tokens)
     profile = profile or ServerProfile.from_env()
     with _IO_LOCK:
         table = read_throughput(profile)
@@ -695,6 +707,7 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
             rate = count / (elapsed / 3600.0)
             family = stamped_family(job.requested_resources)
             tokens = stamped_max_tokens(job.requested_resources)
+            prompt_tokens = stamped_prompt_tokens(job.requested_resources)
             for bucket in (None, family) if family else (None,):
                 entry = next((e for e in entries
                               if e.get("modelId") == model_id
@@ -713,6 +726,10 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                         if tokens:
                             minted["tokensBasis"] = tokens
                     entries.append(minted)
+                    if bucket is not None and prompt_tokens:
+                        minted["promptTokens"] = {
+                            "basis": prompt_tokens,
+                            "recordsPerHour": round(rate, 3), "samples": 1}
                 else:
                     samples = int(entry.get("samples", 0))
                     mean = float(entry.get("recordsPerHour", 0.0))
@@ -731,6 +748,22 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                         (mean * samples + fold_rate) / (samples + 1), 3)
                     entry["samples"] = samples + 1
                     entry["updatedAt"] = _now_iso()
+                    if bucket is not None and prompt_tokens:
+                        block = entry.get("promptTokens")
+                        if not isinstance(block, dict) or not block.get("basis"):
+                            entry["promptTokens"] = {
+                                "basis": prompt_tokens,
+                                "recordsPerHour": round(fold_rate, 3),
+                                "samples": 1}
+                        else:
+                            based = fold_rate
+                            if bucket in PROMPT_BOUNDED_FAMILIES:
+                                based = fold_rate * prompt_tokens / block["basis"]
+                            n = int(block.get("samples", 0))
+                            block["recordsPerHour"] = round(
+                                (float(block.get("recordsPerHour", 0.0)) * n
+                                 + based) / (n + 1), 3)
+                            block["samples"] = n + 1
             folded.add(job.id)
             changed = True
         if changed:

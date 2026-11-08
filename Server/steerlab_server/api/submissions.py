@@ -114,6 +114,14 @@ PREFLIGHT_PARKED_JUDGMENT_FIXED_HOURS = 1.0 / 6.0
 #: which is the direction this check is allowed to be wrong in.
 PREFLIGHT_JOB_STARTUP_HOURS = 0.25
 
+# --- prompt length (public issue #11) -----------------------------------------
+#: How many times longer than the throughput history's items this submission's
+#: must be before the walltime check says so in plain words. A rate measured on
+#: one length of prompt and applied to another is an extrapolation; at four
+#: times the length, reading the prompt is already a different job, and on long
+#: prompts attention makes reading grow faster than in proportion.
+PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO = 4.0
+
 
 @dataclass
 class StudySubmission:
@@ -1597,6 +1605,19 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
         )
     else:
         model_checks = None
+    # The task prompts are counted ONCE per submission (issue #11): every
+    # (prompt, arm rendering) through the run's own counter, shared by the
+    # memory check (the longest) and the walltime check (the average). On a
+    # study of several hundred long transcripts this count is most of the
+    # time a submission takes.
+    measured = None
+    if model_checks is None and manifest is not None:
+        try:
+            measured = _measure_prompts(manifest, prompts_text, verb,
+                                        artifact_root=artifact_root)
+        except Exception as exc:  # noqa: BLE001 - never raises; belt and braces
+            measured = {"measured": False,
+                        "reason": f"{type(exc).__name__}: {exc}"}
     for check_id, builder in (
         ("gpuRequest", lambda: model_checks[0] if model_checks
          else _check_gpu_request(resources)),
@@ -1605,10 +1626,12 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
                                 prompts_text=prompts_text, device=device,
                                 verb=verb, fixed_plan=fixed_reading_plan,
                                 readouts_single_pass=readouts_single_pass,
-                                artifact_root=artifact_root)),
+                                artifact_root=artifact_root,
+                                measured=measured)),
         ("walltime", lambda: model_checks[2] if model_checks
          else _check_walltime(manifest, resources, planned_records, profile,
-                              verb, shard_count=shard_count)),
+                              verb, shard_count=shard_count,
+                              measured=measured)),
         ("quotaHeadroom", lambda: _check_quota_headroom(planned_records, profile)),
         ("maintenanceWindow", lambda: _check_maintenance(resources, profile)),
     ):
@@ -2068,6 +2091,9 @@ def _measure_prompts(manifest: Manifest, prompts_text: str | None,
     except Exception:  # noqa: BLE001 - the window is reported, never needed
         window = None
     result = {"measured": True, "longestPromptTokens": max(flat),
+              # The average rendering: what one record reads, on average, for
+              # the walltime check (issue #11).
+              "meanPromptTokens": round(sum(flat) / len(flat)),
               "promptCount": len(counts), "renderings": len(settings),
               "contextWindow": window}
     if unread:
@@ -2138,8 +2164,13 @@ def _check_memory_fit(manifest: Manifest | None,
                       verb: str = "run",
                       fixed_plan: dict | None = None,
                       readouts_single_pass: bool = False,
-                      artifact_root: str | None = None) -> dict:
+                      artifact_root: str | None = None,
+                      measured: dict | None = None) -> dict:
     """Size one GPU against the study (issue #6).
+
+    ``measured`` is the submission's one count of its task prompts
+    (:func:`_measure_prompts`, made once in :func:`_preflight_report` and
+    shared with the walltime check); None counts them here.
 
     A study run's answer-token readouts read their prompts by the job's
     reading (issue #8), so the price of that reading is theirs too. The one
@@ -2224,8 +2255,9 @@ def _check_memory_fit(manifest: Manifest | None,
     weights = info["weightsBytes"]
     config = info.get("config")
     dtype_note = (config or {}).get("torch_dtype")
-    measured = _measure_prompts(manifest, prompts_text, verb,
-                                artifact_root=artifact_root)
+    if measured is None:
+        measured = _measure_prompts(manifest, prompts_text, verb,
+                                    artifact_root=artifact_root)
     prompt_tokens = (measured["longestPromptTokens"] if measured["measured"]
                      else PREFLIGHT_PROMPT_BUDGET_TOKENS)
     reasoning = int(manifest.reasoning_max_tokens or 0)
@@ -2496,7 +2528,8 @@ _WALLTIME_BOTH_DIRECTIONS = (
 def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                     planned_records: int | None,
                     profile: ServerProfile, verb: str = "run",
-                    shard_count: int = 1) -> dict:
+                    shard_count: int = 1,
+                    measured: dict | None = None) -> dict:
     """Size the requested walltime against what this submission will ACTUALLY
     do (open issues §4 + §7).
 
@@ -2540,6 +2573,19 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
     essentially nothing; it is a model load with one record after it.
 
     Every verdict that carries an estimate names the rate it used.
+
+    And one correction for prompt length (public issue #11): ``measured`` is
+    the submission's one count of its task prompts, and its average rendering
+    is stamped as ``promptTokensPerRecord`` so the throughput fold can record
+    how long the history's items were (``promptTokens`` on a family entry).
+    A deterministic-logprob record is one forward pass over its prompt, so
+    that family's rate is scaled by this submission's prompt tokens per record
+    over the history's prompt basis. A generating family is priced by the
+    tokens it generates, as before. Either way, when this submission's items
+    are at least :data:`PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO` times longer
+    than the history's, or the history does not record its items' length and
+    these are long, ``data.promptLengthNotice`` says so in plain words and the
+    check is at least a warning.
     """
     check_id = "walltime"
     if manifest is None:
@@ -2590,6 +2636,13 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
         entry = housekeeping.throughput_lookup(manifest.model_id, gpu_type,
                                                profile)
     rate = float(entry.get("recordsPerHour", 0)) if entry else 0.0
+    prompt_tokens = (measured.get("meanPromptTokens")
+                     if isinstance(measured, dict) and measured.get("measured")
+                     else None)
+    if prompt_tokens is not None:
+        # Stamped whether or not a rate exists: the fold records the prompt
+        # length this job's throughput sample was measured on.
+        family_data["promptTokensPerRecord"] = prompt_tokens
     if rate <= 0:
         return _check(check_id, "warn",
                       f"no throughput history for {manifest.model_id} on "
@@ -2597,6 +2650,9 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                       "be estimated (history accrues as jobs complete)",
                       {"plannedRecords": planned_records, "gpuType": gpu_type,
                        **family_data})
+    prompt = _prompt_length_pricing(family, entry, rate_source, rate,
+                                    prompt_tokens)
+    rate = prompt["rate"]
     # What the LARGEST shard actually runs (external review round 12, finding
     # 7). An exact ÷ K under-prices an uneven split — someone draws the extra
     # record, and the wall has to fit THAT job — so the record term is
@@ -2648,6 +2704,12 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
             basis += (", where the rate history carries no token basis — the "
                       "estimate assumes it was measured at this submission's "
                       f"own maxTokens ({planned_tokens})")
+    # Prompt length (issue #11), before the startup term for the same reason
+    # the token scaling is: a model load does not take longer for longer
+    # prompts.
+    estimated_hours *= prompt["scale"]
+    basis += prompt["basis"]
+    data.update(prompt["data"])
     # The fixed startup term, added AFTER the token scaling: a model load does
     # not take longer because the study asked for more output tokens. It is
     # the term that makes a small job honest — a one-record shard is not a
@@ -2666,7 +2728,93 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
         data["shardCount"] = shard_count
         data["recordsPerShard"] = shard_records
         data["estimateIsPerShard"] = True
-    return _walltime_verdict(estimated_hours, resources, basis, data)
+    check = _walltime_verdict(estimated_hours, resources, basis, data)
+    notice = prompt["notice"]
+    if notice:
+        # Said in the check's own data (where both clients read it into the
+        # submission envelope) and its message, and never quieter than a
+        # warning: an estimate this far from its history is advice to read.
+        check["data"]["promptLengthNotice"] = notice
+        check["message"] = f"{check['message']}. {notice}"
+        if check["status"] == "ok":
+            check["status"] = "warn"
+    return check
+
+
+def _prompt_length_pricing(family, entry: dict | None, rate_source: str,
+                           rate: float, prompt_tokens: int | None) -> dict:
+    """How this submission's prompt length prices against the rate's history
+    (issue #11): the rate to use, the factor to scale the estimate by, the
+    clause the estimate's basis gains, the data it records, and the plain
+    notice when the history's items were much shorter (or unrecorded and
+    these are long). Never raises: prompt length is pricing metadata.
+
+    The history is a family entry's ``promptTokens`` block
+    (``housekeeping.fold_throughput``): ``basis`` is the prompt tokens per
+    record its first stamped sample read, and ``recordsPerHour`` the mean of
+    its stamped samples, each normalized to that basis where the family's
+    time scales with prompt length."""
+    result = {"rate": rate, "scale": 1.0, "basis": "", "data": {},
+              "notice": None}
+    if prompt_tokens is None:
+        return result
+    history = (entry.get("promptTokens")
+               if entry and rate_source == "family" else None)
+    basis_tokens = history.get("basis") if isinstance(history, dict) else None
+    scales = (family is not None
+              and family.id in instrument_family.PROMPT_BOUNDED_FAMILIES)
+    if isinstance(basis_tokens, (int, float)) and basis_tokens > 0:
+        ratio = prompt_tokens / basis_tokens
+        result["data"]["promptTokensBasis"] = basis_tokens
+        result["data"]["promptTokensBasisSamples"] = history.get("samples")
+        if scales:
+            based = history.get("recordsPerHour")
+            if isinstance(based, (int, float)) and based > 0:
+                result["rate"] = float(based)
+                result["data"]["recordsPerHour"] = float(based)
+                result["data"]["recordsPerHourBasis"] = "promptTokens"
+            result["scale"] = ratio
+            result["basis"] = (
+                f", scaled ×{ratio:.3g} from the rate's {basis_tokens:,.0f}-"
+                f"token prompt basis to this submission's {prompt_tokens:,} "
+                "prompt tokens per record — reading a prompt assumed to take "
+                "time in proportion to its length")
+        else:
+            result["basis"] = (
+                f"; the rate was measured on items of about "
+                f"{basis_tokens:,.0f} prompt tokens and these average "
+                f"{prompt_tokens:,}, which this family's estimate does not "
+                "scale by")
+        if ratio >= PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO:
+            result["notice"] = (
+                "The throughput history behind this walltime estimate came "
+                f"from items of about {basis_tokens:,.0f} prompt tokens; this "
+                f"submission's items average {prompt_tokens:,}, about "
+                f"{ratio:,.0f} times longer. "
+                + ("The estimate assumes reading time grows in proportion to "
+                   "prompt length, but reading very long prompts can take "
+                   "longer than that. Ask for more time than the estimate."
+                   if scales else
+                   "The estimate prices this study by the tokens it "
+                   "generates and does not price reading the longer "
+                   "prompts. Ask for more time than the estimate."))
+        return result
+    result["basis"] = (
+        f"; the rate history does not record how long its items were, so the "
+        f"estimate assumes they were as long as these ({prompt_tokens:,} "
+        "prompt tokens per record on average)")
+    long_prompts = (PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO
+                    * PREFLIGHT_PROMPT_BUDGET_TOKENS)
+    if prompt_tokens >= long_prompts:
+        result["notice"] = (
+            "The throughput history behind this walltime estimate does not "
+            "record how long its items were, and this submission's items "
+            f"average {prompt_tokens:,} prompt tokens. Reading a long prompt "
+            "takes longer than reading a short one, so if the history came "
+            "from shorter items this job needs longer than estimated. Ask for "
+            "more time than the estimate, or submit a few items first to "
+            "measure.")
+    return result
 
 
 def _check_parked_judgment_walltime(manifest: Manifest | None,

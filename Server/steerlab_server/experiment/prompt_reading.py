@@ -585,26 +585,113 @@ def for_manifest(manifest, device, *, log=None,
 
 # ------------------------------------------------------------- the record
 
+#: How much rendered text :func:`rendered_token_counts` gathers before it
+#: encodes it in one batch, in characters. Bounds the memory one batch's token
+#: ids take (about two million tokens, under 100 MB) while leaving the
+#: tokenizer a dozen 150,000-token prompts to encode at once.
+COUNT_BATCH_CHARACTERS = 8_000_000
+
+
+class _Deferred:
+    """A tokenizer whose encoding of one string is deferred (issue #11).
+
+    Every attribute is the real tokenizer's — the chat template, ``encode``,
+    the capability probe's reads — except the call that encodes one rendered
+    string, which records ``(text, add_special_tokens)`` and answers with no
+    ids. The renderer is therefore the generation path's own function,
+    unchanged; only the moment of encoding moves, so that
+    :func:`rendered_token_counts` can encode many renderings in one batch
+    call of the same tokenizer, which a fast tokenizer spreads across cores.
+    """
+
+    _NO_IDS = type("_NoIds", (), {"input_ids": ()})()
+
+    def __init__(self, tokenizer):
+        object.__setattr__(self, "_tokenizer", tokenizer)
+        object.__setattr__(self, "calls", [])
+
+    def __getattr__(self, name):
+        return getattr(self._tokenizer, name)
+
+    def __call__(self, text, *args, **kwargs):
+        if args or set(kwargs) - {"add_special_tokens"} or not isinstance(text, str):
+            return self._tokenizer(text, *args, **kwargs)
+        self.calls.append((text, kwargs.get("add_special_tokens", True)))
+        return self._NO_IDS
+
+
+def _encoded_lengths(tokenizer, texts: list[str], add_special_tokens) -> list[int]:
+    """Token counts of ``texts``, encoded as one batch: the same call, on a
+    list, that the renderer makes on one string. A tokenizer that cannot
+    encode a list (a test double) is asked one string at a time, exactly as
+    the renderer asks it."""
+    try:
+        ids = tokenizer(texts, add_special_tokens=add_special_tokens)["input_ids"]
+        if len(ids) == len(texts):
+            return [len(one) for one in ids]
+    except Exception:  # noqa: BLE001 - fall back to the renderer's own call
+        pass
+    return [len(tokenizer(text, add_special_tokens=add_special_tokens).input_ids)
+            for text in texts]
+
+
 def rendered_token_counts(tokenizer, model_id: str, prompts: list[dict],
                           settings: list[dict]) -> list[list[int]]:
     """Token counts of every task prompt under every arm's render settings
     (one row per prompt, one column per distinct setting), rendered by the
     generation path's own function (``prompt_render.render_for_generation``):
-    a transcript item's whole conversation, not its display text."""
+    a transcript item's whole conversation, not its display text.
+
+    Each rendering is encoded exactly as the renderer encodes it, but in
+    batches (:class:`_Deferred`, :data:`COUNT_BATCH_CHARACTERS`): a
+    submission of several hundred long transcripts spent minutes encoding
+    them one at a time (public issue #11). The counts are identical."""
     from . import prompt_render
     distinct: list[dict] = []
     for setting in settings:
         if setting not in distinct:
             distinct.append(setting)
-    rows: list[list[int]] = []
-    for prompt in prompts:
-        row = []
-        for setting in distinct:
-            rendered = prompt_render.render_for_generation(
-                tokenizer, prompt.get("prompt") or "", model_id=model_id,
+    # The capability record the renderer reads, resolved through the real
+    # tokenizer first, so the deferred one only ever finds it memoized.
+    prompt_render.capabilities_for(model_id, tokenizer)
+    deferred = _Deferred(tokenizer)
+    rows: list[list[int]] = [[0] * len(distinct) for _ in prompts]
+    pending: list[tuple[int, int, str, object]] = []
+    pending_characters = 0
+
+    def flush() -> None:
+        nonlocal pending_characters
+        by_flag: dict = {}
+        for row, column, text, flag in pending:
+            by_flag.setdefault(flag, []).append((row, column, text))
+        for flag, entries in by_flag.items():
+            lengths = _encoded_lengths(tokenizer, [text for _, _, text in entries],
+                                       flag)
+            for (row, column, _), length in zip(entries, lengths):
+                rows[row][column] = int(length)
+        pending.clear()
+        pending_characters = 0
+
+    for row, prompt in enumerate(prompts):
+        for column, setting in enumerate(distinct):
+            deferred.calls.clear()
+            prompt_render.render_for_generation(
+                deferred, prompt.get("prompt") or "", model_id=model_id,
                 transcript=prompt.get("transcript") or None, **setting)
-            row.append(int(rendered.prompt_token_count))
-        rows.append(row)
+            if len(deferred.calls) != 1:
+                # A renderer that encoded more than once (or not at all)
+                # is counted the way it always was: one item, unbatched.
+                rendered = prompt_render.render_for_generation(
+                    tokenizer, prompt.get("prompt") or "", model_id=model_id,
+                    transcript=prompt.get("transcript") or None, **setting)
+                rows[row][column] = int(rendered.prompt_token_count)
+                continue
+            text, flag = deferred.calls[0]
+            pending.append((row, column, text, flag))
+            pending_characters += len(text)
+            if pending_characters >= COUNT_BATCH_CHARACTERS:
+                flush()
+    flush()
     return rows
 
 

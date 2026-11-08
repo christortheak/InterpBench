@@ -26,6 +26,27 @@ several seeds or samples per item runs on an engine from this release, and
 the client refuses to send it to an older engine, which would refuse it after
 the model load.
 
+**A large study can take minutes to submit.** The server measures every task
+prompt before it answers, so several hundred long transcripts can take ten
+minutes or more; both clients wait up to an hour. A submission that was sent
+and never answered is `submitOutcomeUnknown`, state `pending` (exit 12), and
+not a failure: the server is probably still preparing the job. Look first,
+in this client's list of the server's jobs (below); the job usually appears
+within a few minutes. Every submission carries a
+submission key derived from what is submitted. A server that advertises
+`cluster.submissionKey` answers a repeat of the same submission with the job
+the first one created, while that job is being prepared or has not ended,
+and says so (`alreadySubmitted`); `result.repeatIsSafe` says whether this
+server does. On an older server, submit again only if no job appears.
+
+**A walltime estimate for long prompts.** The submission estimates the time
+its job needs from the cluster's own history for this kind of study. When
+that history came from much shorter items than this study's, or does not
+record how long its items were and these are long, the estimate says so in a
+plain warning (`promptLengthNotice`, echoed as `result.walltimeNotice`). Tell
+the researcher, and ask for more time than the estimate; a short pilot of a
+few items measures the real pace.
+
 ## Runners
 
 This client reaches compute through a **runner**: an engine that executes what
@@ -54,7 +75,8 @@ step 7). Every other verb refuses a draft with `experimentNotFrozen`, and the
 refusal names the route to a frozen study.
 
 `--timeout` is the WAIT deadline here (default 24 hours);
-`--request-timeout` is the per-request budget. `--no-wait`, ctrl-c during the
+`--request-timeout` is the per-request budget (absent, a minute per request
+and an hour for the submit). `--no-wait`, ctrl-c during the
 wait, and a wait timeout all **detach**. None of them cancels the remote job.
 `--no-wait` and ctrl-c answer `pending` (exit 12); a wait timeout answers
 `waitDeadlineExceeded` (70) and says the job is still running. All three list
@@ -79,9 +101,9 @@ steerlab bundle import <file.tar.gz> --sha256 <digest>
 ```
 
 **`runner submit` is not idempotent — never retry it blindly.** It creates a
-job and, on Slurm, spends an allocation. A timeout there, or a
-`submitOutcomeUnknown` from `run`, means "look with `runner jobs`", not
-"submit again". Upload and evidence download are safe to retry. On
+job and, on Slurm, spends an allocation. A `submitOutcomeUnknown` (exit 12)
+from `runner submit` or `run` means "look with `runner jobs`", not "submit
+again"; a repeat is harmless only where `result.repeatIsSafe` is true. Upload and evidence download are safe to retry. On
 `bundle package` and `runner evidence`, `--out` names the archive, not the
 envelope's file. `runner jobs --cancel` needs a job id: this client will not
 cancel a runner's whole queue.

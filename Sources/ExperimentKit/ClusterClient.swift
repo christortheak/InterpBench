@@ -1072,6 +1072,16 @@ public struct RemoteStudySubmission: Codable, Sendable {
     /// Sharded fan-out: the K shard child job-record ids in shard order.
     /// Nil on unsharded submissions and older servers.
     public var shardJobIDs: [String]? = nil
+    /// Issue #11: the server recognised this request (its submission key) as
+    /// one it had already submitted, and answered with that job; nothing was
+    /// submitted again. Nil from older servers and on a first submission.
+    public var alreadySubmitted: Bool? = nil
+    /// The server's plain sentence for an `alreadySubmitted` answer.
+    public var alreadySubmittedNote: String? = nil
+    /// The job carrying that submission now (a resumed job's continuation),
+    /// and its status.
+    public var currentJobID: String? = nil
+    public var currentStatus: String? = nil
 }
 
 // MARK: - Preflight (WS4 contract)
@@ -2444,6 +2454,12 @@ public struct ClusterClient: Sendable {
     public let profile: ClusterConnectionProfile
     public let token: String?
     public let session: URLSession
+    /// How long a study submission may take to answer (public issue #11).
+    /// The server measures every task prompt before it answers, which for
+    /// several hundred long transcripts takes minutes; URLSession's 60-second
+    /// default reported a failure while the job was still being created. The
+    /// hour the science routes allow. Dry runs measure too, so they get it.
+    public static let studySubmissionTimeout: TimeInterval = 3600
     /// Separate session for SSE/long-poll endpoints: streams stay quiet for
     /// minutes (a queued Slurm job logs nothing between state changes; a cold
     /// model load delays the first token), so the default 60 s idle timeout on
@@ -3204,11 +3220,41 @@ public struct ClusterClient: Sendable {
             var executor: String
             var dryRun: Bool
             var resumeFrom: String?
+            /// Issue #11: the key that makes a repeat of this request
+            /// harmless on a server that recognises one; an older server
+            /// ignores the field.
+            var submissionKey: String?
         }
-        return try await post(
-            "/api/studies/submit",
-            body: Body(experiment: experiment, verb: verb, executor: executor,
-                       dryRun: dryRun, resumeFrom: resumeFrom))
+        var body = Body(experiment: experiment, verb: verb, executor: executor,
+                        dryRun: dryRun, resumeFrom: resumeFrom)
+        // The server's own manifest is what it packages and submits, so its
+        // bytes are this request's identity.
+        let manifest = try await experimentManifestBody(name: experiment)
+        body.submissionKey = try SubmissionKey.derive(
+            body: body, identityKey: "manifestSHA256",
+            identity: SHA256.hash(data: manifest)
+                .map { String(format: "%02x", $0) }.joined())
+        return try await postSubmission("/api/studies/submit", body: body)
+    }
+
+    /// POST a study submission: the long wait, and a request that was sent
+    /// and never answered reported as `SubmissionOutcomeUnknown` (issue #11),
+    /// saying whether this server would answer a repeat with the job the
+    /// first request created (read only then, so a submission that is
+    /// answered costs no extra request).
+    private func postSubmission<Body: Encodable>(
+        _ path: String, body: Body
+    ) async throws -> RemoteStudySubmission {
+        do {
+            return try await post(path, body: body, timeout: Self.studySubmissionTimeout)
+        } catch {
+            guard let cause = SubmissionOutcomeUnknown.cause(of: error) else { throw error }
+            let repeatIsSafe = (try? await capabilities())?.supportsSubmissionKey ?? false
+            throw SubmissionOutcomeUnknown(
+                endpoint: profile.baseURL.absoluteString, cause: cause,
+                repeatIsSafe: repeatIsSafe,
+                waitedSeconds: Self.studySubmissionTimeout)
+        }
     }
 
     public func submitBundle(
@@ -3281,6 +3327,10 @@ public struct ClusterClient: Sendable {
             /// server's current choice parser (`choice-reread.json`).
             /// Encoded only when true, so older servers never see it.
             var rereadChoices: Bool?
+            /// Issue #11: the key that makes a repeat of this request
+            /// harmless (`SubmissionKey`) on a server that recognises one;
+            /// an older server ignores the field.
+            var submissionKey: String?
         }
         // Resume policy rides the resources object as REAL JSON types: the
         // server coerces with bool()/int(), and a string "false" would read
@@ -3290,18 +3340,28 @@ public struct ClusterClient: Sendable {
             merged["autoResubmit"] = .bool(resumePolicy.autoResubmit)
             merged["autoResubmitLimit"] = .number(Double(resumePolicy.limit))
         }
-        let submission: RemoteStudySubmission = try await post(
-            "/api/studies/submit-bundle",
-            body: Body(
-                bundlePath: path, verb: verb, executor: executor, dryRun: dryRun,
-                resources: merged, targetRoot: targetRoot,
-                sourcePath: sourceRun,
-                samplePerCondition: samplePerCondition,
-                sampleSeed: sampleSeed,
-                force: force ? true : nil,
-                parallelJobs: ShardedSubmission.encodedParallelJobs(
-                    requested: parallelJobs, executor: executor, verb: verb),
-                rereadChoices: rereadChoices ? true : nil))
+        var body = Body(
+            bundlePath: path, verb: verb, executor: executor, dryRun: dryRun,
+            resources: merged, targetRoot: targetRoot,
+            sourcePath: sourceRun,
+            samplePerCondition: samplePerCondition,
+            sampleSeed: sampleSeed,
+            force: force ? true : nil,
+            parallelJobs: ShardedSubmission.encodedParallelJobs(
+                requested: parallelJobs, executor: executor, verb: verb),
+            rereadChoices: rereadChoices ? true : nil)
+        // The staged bundle's own digest stands in for its path: a re-upload
+        // stages the same bytes at a new path.
+        var digest = path
+        if case .object(let metadata) = inspected,
+            case .string(let sha)? = metadata["bundleSha256"], !sha.isEmpty
+        {
+            digest = sha
+        }
+        body.submissionKey = try SubmissionKey.derive(
+            body: body, pathKey: "bundlePath", identityKey: "bundleSha256",
+            identity: digest)
+        let submission = try await postSubmission("/api/studies/submit-bundle", body: body)
         // ...and after, when the rendered command does not carry the flag:
         // that job analyzes the stored choices.
         if rereadChoices, !submission.command.contains(ChoiceReread.commandFlag) {

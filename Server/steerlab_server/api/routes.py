@@ -31,7 +31,7 @@ from ..experiment import resume as resume_mod
 from ..experiment.generate import CellInjection, stream_generate
 from ..experiment.manifest import Manifest
 from ..steering import model_loader, vector_math, vector_store
-from . import dto, gpu_session, workspace_lock
+from . import dto, gpu_session, submission_keys, workspace_lock
 from .executors import SlurmExecutor, SlurmResources
 from .jobs import ResubmitRefused
 from .model_registry import ModelRegistry
@@ -4068,35 +4068,46 @@ def build_router(state: ServiceState) -> APIRouter:
                                             resolver.roots.workspace)
         prompts_path = _resolve_optional_file(resolver, body.get("promptsPath"))
         source_path = _resolve_source_dir(resolver, body.get("sourcePath"), target_root)
+        # The submission key (issue #11): a repeat of this request while its
+        # job is being prepared or has not ended is answered with that job.
         try:
-            submission = submit_study(
-                name, verb=verb, jobs=state.jobs,
-                executor=body.get("executor"), dry_run=bool(body.get("dryRun", False)),
-                dtype=body.get("dtype", "auto"), device=body.get("device"),
-                target_root=target_root, prompts_path=prompts_path,
-                source_path=source_path,
-                package_evidence=bool(body.get("packageEvidence", True)),
-                resources=body.get("resources") or {}, env=body.get("env") or {},
-                force=bool(body.get("force", False)),
-                # Targeted retry through the SLURM/bundle path (2026-07-24,
-                # cross-engine body key "resumeFrom"): finish a failed
-                # evaluation by judging only its undecided cells. This is
-                # the submission path a cluster study actually uses, and
-                # the one where redoing a judged evaluate costs most.
-                resume_from=(str(body.get("resumeFrom")).strip() or None
-                             if body.get("resumeFrom") else None),
-                # The evaluate subsample (2026-08-29, cross-engine body keys
-                # "samplePerCondition"/"sampleSeed"): passed through as typed,
-                # never coerced or defaulted here — the seed's spelling is
-                # part of what redraws the sample, and half a pair must reach
-                # the submit-time refusal rather than be quietly completed.
-                sample_per_condition=body.get("samplePerCondition"),
-                sample_seed=body.get("sampleSeed"),
-                # Cross-engine body key "rereadChoices" (analyze only): the
-                # analysis reads every stored choice again with the current
-                # choice parser. Only a literal true asks for it.
-                reread_choices=body.get("rereadChoices") is True,
-                registry=state.registry)
+            submission_key = submission_keys.from_body(body)
+        except submission_keys.SubmissionKeyError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.detail())
+        dry_run = bool(body.get("dryRun", False))
+        try:
+            return submission_keys.submit_once(
+                submission_key, jobs=state.jobs, verb=verb, dry_run=dry_run,
+                submit=lambda: submit_study(
+                    name, verb=verb, jobs=state.jobs,
+                    executor=body.get("executor"), dry_run=dry_run,
+                    dtype=body.get("dtype", "auto"), device=body.get("device"),
+                    target_root=target_root, prompts_path=prompts_path,
+                    source_path=source_path,
+                    package_evidence=bool(body.get("packageEvidence", True)),
+                    resources=body.get("resources") or {}, env=body.get("env") or {},
+                    force=bool(body.get("force", False)),
+                    # Targeted retry through the SLURM/bundle path (2026-07-24,
+                    # cross-engine body key "resumeFrom"): finish a failed
+                    # evaluation by judging only its undecided cells. This is
+                    # the submission path a cluster study actually uses, and
+                    # the one where redoing a judged evaluate costs most.
+                    resume_from=(str(body.get("resumeFrom")).strip() or None
+                                 if body.get("resumeFrom") else None),
+                    # The evaluate subsample (2026-08-29, cross-engine body keys
+                    # "samplePerCondition"/"sampleSeed"): passed through as typed,
+                    # never coerced or defaulted here — the seed's spelling is
+                    # part of what redraws the sample, and half a pair must reach
+                    # the submit-time refusal rather than be quietly completed.
+                    sample_per_condition=body.get("samplePerCondition"),
+                    sample_seed=body.get("sampleSeed"),
+                    # Cross-engine body key "rereadChoices" (analyze only): the
+                    # analysis reads every stored choice again with the current
+                    # choice parser. Only a literal true asks for it.
+                    reread_choices=body.get("rereadChoices") is True,
+                    registry=state.registry))
+        except submission_keys.SubmissionKeyError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.detail())
         except PreflightRejection as exc:
             raise HTTPException(
                 status_code=400,
@@ -4105,7 +4116,6 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400, detail=_refusal_detail(exc))
         except (OSError, RuntimeError, ValueError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return submission.to_dict()
 
     @router.post("/api/studies/submit-bundle")
     def submit_bundle_route(body: dict):
@@ -4124,29 +4134,39 @@ def build_router(state: ServiceState) -> APIRouter:
                                             resolver.roots.workspace)
         prompts_path = _resolve_optional_file(resolver, body.get("promptsPath"))
         source_path = _resolve_source_dir(resolver, body.get("sourcePath"), target_root)
+        # The submission key (issue #11), as on /api/studies/submit.
         try:
-            submission = submit_run_bundle(
-                bundle_path, verb=verb, jobs=state.jobs,
-                executor=body.get("executor"), dry_run=bool(body.get("dryRun", False)),
-                dtype=body.get("dtype", "auto"), device=body.get("device"),
-                target_root=target_root, prompts_path=prompts_path,
-                source_path=source_path,
-                package_evidence=bool(body.get("packageEvidence", True)),
-                resources=body.get("resources") or {}, env=body.get("env") or {},
-                force=bool(body.get("force", False)),
-                # Multi-GPU fan-out (default 1 = the historical single-job
-                # path, byte-identical): K sibling shard jobs + a merging
-                # parent. Execution logistics only — never in the manifest.
-                parallel_jobs=int(body.get("parallelJobs", 1) or 1),
-                # The evaluate subsample (2026-08-29), the same passthrough
-                # `sourcePath` gets: absent from an older client's body, and
-                # then absent from the rendered command line too.
-                sample_per_condition=body.get("samplePerCondition"),
-                sample_seed=body.get("sampleSeed"),
-                # "rereadChoices" (analyze only), as on /api/studies/submit:
-                # absent from an older client's body, and then absent from
-                # the rendered command line too.
-                reread_choices=body.get("rereadChoices") is True)
+            submission_key = submission_keys.from_body(body)
+        except submission_keys.SubmissionKeyError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.detail())
+        dry_run = bool(body.get("dryRun", False))
+        try:
+            return submission_keys.submit_once(
+                submission_key, jobs=state.jobs, verb=verb, dry_run=dry_run,
+                submit=lambda: submit_run_bundle(
+                    bundle_path, verb=verb, jobs=state.jobs,
+                    executor=body.get("executor"), dry_run=dry_run,
+                    dtype=body.get("dtype", "auto"), device=body.get("device"),
+                    target_root=target_root, prompts_path=prompts_path,
+                    source_path=source_path,
+                    package_evidence=bool(body.get("packageEvidence", True)),
+                    resources=body.get("resources") or {}, env=body.get("env") or {},
+                    force=bool(body.get("force", False)),
+                    # Multi-GPU fan-out (default 1 = the historical single-job
+                    # path, byte-identical): K sibling shard jobs + a merging
+                    # parent. Execution logistics only — never in the manifest.
+                    parallel_jobs=int(body.get("parallelJobs", 1) or 1),
+                    # The evaluate subsample (2026-08-29), the same passthrough
+                    # `sourcePath` gets: absent from an older client's body, and
+                    # then absent from the rendered command line too.
+                    sample_per_condition=body.get("samplePerCondition"),
+                    sample_seed=body.get("sampleSeed"),
+                    # "rereadChoices" (analyze only), as on /api/studies/submit:
+                    # absent from an older client's body, and then absent from
+                    # the rendered command line too.
+                    reread_choices=body.get("rereadChoices") is True))
+        except submission_keys.SubmissionKeyError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.detail())
         except PreflightRejection as exc:
             raise HTTPException(
                 status_code=400,
@@ -4155,7 +4175,6 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400, detail=_refusal_detail(exc))
         except (OSError, RuntimeError, ValueError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return submission.to_dict()
 
     @router.post("/api/bundles/run")
     def make_run_bundle(body: dict):

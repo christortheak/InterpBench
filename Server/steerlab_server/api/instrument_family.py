@@ -49,6 +49,13 @@ FAMILY_IDS = (DETERMINISTIC_LOGPROB, SAMPLED_STOCHASTIC, LONG_FORM_TEXT,
 #: the study's ``maxTokens`` does not bound, and parked judgment renders.
 TOKEN_BOUNDED_FAMILIES = frozenset({SAMPLED_STOCHASTIC, LONG_FORM_TEXT})
 
+#: Families whose record is one forward pass over the study's task prompt, so
+#: their record time grows with the prompt's length (public issue #11): an
+#: answer-token readout of a 150,000-token transcript is not the job a
+#: 2,000-token item is. Their rate is normalized to, and scaled from, the
+#: prompt tokens per record it was measured on.
+PROMPT_BOUNDED_FAMILIES = frozenset({DETERMINISTIC_LOGPROB})
+
 #: Human labels for the estimate line — a refusal must say WHICH rate refused.
 FAMILY_LABELS = {
     DETERMINISTIC_LOGPROB: "deterministic-logprob",
@@ -182,6 +189,15 @@ def stamped_family(requested_resources) -> str | None:
     data = _stamped_walltime_data(requested_resources)
     family = data.get("instrumentFamily") if data else None
     return family if family in FAMILY_IDS else None
+
+
+def stamped_prompt_tokens(requested_resources) -> int | None:
+    """The prompt tokens per record (the average rendering of the study's
+    task prompts) the submission's preflight measured, or None when it could
+    not measure them, or for a job submitted before it did (issue #11)."""
+    data = _stamped_walltime_data(requested_resources)
+    tokens = data.get("promptTokensPerRecord") if data else None
+    return tokens if isinstance(tokens, int) and tokens > 0 else None
 
 
 def stamped_max_tokens(requested_resources) -> int | None:

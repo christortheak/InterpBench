@@ -882,8 +882,11 @@ NOT_FROZEN_CODE = "experimentNotFrozen"
 #: that schedules locally. Raised BEFORE the upload: an archive staged on a
 #: runner that was never going to run it is disk nobody reclaims.
 RUNNER_CANNOT_EXECUTE_CODE = "runnerCannotExecute"
-#: The submit request never got an answer. NOT a refusal and never retried:
-#: the job may exist, and the only honest repair is to LOOK.
+#: The submit request was sent and never answered. NOT a refusal and never
+#: retried: the job may exist, and the only honest repair is to LOOK. State
+#: ``pending`` (exit 12) since public issue #11: on a cluster the runner is
+#: usually still preparing the job, and on a runner that advertises
+#: ``cluster.submissionKey`` a repeat is answered with that job.
 SUBMIT_OUTCOME_UNKNOWN_CODE = "submitOutcomeUnknown"
 #: The remote job reached a terminal state that is not a success. The evidence
 #: it did package still comes home; this code says the RUN failed, loudly, so
@@ -3731,14 +3734,35 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
             warn=sys.stderr.write, serving_root=identity.get("root"),
             experiment=submission.get("experiment"),
             verb=submission.get("verb"), operation="submit-bundle")
-        line = (f"submitted {submission.get('experiment')!r} "
-                f"{submission.get('verb')} to {client.base_url} as job "
-                f"{job_id}"
-                + (" (dry run)" if submission.get("dryRun") else ""))
-        print(line)
+        already = submission.get("alreadySubmitted") is True
+        if already:
+            # Issue #11: the runner recognised this request as one it had
+            # already submitted, and answered with that job.
+            line = (f"already submitted: {submission.get('experiment')!r} "
+                    f"{submission.get('verb')} is job {job_id} on "
+                    f"{client.base_url}; nothing was submitted again")
+            print(line)
+            print(f"  {submission.get('alreadySubmittedNote')}")
+        else:
+            line = (f"submitted {submission.get('experiment')!r} "
+                    f"{submission.get('verb')} to {client.base_url} as job "
+                    f"{job_id}"
+                    + (" (dry run)" if submission.get("dryRun") else ""))
+            print(line)
+        from .client import runner as runner_api
+        notice = runner_api.walltime_notice(submission)
+        if notice:
+            sys.stderr.write(f"warning: {notice}\n")
         return CLIResult(
-            message=line, changed=True,
+            message=line, changed=not already,
             payload={**common, "jobId": job_id,
+                     "alreadySubmitted": already,
+                     **({"alreadySubmittedNote":
+                         submission.get("alreadySubmittedNote"),
+                         "currentJobID": submission.get("currentJobID"),
+                         "currentStatus": submission.get("currentStatus")}
+                        if already else {}),
+                     "walltimeNotice": notice,
                      "experiment": submission.get("experiment"),
                      "verb": submission.get("verb"),
                      "executor": submission.get("executor"),
@@ -4446,8 +4470,13 @@ def _run(invocation: Invocation) -> CLIResult:
     package_evidence = not invocation.has("--no-evidence")
     waiting = not invocation.has("--no-wait")
     wait_deadline = _runner_float(invocation, "--timeout", RUN_WAIT_DEADLINE)
-    request_timeout = _runner_float(invocation, "--request-timeout",
-                                    runner_api.DEFAULT_TIMEOUT)
+    # Absent, the adapter's own budgets apply: a minute for an ordinary
+    # request, and an hour for the submit, which a server answers only after
+    # measuring every task prompt (issue #11). Given, it is every request's.
+    request_timeout = (_runner_float(invocation, "--request-timeout",
+                                     runner_api.DEFAULT_TIMEOUT)
+                       if invocation.one("--request-timeout") is not None
+                       else None)
     max_bytes = _runner_int(invocation, "--max-bytes", None)
     evidence_out = invocation.one("--evidence-out")
 
@@ -4637,7 +4666,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
                  name: str, manifest_facts: dict, base_url: str,
                  study_verb: str, executor: str | None, dry_run: bool,
                  package_evidence: bool, waiting: bool, wait_deadline: float,
-                 request_timeout: float, max_bytes: int | None,
+                 request_timeout: float | None, max_bytes: int | None,
                  evidence_out: str | None, started_at: float,
                  runner_api, bundles,
                  seed_rule_changed: bool = False,
@@ -4807,21 +4836,33 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
     except runner_api.RunnerUnreachable as exc:
         # The one call in this machine whose failure is genuinely ambiguous:
         # the request may have created a job (and on Slurm spent an
-        # allocation) before the connection died. Retrying would be a second
-        # study. The repair is to LOOK.
+        # allocation) before the connection died, and on a cluster the runner
+        # is usually still preparing it (issue #11). Not a failure: `pending`,
+        # exit 12. Never retried here; the repair is to LOOK, and a repeat is
+        # harmless only on a runner that recognises one.
+        safe = bool(exc.detail.get("repeatIsSafe"))
+        again = (f"{PROGRAM} runner submit --runner {client.base_url} "
+                 f"--bundle-path {staged} --bundle-sha {bundle_sha} --verb "
+                 f"{study_verb}")
         raise _die(
-            stages, "submit", code=SUBMIT_OUTCOME_UNKNOWN_CODE, state="failed",
-            reason=(f"the submit request to {client.base_url} never got an "
-                    f"answer ({exc.reason}) — a job MAY have been created, so "
+            stages, "submit", code=SUBMIT_OUTCOME_UNKNOWN_CODE,
+            state="pending",
+            reason=(f"the submit request to {client.base_url} was sent and "
+                    f"never answered ({exc.reason}) — a job MAY have been "
+                    "created, and the runner may still be preparing it, so "
                     "nothing was retried"),
             repair=(f"{PROGRAM} runner jobs --runner {client.base_url}  (look "
-                    "before you submit again: a second submit is a second "
-                    f"study). The bundle is already staged at {staged}; if no "
-                    f"job exists, {PROGRAM} runner submit --runner "
-                    f"{client.base_url} --bundle-path {staged} --bundle-sha "
-                    f"{bundle_sha} --verb {study_verb} resumes from here."),
+                    f"first). The bundle is already staged at {staged}. "
+                    + (f"This runner answers a repeat with the job the first "
+                       f"request created, so `{again}` is safe and names it."
+                       if safe else
+                       "This runner does not recognise a repeated "
+                       "submission, so a second submit is a second study: "
+                       "only if no job appears within a few minutes, "
+                       f"`{again}` resumes from here.")),
             common=common,
-            facts={"runBundle": bundle_facts, "retried": False}) from exc
+            facts={"runBundle": bundle_facts, "retried": False,
+                   "repeatIsSafe": safe}) from exc
 
     job_id = submission.get("jobId")
     # Where the job went, recorded in this workspace so the Mac app can import
@@ -4839,12 +4880,22 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                  "slurmJobID": submission.get("slurmJobID"),
                  "shardJobIDs": submission.get("shardJobIDs"),
                  "submissionDirectory": submission.get("submissionDirectory")}
+    already = submission.get("alreadySubmitted") is True
+    notice = runner_api.walltime_notice(submission)
     _record(stages, "submit", STAGE_OK, jobId=job_id,
             verb=submission.get("verb"), executor=submission.get("executor"),
-            dryRun=bool(submission.get("dryRun")))
+            dryRun=bool(submission.get("dryRun")),
+            **({"alreadySubmitted": True,
+                "alreadySubmittedNote": submission.get("alreadySubmittedNote")}
+               if already else {}),
+            **({"walltimeNotice": notice} if notice else {}))
     _note("submit", f"job {job_id} ({submission.get('verb')} on "
                     f"{submission.get('executor')})"
-                    + (" — dry run" if submission.get("dryRun") else ""))
+                    + (" — dry run" if submission.get("dryRun") else "")
+                    + (" — already submitted; nothing was submitted again"
+                       if already else ""))
+    if notice:
+        sys.stderr.write(f"warning: {notice}\n")
 
     follow_ups = [
         f"{PROGRAM} runner jobs {job_id} --runner {client.base_url}",
