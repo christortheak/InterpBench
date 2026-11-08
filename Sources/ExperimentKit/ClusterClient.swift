@@ -662,6 +662,11 @@ public struct RemoteJobResubmission: Codable, Sendable {
     /// Sharded parent, resume after a cancel: the parts that could not be
     /// resubmitted this time (pressing Resume again retries them).
     public var notResumed: [String]? = nil
+    /// Issue #12: the run was resumed, but its parts are held, not running,
+    /// because the scheduler refused the first without saying why
+    /// (`schedulerMessage` is its sentence). Older servers omit it.
+    public var heldUnexplained: Bool? = nil
+    public var schedulerMessage: String? = nil
 }
 
 /// What the server says about resuming a CANCELLED study job, decided from

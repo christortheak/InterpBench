@@ -184,6 +184,66 @@ import Testing
             == "job p1 is pending (held by SteerLab until the cluster's job limit frees a slot)")
     }
 
+    // MARK: - remote resubmit (review round 6)
+
+    static func resumed(heldUnexplained: Bool) -> [String: Any] {
+        var answer: [String: Any] = [
+            "ok": true, "resubmitOf": "parent01", "manualResubmit": true,
+            "resumedAfterCancel": true,
+            "resumedShards": [
+                ["ok": true, "jobId": "p2b", "resubmitOf": "p2", "held": true]
+                    as [String: Any],
+            ] as [Any],
+            "message": "Run parent01 was cancelled; 1 of its parts now continues.",
+        ]
+        if heldUnexplained {
+            answer["heldUnexplained"] = true
+            answer["schedulerMessage"] =
+                "sbatch: error: Batch job submission failed: Job violates "
+                + "accounting/QOS policy"
+            answer["message"] =
+                "Run parent01 was resumed, but its 1 part is held, not "
+                + "running: the scheduler refused the first without saying why."
+        }
+        return answer
+    }
+
+    @Test func aResumeHeldWithoutAReasonIsPendingWithTheRepair() async throws {
+        let outcome = try await run(
+            ["resubmit", "parent01", "--walltime", "02:00:00", "--json"],
+            routes: [
+                "/api/jobs/parent01": (200, ["id": "parent01", "status": "cancelled"]),
+                "/api/jobs/parent01/resubmit": (200, Self.resumed(heldUnexplained: true)),
+            ])
+        #expect(outcome.envelope.exitCode == 12)
+        #expect(outcome.envelope.state == .pending)
+        #expect(outcome.envelope.error == nil)
+        #expect(outcome.envelope.message.contains("held, not running"))
+        #expect(!outcome.envelope.message.contains("now continue"))
+        #expect(outcome.envelope.nextAction?.verb
+            == "steerlab-cli remote status parent01 --url http://127.0.0.1:1 --json")
+        #expect(outcome.envelope.nextAction?.detail
+            == "if its parts stay held, check the walltime against the cluster's "
+            + "limit for one job")
+        guard case .object(let response)? = outcome.envelope.result?["response"] else {
+            Issue.record("the envelope does not carry the server's answer")
+            return
+        }
+        #expect(response["heldUnexplained"] == .bool(true))
+        #expect(outcome.stderr.contains("note: Run parent01 was resumed"))
+    }
+
+    @Test func aResumeWhosePartsContinueIsReady() async throws {
+        let outcome = try await run(
+            ["resubmit", "parent01", "--json"],
+            routes: [
+                "/api/jobs/parent01": (200, ["id": "parent01", "status": "cancelled"]),
+                "/api/jobs/parent01/resubmit": (200, Self.resumed(heldUnexplained: false)),
+            ])
+        #expect(outcome.envelope.exitCode == 0)
+        #expect(outcome.envelope.state == .ready)
+    }
+
     // MARK: - the rule
 
     @Test func heldPartsIsNilWhenNothingIsHeld() {

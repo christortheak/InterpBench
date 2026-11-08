@@ -73,6 +73,60 @@ def test_a_split_run_refused_for_another_reason_exits_nonzero(
     assert len(fake_slurm.calls("scancel")) == 1
 
 
+def test_a_resume_held_without_a_reason_is_pending_with_the_repair(
+        wired_cli, fake_slurm, tmp_path, monkeypatch, capsys):
+    """Issue #12, review round 6: resumed, but nothing runs, because the
+    scheduler refused the first part without saying why. Pending (12), with
+    the typed field and the repair, not "N parts now continue"."""
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "2")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", LIMIT)
+    code, document, _ = _submit_split_run(wired_cli, tmp_path, monkeypatch,
+                                          capsys, name="clientresumevague")
+    assert code == 0, document
+    parent_id = document["result"]["jobId"]
+    jobs = wired_cli["state"].jobs
+    for child_id in document["result"]["shardJobIDs"][:2]:
+        child = jobs.get(child_id)
+        child.status, child.finished_at = "succeeded", 1.0
+        child.result = {**child.result, "runDirectory": str(tmp_path / child_id)}
+        jobs.store.update(child)
+    assert jobs.cancel(parent_id) is True
+    monkeypatch.delenv("FAKE_SBATCH_FAIL_AFTER")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=02:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE",
+                       "sbatch: error: Batch job submission failed: Job "
+                       "violates accounting/QOS policy (job submit limit, "
+                       "user's size and/or time limits)")
+    code = client_cli.main(["runner", "resubmit", parent_id, "--walltime",
+                            "02:00:00", *RUNNER, "--json"])
+    envelope = _documents(capsys.readouterr().out)[-1]
+    assert code == 12, envelope
+    assert envelope["state"] == "pending"
+    assert envelope.get("error") is None
+    response = envelope["result"]["response"]
+    assert response["heldUnexplained"] is True
+    assert "Job violates accounting/QOS policy" in response["schedulerMessage"]
+    assert "held, not running" in envelope["message"]
+    assert "now continue" not in envelope["message"]
+    assert envelope["nextAction"]["verb"] == (
+        f"steerlab runner status {parent_id} --runner http://testserver")
+    assert envelope["nextAction"]["detail"] == (
+        "if its parts stay held, check the walltime against the cluster's "
+        "limit for one job")
+
+
+def _documents(text: str) -> list:
+    """Every JSON document printed, in order (the verb prints the runner's
+    answer, then the envelope)."""
+    decoder, documents, index = json.JSONDecoder(), [], 0
+    while True:
+        start = text.find("{", index)
+        if start < 0:
+            return documents
+        document, index = decoder.raw_decode(text, start)
+        documents.append(document)
+
+
 def test_runner_status_shows_held_parts_in_plain_words():
     from steerlab_server.client import job_reads
     document = {

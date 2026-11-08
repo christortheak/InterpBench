@@ -49,6 +49,18 @@ def run(client, invocation, common):
             message='Scheduler reply was uncertain; the durable submission record is retained.',
             repair_action='Inspect this endpoint and schedulerSubmissionName before any retry; reconcile child records when available.',
             payload={**common, 'response': document})
+    if verb == 'resubmit' and isinstance(document, dict) and document.get('heldUnexplained') is True:
+        # Issue #12, review round 6: the run was resumed but nothing runs;
+        # the scheduler refused its first part without saying why. Pending
+        # (12), with the repair: look, and check the walltime.
+        from ..cli_envelope import next_action
+        return CLIResult(
+            state='pending', changed=True,
+            message=str(document.get('message') or 'The resumed parts are held: the scheduler refused the first without saying why.'),
+            payload={**common, 'response': document},
+            next_action=next_action(
+                f'steerlab runner status {value} --runner {client.base_url}',
+                detail="if its parts stay held, check the walltime against the cluster's limit for one job"))
     message = 'Remote workflow request completed; retain this endpoint and job ID for subsequent observation.'
     if verb == 'resubmit' and isinstance(document, dict) and document.get('resumedAfterCancel') and document.get('message'):
         # A cancelled run that a person resumed: the engine's own sentence says

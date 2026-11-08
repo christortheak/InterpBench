@@ -3256,6 +3256,34 @@ public struct ExperimentCLIRunner: Sendable {
             await recordJobOrigin(
                 resubmission.jobId, experiment: originalOrigin?.experiment, verb: originalOrigin?.verb,
                 operation: "resubmit")
+            if resubmission.heldUnexplained == true {
+                // Issue #12, review round 6: resumed, but nothing runs; the
+                // scheduler refused the first part without saying why.
+                // Pending (12), with the repair: look, and check the
+                // walltime.
+                let statusCommand = "steerlab-cli remote status \(resubmitJobID) "
+                    + (siteID.map { "--site \($0)" } ?? "--url \(url.absoluteString)")
+                    + " --json"
+                let sentence = resubmission.message
+                    ?? "the resumed parts are held: the scheduler refused the "
+                    + "first without saying why"
+                sink.err("note: \(sentence)\n")
+                var held = try respond(
+                    resubmission, message: sentence,
+                    extra: [
+                        "jobID": .string(resubmitJobID),
+                        "walltimeRequested": walltimeRequested.map {
+                            JSONValue.string($0)
+                        } ?? .null,
+                    ])
+                held.state = .pending
+                held.changed = true
+                held.nextAction = SteerLabCLIEnvelope.NextAction(
+                    verb: statusCommand,
+                    detail: "if its parts stay held, check the walltime "
+                        + "against the cluster's limit for one job")
+                return held
+            }
             let message: String
             if resubmission.resumedAfterCancel == true,
                 resubmission.resumedShards != nil
