@@ -12,6 +12,18 @@ how clusters come to email their operators about you. If a submission need
 seems to force a hand-roll (a dependency chain, a resume), that is a missing
 verb to report, not a reason to bypass the renderer.
 
+**What a submission refuses before anything is queued.** A study that its
+settings or pinned task prompts alone make unrunnable is refused when it is
+submitted, with the run's own sentence and repair, rather than after the
+queue wait and the model load: temperature 0 with several seeds on a study
+that generates sampled text, several samples per item at temperature 0, an
+ordinal scale with no declared aggregation, answer-token instruments over
+items they cannot read, an attention-check rule with no checked item, a
+`run` of a concept study with no arm, and a `pipeline` with no readable
+`pipeline` block (declare one with `experiment set-pipeline`, or submit the
+one step as its own verb). A chain that runs the study meets the same
+settings refusals at its start, before any stage.
+
 <!-- client: mac -->
 
 The cluster lifecycle has first-class verbs — prefer them to raw `ssh`:

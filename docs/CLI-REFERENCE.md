@@ -1356,23 +1356,29 @@ protocol could never reach the finished one. Declaring the protocol is legal
 on either engine, and either engine runs it (§3.4).
 
 So is the greedy seed rule (public issue #9): at temperature 0 an ordinary
-study lists exactly one seed, because every seed gives the same greedy
-response and each extra seed would write an identical record per item. A
-draft that lists more is a `verify` violation (`studyDeclaration`), so
-`freeze` refuses it, and the repair is `set-sampling <name> --seeds <n>` or a
-temperature above 0. A study frozen under an older release still verifies,
-so its existing runs can be analysed; it is refused where it would run: at
-run start on either engine, before anything is read or loaded, and at the
-Python engine's submission preflight, before anything is queued. Its repair
-duplicates it first. A panel never reads the seed list and is never refused
-for it.
+study that generates sampled text lists exactly one seed, because every seed
+gives the same greedy response and each extra seed would write an identical
+record per item. A draft that lists more is a `verify` violation
+(`studyDeclaration`), so `freeze` refuses it, and the repair is
+`set-sampling <name> --seeds <n>` or a temperature above 0. A study frozen
+under an older release still verifies, so its existing runs can be analysed,
+and `verify` says it will be refused (`refusedWhenRun`); it is refused where
+it would run: by both clients before they submit, at the Python engine's
+submission preflight before anything is queued, at a chain's start when the
+chain runs the study, and at run start on either engine, before anything is
+read or loaded. Its repair duplicates it first. Only sampled text loops over
+the seeds: answer-token readouts read each item once, so a readout-only
+study is never refused for its list. A panel never reads the seed list and
+is never refused for it.
 
 A declared seed setting the run will not read carries a `seedSettingNotUsed`
-advisory here and at `verify`, never a refusal: `derivedSHA256` at
-temperature 0 with one seed, where decoding is greedy and no seed is used,
-and `derivedSHA256` above temperature 0 beside a seed list of more than one
-entry, which the run sets aside (each item runs `samplesPerItem` times). A
-setting the study is refused for is never called one with no effect.
+advisory here, at `set-instruments`, and at `verify`, never a refusal:
+`derivedSHA256` at temperature 0 with one seed, where decoding is greedy and
+no seed is used; `derivedSHA256` above temperature 0 beside a seed list of
+more than one entry, which the run sets aside (each item runs
+`samplesPerItem` times); and a readout-only study's list of more than one
+seed, which its readouts never read. A setting the study is refused for is
+never called one with no effect.
 
 **`set-exclusions <name> <rule>[,…]`** — the declared record-exclusion rules
 analysis applies (`failedAttentionCheck`, `unparseableEndpoint`,
@@ -1719,9 +1725,11 @@ cannot silently substitute a different measurement input.
 
 Local measured runs accept any `temperature ≥ 0`. At `temperature 0` decoding
 is greedy: no random draws are made and every record stamps `seedInert: true`.
-Several seeds at temperature 0 would give identical records, so a study at
-temperature 0 lists one: `verify` refuses a draft with more, and both engines
-refuse such a study at run start, before the model loads. Above 0, each record is sampled from its own
+Several seeds at temperature 0 would give identical sampled records, so a
+study at temperature 0 that generates sampled text lists one: `verify`
+refuses a draft with more, and both engines refuse such a study at run start,
+before the model loads. Answer-token readouts read each item once, at any
+seed count. Above 0, each record is sampled from its own
 seeded random stream: one pass per entry in `manifest.seeds` under the default
 `manifestSeeds` policy, with the same seeds for every item and arm, or, under
 a declared `seedPolicy derivedSHA256` (required when `samplesPerItem > 1`),

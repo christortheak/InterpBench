@@ -47,13 +47,17 @@ Above temperature 0, `derivedSHA256` runs each item `samplesPerItem` times,
 including once, with a seed per record; the fixed list (`manifestSeeds`, the
 default) runs each item once per listed seed. `--set seeds='[<n>, …]'`
 replaces that list: whole numbers, order kept, each seed once. At temperature
-0 every seed gives the same response, so a study lists one seed: `verify`
-refuses a draft with more (so `freeze` does), with `--set seeds='[<n>]'` as
-the repair, and a runner refuses a study frozen with more before anything is
-queued (duplicate it first). A `seedSettingNotUsed` advisory, here and at
-`verify`, says when a declared seed setting will not be read: `derivedSHA256`
-at temperature 0 with one seed (greedy, no seed), or above temperature 0
-beside a seed list of more than one entry.
+0 every seed gives the same response, so a study that generates sampled text
+lists one seed: `verify` refuses a draft with more (so `freeze` does), with
+`--set seeds='[<n>]'` as the repair. A study frozen with more still verifies,
+so its runs stay readable, and says so with a `refusedWhenRun` advisory; `run`
+refuses to send it, and a runner refuses it before anything is queued
+(duplicate it first). Answer-token readouts read each item once, so a
+readout-only study is never refused for its list. A `seedSettingNotUsed`
+advisory, here and at `verify`, says when a declared seed setting will not be
+read: `derivedSHA256` at temperature 0 with one seed (greedy, no seed),
+`derivedSHA256` above temperature 0 beside a seed list of more than one entry,
+or a readout-only study's list of more than one seed.
 
 Record-exclusion rules are the `exclusionRules` field (`failedAttentionCheck`,
 `unparseableEndpoint`, `outOfRange`); a malformed value refuses and names the

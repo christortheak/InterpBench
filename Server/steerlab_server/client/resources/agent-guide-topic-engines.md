@@ -11,8 +11,10 @@ distinct streams for the same item: the design is paired at the prompt level,
 not by common random numbers. Multi-agent turns deliberately use an empty
 condition in that derivation, sharing streams across conditions.
 Greedy generation makes no RNG draws and stamps its seed inert; repeated greedy
-seeds are not independent observations, so a study at temperature 0 lists one
-seed (`verify` refuses a draft with more, and run start refuses a frozen one). Equal seeds across backends do not
+seeds are not independent observations, so a study at temperature 0 that
+generates sampled text lists one seed (`verify` refuses a draft with more, and
+submission and run start refuse a frozen one). Answer-token readouts read each
+item once, so a readout-only study is never refused for its seed list. Equal seeds across backends do not
 promise equal tokens, and GPU repeatability depends on the exact model and
 runtime configuration. Preserve the sampling provenance. Measured cross-backend
 scope is recorded in the project's technique-parity qualification record, which
