@@ -4454,10 +4454,14 @@ Consequences, stated plainly:
   stderr and exits 1. stdout still carries the submission JSON, whose
   `shardJobIDs: null` shows the truthful no-shards shape.
 - **A shard sbatch refused for the cluster's job limit holds the rest
-  (issue #12).** The submit-limit reason codes (`QOSMaxSubmitJobPerUserLimit`,
+  (issue #12).** The job-count reason codes hold that part and every later
+  one: jobs submitted (`QOSMaxSubmitJobPerUserLimit`,
   `QOSMaxSubmitJobPerAccountLimit`, `QOSGrpSubmitJobsLimit`,
-  `AssocMaxSubmitJobLimit`, `AssocGrpSubmitJobsLimit`) hold that part and
-  every later one; sbatch's general "Job violates accounting/QOS policy"
+  `AssocMaxSubmitJobLimit`, `AssocGrpSubmitJobsLimit`) and jobs running at
+  once (`QOSMaxJobsPerUserLimit`, `QOSMaxJobsPerAccountLimit`,
+  `QOSGrpJobsLimit`, `QOSJobLimit`, `AssocMaxJobsLimit`, `AssocGrpJobsLimit`,
+  `AssocJobLimit`), with or without a trailing `Limit`; sbatch's general
+  "Job violates accounting/QOS policy"
   sentence does too once the same request was accepted for another part of
   the run (alone it may name a per-job size or time limit, which never
   frees). Any other limit code beside it (`QOSMaxWallDurationPerJobLimit`,
