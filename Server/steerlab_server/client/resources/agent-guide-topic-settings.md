@@ -45,10 +45,15 @@ run with scoped per-record seeds (`workspace guide engines`). The joint rules
 surface at `verify`, not here, so the fields can be declared one at a time.
 Above temperature 0, `derivedSHA256` runs each item `samplesPerItem` times,
 including once, with a seed per record; the fixed list (`manifestSeeds`, the
-default) runs each item once per listed seed. A `seedSettingNotUsed`
-advisory, here and at `verify`, says when a declared seed setting will not be
-read: `derivedSHA256` at temperature 0 (greedy, no seed), or beside a seed
-list of more than one entry.
+default) runs each item once per listed seed. `--set seeds='[<n>, …]'`
+replaces that list: whole numbers, order kept, each seed once. At temperature
+0 every seed gives the same response, so a study lists one seed: `verify`
+refuses a draft with more (so `freeze` does), with `--set seeds='[<n>]'` as
+the repair, and a runner refuses a study frozen with more before anything is
+queued (duplicate it first). A `seedSettingNotUsed` advisory, here and at
+`verify`, says when a declared seed setting will not be read: `derivedSHA256`
+at temperature 0 with one seed (greedy, no seed), or above temperature 0
+beside a seed list of more than one entry.
 
 Record-exclusion rules are the `exclusionRules` field (`failedAttentionCheck`,
 `unparseableEndpoint`, `outOfRange`); a malformed value refuses and names the

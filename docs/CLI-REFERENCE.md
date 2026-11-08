@@ -1059,7 +1059,7 @@ steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <rati
 steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery <path>] [--dev-prompts <path>] [--layer-fractions <f1,f2,…>] [--layers <L1,L2,…>] [--max-tokens <n>]
 steerlab-cli experiment set-pipeline <study> --file <value> --manifest-sha256 <sha256>
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
-steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--reasoning-effort <off|on|low|medium|high|xhigh>] [--reasoning-max-tokens <n>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
+steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--reasoning-effort <off|on|low|medium|high|xhigh>] [--reasoning-max-tokens <n>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--seeds <n>[,<n>…]] [--temperature <t>]
 steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [--max <x>] [--min <x>]
 steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
@@ -1095,7 +1095,7 @@ steerlab-cli experiment delete <name> [--manifest-sha256 <sha256>] [--yes]
 | `experiment set-sweep-grid` | Declare the sweep's layer × alpha grid, its instrument files, and its per-cell token budget. |
 | `experiment set-pipeline` | Replace or clear a reviewed pipeline declaration without executing it. |
 | `experiment set-instruments` | Declare which outcome instruments the run measures (sampledText, answerTokenLogprob, choiceProbability, repeReaderScore, ordinalScale; "" clears the declaration). |
-| `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256), and the reasoning protocol (effort off, on, low, medium, high, xhigh × the reasoning block's own token cap; --max-tokens is then the answer budget). |
+| `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256), the fixed seed list, and the reasoning protocol (effort off, on, low, medium, high, xhigh × the reasoning block's own token cap; --max-tokens is then the answer budget). |
 | `experiment set-exclusions` | Declare the record-exclusion rules analysis applies (failedAttentionCheck, unparseableEndpoint, outOfRange; "" clears the declaration). |
 | `experiment set-system-prompt` | Declare the study's system prompt — the deployment frame every arm is read under. Inserted as a genuine system turn where the model's chat template has a system role; prepended to the first user turn where it does not (e.g. Gemma-family); prepended to the prompt text under rawCompletion. An agent arm reads under its persona then this frame. "" clears the declaration. |
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
@@ -1345,6 +1345,7 @@ only the flags given move, `""` clears `--prompt-mode`/`--seed-policy`, and
 | `--prompt-mode <chatAssistant\|rawCompletion>` | Closed vocabulary. Out-of-vocabulary is refused: downstream reads are equality tests, so a typo would silently behave as the default. |
 | `--samples-per-item <n>` | Responses per item under `derivedSHA256`, at any count including 1. Under the fixed seed list each item runs once per listed seed instead. |
 | `--seed-policy <manifestSeeds\|derivedSHA256>` | How each record's seed is chosen above temperature 0: `derivedSHA256` derives one seed per (condition, prompt ID, sample index); `manifestSeeds`, the default, reuses the fixed list for every item and arm. Closed vocabulary, same reason. |
+| `--seeds <n>[,<n>…]` | The fixed seed list, replacing the study's: comma-separated whole numbers, order kept, each seed once (the app's seed row keeps the same rules). Under the fixed list each item runs once per seed. At temperature 0 every seed gives the same response, so a study lists one. |
 | `--reasoning-effort <off\|on\|low\|medium\|high\|xhigh>` | The reasoning protocol (2026-09-03; `on` and `high` since 2026-09-05). `off` renders `enable_thinking=false`, byte for byte what every study always rendered; `on` is thinking at the template's default with no effort variable; a LEVEL is refused unless the model's capability record (§3.14, §4.4) says the pinned template accepts it — Qwen3-14B/-32B read the switch and IGNORE the level (declare `on`), Qwen3.8 accepts low/medium/xhigh and raises on high. A non-off effort needs `--reasoning-max-tokens`. |
 
 The **joint** stochastic rules — `samplesPerItem > 1` requires
@@ -1354,11 +1355,24 @@ one flag at a time, and a merge-style writer that refused a half-built
 protocol could never reach the finished one. Declaring the protocol is legal
 on either engine, and either engine runs it (§3.4).
 
+So is the greedy seed rule (public issue #9): at temperature 0 an ordinary
+study lists exactly one seed, because every seed gives the same greedy
+response and each extra seed would write an identical record per item. A
+draft that lists more is a `verify` violation (`studyDeclaration`), so
+`freeze` refuses it, and the repair is `set-sampling <name> --seeds <n>` or a
+temperature above 0. A study frozen under an older release still verifies,
+so its existing runs can be analysed; it is refused where it would run: at
+run start on either engine, before anything is read or loaded, and at the
+Python engine's submission preflight, before anything is queued. Its repair
+duplicates it first. A panel never reads the seed list and is never refused
+for it.
+
 A declared seed setting the run will not read carries a `seedSettingNotUsed`
 advisory here and at `verify`, never a refusal: `derivedSHA256` at
-temperature 0, where decoding is greedy and no seed is used, and
-`derivedSHA256` beside a seed list of more than one entry, which the run sets
-aside (each item runs `samplesPerItem` times).
+temperature 0 with one seed, where decoding is greedy and no seed is used,
+and `derivedSHA256` above temperature 0 beside a seed list of more than one
+entry, which the run sets aside (each item runs `samplesPerItem` times). A
+setting the study is refused for is never called one with no effect.
 
 **`set-exclusions <name> <rule>[,…]`** — the declared record-exclusion rules
 analysis applies (`failedAttentionCheck`, `unparseableEndpoint`,
@@ -1705,8 +1719,9 @@ cannot silently substitute a different measurement input.
 
 Local measured runs accept any `temperature ≥ 0`. At `temperature 0` decoding
 is greedy: no random draws are made and every record stamps `seedInert: true`.
-Several seeds at temperature 0 give identical records, so declare one (the
-Python engine refuses more). Above 0, each record is sampled from its own
+Several seeds at temperature 0 would give identical records, so a study at
+temperature 0 lists one: `verify` refuses a draft with more, and both engines
+refuse such a study at run start, before the model loads. Above 0, each record is sampled from its own
 seeded random stream: one pass per entry in `manifest.seeds` under the default
 `manifestSeeds` policy, with the same seeds for every item and arm, or, under
 a declared `seedPolicy derivedSHA256` (required when `samplesPerItem > 1`),
