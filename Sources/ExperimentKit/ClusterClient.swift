@@ -667,6 +667,10 @@ public struct RemoteJobResubmission: Codable, Sendable {
     /// (`schedulerMessage` is its sentence). Older servers omit it.
     public var heldUnexplained: Bool? = nil
     public var schedulerMessage: String? = nil
+    /// Issue #12, review round 7: the resumed parts are held for a reason
+    /// that frees (`jobLimit`, `schedulerUnanswered`, `maintenanceWindow`);
+    /// `message` says until what. A success. Older servers omit it.
+    public var heldReason: String? = nil
 }
 
 /// What the server says about resuming a CANCELLED study job, decided from

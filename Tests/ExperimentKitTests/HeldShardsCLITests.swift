@@ -233,6 +233,52 @@ import Testing
         #expect(outcome.stderr.contains("note: Run parent01 was resumed"))
     }
 
+    /// Review round 7: held for a reason that frees is a success, worded as
+    /// held, with the note on stderr.
+    @Test func aResumeHeldForAJobCountOrNoAnswerIsAReadySuccessWordedAsHeld()
+        async throws
+    {
+        for (reason, until) in [
+            ("jobLimit", "held until the cluster's job limit frees a slot"),
+            ("schedulerUnanswered", "held until the scheduler answers"),
+        ] {
+            var answer = Self.resumed(heldUnexplained: false)
+            answer["heldReason"] = reason
+            answer["message"] = "Run parent01 was resumed; its 1 part is \(until)."
+            let outcome = try await run(
+                ["resubmit", "parent01", "--walltime", "02:00:00", "--json"],
+                routes: [
+                    "/api/jobs/parent01": (200, ["id": "parent01", "status": "cancelled"]),
+                    "/api/jobs/parent01/resubmit": (200, answer),
+                ])
+            #expect(outcome.envelope.exitCode == 0, "\(reason)")
+            #expect(outcome.envelope.state == .ready, "\(reason)")
+            #expect(outcome.envelope.message.contains(until), "\(reason)")
+            #expect(!outcome.envelope.message.contains("now continue"), "\(reason)")
+            #expect(outcome.stderr.contains("note: Run parent01 was resumed; its 1 part is \(until)"),
+                    "\(reason)")
+        }
+    }
+
+    /// Review round 7: a run that gave up after a day of unexplained
+    /// refusals is not offered the app's Resume (which sends no walltime);
+    /// the row shows the server's line naming the command that helps.
+    @Test func aGaveUpRunOffersNoResumeAndNamesTheCommand() throws {
+        let explanation =
+            "This run stopped because the scheduler refused a part at walltime "
+            + "00:30:00 for a day without saying why. Resume it with a walltime "
+            + "within the cluster's limit for one job: steerlab-cli remote "
+            + "resubmit parent01 --walltime HH:MM:SS. The responses it completed "
+            + "are kept."
+        let hint = try JSONDecoder().decode(
+            RemoteJobCancelResume.self,
+            from: JSONSerialization.data(withJSONObject: [
+                "offered": false, "needsWalltime": true, "explanation": explanation,
+            ]))
+        #expect(RemoteJobStatusClass.resumeOffer(status: "failed", cancelResume: hint)
+            == .notOffered(note: explanation))
+    }
+
     @Test func aResumeWhosePartsContinueIsReady() async throws {
         let outcome = try await run(
             ["resubmit", "parent01", "--json"],
