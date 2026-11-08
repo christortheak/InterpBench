@@ -3722,19 +3722,12 @@ public enum ExperimentStore {
             }
         }
         // Stochastic sampling policy: samplesPerItem > 1 requires
-        // temperature > 0 and a deterministic per-record seed derivation.
-        if let samples = manifest.samplesPerItem, samples > 1 {
-            if manifest.temperature <= 0 {
-                violations.append(
-                    "samplesPerItem > 1 requires temperature > 0 "
-                        + "(greedy decoding makes every sample identical)")
-            }
-            if manifest.seedPolicy != "derivedSHA256" {
-                violations.append(
-                    "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' "
-                        + "(per-record seeds derived from condition/prompt/sampleIndex)")
-            }
-        }
+        // temperature > 0 and a deterministic per-record seed derivation —
+        // only where the run reads the count (review round 3): a study of
+        // answer-token readouts alone reads each item once, and is told its
+        // samplesPerItem is inert instead. Server twin:
+        // sampling.samples_per_item_problems, same sentences.
+        violations += StudySampling.samplesPerItemProblems(manifest)
         // …and at temperature 0 an ordinary study lists exactly one seed
         // (public issue #9): every seed gives the same greedy response, so
         // each extra seed writes an identical record per item. A DRAFT only,

@@ -266,7 +266,7 @@ import Testing
             }
             #expect(
                 notes.map(\.detail) == [
-                    "this study will be refused when it is submitted or run, "
+                    "this study will be refused when its run is submitted or started, "
                         + "because \(Self.threeGreedy). To run it: "
                         + "steerlab-cli experiment duplicate demo demo-v2 && "
                         + "steerlab-cli experiment set-sampling demo-v2 --seeds <n>"
@@ -345,6 +345,68 @@ import Testing
                     "experiment": .string("demo"),
                     "experimentContentHash": .string(String(repeating: "0", count: 64)),
                 ]), verb: "run")
+        }
+    }
+
+    // MARK: - review round 3
+
+    /// The old-engine guard asks of a step that runs an ordinary study at
+    /// temperature 0 with several seeds or samples per item; the app's line
+    /// carries the whole repair; and the frozen advisory is not said of a
+    /// study whose declared chain has no run stage.
+    @Test func roundThreeRulesFollowTheStudyAndTheChain() {
+        var readout = ExperimentManifest(name: "demo", description: "", modelID: "test/model")
+        readout.temperature = 0
+        readout.seeds = [11, 22, 33]
+        readout.outcomeInstruments = ["answerTokenLogprob"]
+        #expect(SubstrateRouting.greedyRulesNeeded(manifest: readout, verb: "run"))
+        #expect(!SubstrateRouting.greedyRulesNeeded(manifest: readout, verb: "analyze"))
+        var oneSeed = readout
+        oneSeed.seeds = [11]
+        #expect(!SubstrateRouting.greedyRulesNeeded(manifest: oneSeed, verb: "run"))
+        oneSeed.samplesPerItem = 3
+        #expect(SubstrateRouting.greedyRulesNeeded(manifest: oneSeed, verb: "run"))
+        var warm = readout
+        warm.temperature = 0.7
+        #expect(!SubstrateRouting.greedyRulesNeeded(manifest: warm, verb: "run"))
+        // The app's line for a frozen study names the duplicate step.
+        var frozen = readout
+        frozen.outcomeInstruments = nil
+        frozen.status = .frozen
+        #expect(
+            SubstrateRouting.greedySeedListSubmissionLine(
+                refusal: Self.threeGreedy, manifest: frozen)
+                == "\(Self.threeGreedy). To run it: steerlab-cli experiment duplicate "
+                + "demo demo-v2 && steerlab-cli experiment set-sampling demo-v2 "
+                + "--seeds <n>  (one seed; or raise the temperature above 0 to sample)")
+        // refusedWhenRun: said unless the declared chain has no run stage.
+        #expect(StudySampling.frozenGreedySeedListAdvisory(frozen) != nil)
+        frozen.pipeline = .object(["stages": .array([.string("extract"), .string("validate")])])
+        #expect(StudySampling.frozenGreedySeedListAdvisory(frozen) == nil)
+        frozen.pipeline = .object(["stages": .array([.string("run"), .string("analyze")])])
+        #expect(StudySampling.frozenGreedySeedListAdvisory(frozen) != nil)
+    }
+
+    /// samplesPerItem 3 at temperature 0 on a readout-only study is inert,
+    /// never refused; beside sampled text it is.
+    @Test func severalSamplesAreRefusedOnlyWhereTheRunReadsThem() async throws {
+        try await withTempRoot { _ in
+            var readout = ExperimentManifest(name: "demo", description: "", modelID: "test/model")
+            readout.temperature = 0
+            readout.samplesPerItem = 3
+            readout.outcomeInstruments = ["answerTokenLogprob"]
+            #expect(StudySampling.samplesPerItemProblems(readout).isEmpty)
+            #expect(!ExperimentStore.verify(readout).contains { $0.hasPrefix("samplesPerItem > 1") })
+            #expect(
+                ExecutionPlan.inertSamplingAdvisory(
+                    instruments: readout.outcomeInstruments, temperature: 0,
+                    samplesPerItem: 3)?.contains("samplesPerItem 3 is inert") == true)
+            var both = readout
+            both.outcomeInstruments = ["answerTokenLogprob", "sampledText"]
+            #expect(StudySampling.samplesPerItemProblems(both).count == 2)
+            var panel = readout
+            panel.studyKind = .multiAgent
+            #expect(StudySampling.samplesPerItemProblems(panel).count == 2)
         }
     }
 

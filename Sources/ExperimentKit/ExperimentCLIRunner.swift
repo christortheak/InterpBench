@@ -4144,6 +4144,18 @@ public struct ExperimentCLIRunner: Sendable {
                     sink.err("ADVISORY: \(note)\n")
                     capabilityAdvisories.append(.init(CLIAdvisory.seedSettingNotUsed, note))
                 }
+                // A sampling value the study's instruments never read (a
+                // readout-only study's temperature or samplesPerItem): said
+                // here, never refused. Server twin: the client's `verify`.
+                if let inert = ExecutionPlan.inertSamplingAdvisory(
+                    instruments: manifest.outcomeInstruments,
+                    temperature: manifest.temperature,
+                    samplesPerItem: manifest.samplesPerItem)
+                {
+                    sink.err("ADVISORY: \(inert)\n")
+                    capabilityAdvisories.append(
+                        .init(CLIAdvisory.choiceItemsWithoutInstrument, inert))
+                }
                 // A study frozen under an older release that a rule added
                 // since refuses when it is submitted or run (public issue
                 // #9): it verifies, so its runs stay readable, and the reader

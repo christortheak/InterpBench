@@ -60,11 +60,20 @@ def _manifest(fields):
 @pytest.mark.parametrize("case", _fixture()["cases"],
                          ids=lambda case: case["label"])
 def test_fixture_is_what_the_seed_rule_gives(case):
+    from steerlab_server.experiment import command_vocabulary, execution_plan
     fixture = _fixture()
     manifest = _manifest(case["manifest"])
+    generates = execution_plan.resolve(
+        manifest.outcome_instruments).generates_sampled_text
+    assert generates == case["generatesSampledText"], REGENERATE
     records = []
     for condition in fixture["conditions"]:
         for prompt in fixture["prompts"]:
+            if not generates:
+                # One readout per (condition, item), and no sampled record.
+                records.append({"condition": condition,
+                                "promptID": prompt["id"], "readout": True})
+                continue
             policy, samples = sampling.record_seeds(
                 manifest, experiment_hash=fixture["experimentHash"],
                 condition=condition, prompt_id=prompt["id"])
@@ -76,9 +85,30 @@ def test_fixture_is_what_the_seed_rule_gives(case):
     assert sampling.manifest_derives_seeds(manifest) == case["derivesSeeds"]
     # The run's config.json stamps the policy its records stamp.
     assert sampling.run_seed_policy(manifest) == case["seedPolicy"]
-    assert sampling.sample_count(manifest) == case["sampleCount"], REGENERATE
-    assert condition_execution.effective_sample_count(manifest) \
-        == case["sampleCount"]
+    if generates:
+        assert sampling.sample_count(manifest) == case["sampleCount"], \
+            REGENERATE
+        assert condition_execution.effective_sample_count(manifest) \
+            == case["sampleCount"]
+    else:
+        assert case["sampleCount"] == 0
+    # verify's samplesPerItem rules, where the run reads the count, and the
+    # inert advisory where it does not (review round 3).
+    assert sampling.samples_per_item_problems(
+        manifest.temperature, manifest.samples_per_item, manifest.seed_policy,
+        manifest.study_kind, manifest.outcome_instruments) \
+        == case["samplesPerItemProblems"], REGENERATE
+    for problem in case["samplesPerItemProblems"]:
+        assert problem in manifest.verify()
+    assert execution_plan.inert_sampling_advisory(
+        manifest.outcome_instruments, manifest.temperature,
+        manifest.samples_per_item) == case["inertSamplingAdvisory"], REGENERATE
+    # verify's advisory for the same study frozen under an older release,
+    # as the Mac command line spells it (both suites pin this text).
+    frozen = _manifest({**case["manifest"], "status": "frozen"})
+    with command_vocabulary.speaking_as(command_vocabulary.MAC):
+        assert sampling.frozen_greedy_seed_list_advisory(frozen) \
+            == case["frozenAdvisory"], REGENERATE
     assert sampling.manifest_unused_seed_settings(manifest) \
         == case["advisories"], REGENERATE
     # The refusal (public issue #9): verify on a draft, the submission, and
@@ -87,9 +117,6 @@ def test_fixture_is_what_the_seed_rule_gives(case):
         == case["refusal"], REGENERATE
     assert ((case["refusal"] in manifest.verify())
             if case["refusal"] else True)
-    from steerlab_server.experiment import execution_plan
-    assert execution_plan.resolve(manifest.outcome_instruments) \
-        .generates_sampled_text == case["generatesSampledText"], REGENERATE
 
 
 def test_temperature_zero_with_several_seeds_is_refused_and_never_advised():
@@ -112,18 +139,64 @@ def test_a_readout_only_study_is_told_its_seed_list_is_unused():
     """Only sampled text loops over the seeds: an answer-token readout reads
     each item once, so a readout-only study with several seeds runs (one
     record per item) at any temperature and is advised, never refused."""
-    readouts = [c for c in _fixture()["cases"] if not c["generatesSampledText"]]
+    readouts = [c for c in _fixture()["cases"] if not c["generatesSampledText"]
+                and len(c["manifest"]["seeds"]) > 1]
     assert {c["label"] for c in readouts} == {
         "readout only, greedy, seed list",
         "readout only, warm, derivedSHA256, seed list"}
     for case in readouts:
         assert case["refusal"] is None
+        assert case["sampleCount"] == 0
+        assert len(case["records"]) == 2 * 2  # one readout per arm and item
+        assert all(r["readout"] for r in case["records"])
         [note] = case["advisories"]
         assert note == (
             "the seed list (3 seeds) is not used: this study records "
             "answer-token readouts only, and a readout reads each item once "
             "and draws no seed at any temperature. To generate responses that "
             "use the seeds, add sampledText to outcomeInstruments.")
+
+
+def test_several_samples_per_item_are_refused_only_where_the_run_reads_them():
+    """A readout reads each item once whatever samplesPerItem says, so a
+    readout-only study with samplesPerItem 3 at temperature 0 is told the
+    value is inert, never refused (review round 3)."""
+    sampled = _case("sampled text, greedy, three samples per item")
+    assert sampled["samplesPerItemProblems"] == [
+        "samplesPerItem > 1 requires temperature > 0 (greedy decoding makes "
+        "every sample identical)",
+        "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' (per-record "
+        "seeds derived from condition/prompt/sampleIndex)"]
+    assert sampled["inertSamplingAdvisory"] is None
+    readout = _case("readout only, greedy, three samples per item")
+    assert readout["samplesPerItemProblems"] == []
+    assert readout["inertSamplingAdvisory"].startswith(
+        "this study scores options deterministically — no sampling, so "
+        "samplesPerItem 3 is inert")
+    manifest = _manifest(readout["manifest"])
+    assert not any("samplesPerItem > 1" in v for v in manifest.verify())
+    from steerlab_server.experiment import study_admission
+    assert study_admission.settings_refusal(manifest) is None
+
+
+def test_the_frozen_advisory_says_when_a_run_will_be_refused():
+    refused = [c for c in _fixture()["cases"] if c["frozenAdvisory"]]
+    assert {c["label"] for c in refused} == {
+        c["label"] for c in _fixture()["cases"] if c["refusal"]}
+    for case in refused:
+        assert case["frozenAdvisory"] == (
+            "this study will be refused when its run is submitted or "
+            f"started, because {case['refusal']}. To run it: steerlab-cli "
+            "experiment duplicate seeds seeds-v2 && steerlab-cli experiment "
+            "set-sampling seeds-v2 --seeds <n>  (one seed; or raise the "
+            "temperature above 0 to sample)")
+    # Not for a frozen study whose declared chain has no run stage.
+    fields = _case("undeclared, greedy, seed list")["manifest"]
+    for stages, said in ((["extract", "validate"], False),
+                         (["run", "analyze"], True)):
+        frozen = _manifest({**fields, "status": "frozen",
+                            "pipeline": {"stages": stages}})
+        assert bool(sampling.frozen_greedy_seed_list_advisory(frozen)) is said
 
 
 def test_the_two_items_share_their_text_and_differ_by_id():

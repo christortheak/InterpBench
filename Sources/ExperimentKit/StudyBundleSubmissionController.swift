@@ -126,9 +126,24 @@ public final class StudyBundleSubmissionController {
         if let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
             manifest: manifest, verb: submissionVerb)
         {
-            jobs.remoteStatus = refusal
-            note(refusal, severity: .error)
-            return .failure(StudyBatchSubmission.Failure(reason: refusal))
+            let line = SubstrateRouting.greedySeedListSubmissionLine(
+                refusal: refusal, manifest: manifest)
+            jobs.remoteStatus = line
+            note(line, severity: .error)
+            return .failure(StudyBatchSubmission.Failure(reason: line))
+        }
+        // Old-server guard (round 3 of issue #9) — same rule as
+        // UnifiedStudyRunner.submitBundle.
+        if let refusal = SubstrateRouting.greedyRulesSubmissionRefusal(
+            manifest: manifest, verb: submissionVerb, capabilities: capabilities,
+            server: transport.origin?.connection.baseURL.absoluteString
+                ?? substrate ?? "the server")
+        {
+            let line = refusal + " "
+                + SubstrateRouting.greedyRulesRepair(manifest: manifest)
+            jobs.remoteStatus = line
+            note(line, severity: .error)
+            return .failure(StudyBatchSubmission.Failure(reason: line))
         }
         // Old-server guard (issue #3) — same rule as
         // UnifiedStudyRunner.submitBundle: a declared derivedSHA256 at one

@@ -105,12 +105,28 @@ public final class UnifiedStudyRunner {
             return
         }
         // Temperature 0 with several seeds (public issue #9): refused BEFORE
-        // packaging/uploading, on every server.
+        // packaging/uploading, on every server, with the repair the command
+        // line gives (a frozen study is duplicated first).
         if let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
             manifest: manifest, verb: verb)
         {
-            statusLine = refusal
-            note(refusal, .error)
+            let line = SubstrateRouting.greedySeedListSubmissionLine(
+                refusal: refusal, manifest: manifest)
+            statusLine = line
+            note(line, .error)
+            return
+        }
+        // Old-server guard (round 3 of issue #9): a readout-only study at
+        // temperature 0 with several seeds or samples per item would be
+        // refused after the model load by a server without the fix.
+        if let refusal = SubstrateRouting.greedyRulesSubmissionRefusal(
+            manifest: manifest, verb: verb, capabilities: capabilities,
+            server: client.profile.baseURL.absoluteString)
+        {
+            let line = refusal + " "
+                + SubstrateRouting.greedyRulesRepair(manifest: manifest)
+            statusLine = line
+            note(line, .error)
             return
         }
         // Old-server guard (issue #3): a declared derivedSHA256 at one sample

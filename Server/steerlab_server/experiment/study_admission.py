@@ -84,8 +84,9 @@ def settings_refusal(manifest: Manifest) -> lifecycle_gates.LifecycleError | Non
         return lifecycle_gates.refusing(
             lifecycle_gates.STUDY_DECLARATION, problem,
             repair=sampling.greedy_seed_list_repair(manifest.name, frozen=frozen))
-    problem = sampling.greedy_samples_problem(manifest.temperature,
-                                              manifest.samples_per_item)
+    problem = sampling.greedy_samples_problem(
+        manifest.temperature, manifest.samples_per_item, manifest.study_kind,
+        manifest.outcome_instruments)
     if problem:
         return lifecycle_gates.refusing(
             lifecycle_gates.STUDY_DECLARATION, problem,

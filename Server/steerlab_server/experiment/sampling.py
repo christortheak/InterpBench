@@ -128,6 +128,79 @@ def outdated_engine_repair() -> str:
             "this release), then submit again.")
 
 
+#: The engine capability that says the temperature-0 rules (one seed, one
+#: sample per item) refuse only a study whose run reads them, one that
+#: generates sampled text (review round 3 of public issue #9). An engine
+#: from before it refused every ordinary study at temperature 0 with several
+#: seeds or several samples per item, readout-only ones included, after the
+#: queue wait and the model load. ``remoteStudy.greedyRulesSampledTextOnly``
+#: in the capability snapshot (``api/profile.py``); both clients refuse to
+#: submit such a study to an engine without it.
+GREEDY_RULES_CAPABILITY = "greedyRulesSampledTextOnly"
+#: The client refusal's code when the engine predates the capability.
+GREEDY_RULES_UNSUPPORTED_CODE = "greedyRulesUnsupported"
+
+
+def remote_has_greedy_rules(capabilities) -> bool:
+    """Whether a capability snapshot advertises
+    :data:`GREEDY_RULES_CAPABILITY`, nested or dotted, the nested value
+    winning (Swift twin ``ClusterCapabilities.supportsGreedyRulesSampledTextOnly``)."""
+    if not isinstance(capabilities, dict):
+        return False
+    remote = capabilities.get("remoteStudy")
+    nested = (remote.get(GREEDY_RULES_CAPABILITY)
+              if isinstance(remote, dict) else None)
+    if nested is not None:
+        return nested is True
+    features = capabilities.get("features")
+    return (isinstance(features, dict) and features.get(
+        "remoteStudy." + GREEDY_RULES_CAPABILITY) is True)
+
+
+def submission_needs_greedy_rules(manifest, verb) -> bool:
+    """Whether submitting ``verb`` needs an engine with
+    :data:`GREEDY_RULES_CAPABILITY`: a step that runs an ordinary study at
+    temperature 0 that lists several seeds or several samples per item.
+    (One that generates sampled text is refused on the client anyway, by
+    :func:`submission_greedy_seed_list_problem` or at verify; what this
+    catches is a readout-only study, which this release runs and an older
+    engine refused.) Swift twin:
+    ``SubstrateRouting.greedyRulesSubmissionRefusal``."""
+    if manifest.study_kind == "multiAgent" or not _submission_runs_the_study(
+            manifest, verb):
+        return False
+    if manifest.temperature and manifest.temperature > 0:
+        return False
+    return len(manifest.seeds or []) > 1 or (manifest.samples_per_item or 1) > 1
+
+
+def greedy_rules_engine_reason(where: str) -> str:
+    """Why a client refuses to submit, in the same words on both clients
+    (Swift twin ``SubstrateRouting.greedyRulesSubmissionRefusal``)."""
+    return (f"The engine at {where} predates the fix for public issue #9 "
+            "that lets an answer-token readout study run at temperature 0 "
+            "with several seeds or several samples per item: its capabilities "
+            f"do not list remoteStudy.{GREEDY_RULES_CAPABILITY}, so it would "
+            "refuse this study after the queue wait and the model load. "
+            "Nothing was submitted.")
+
+
+def greedy_rules_engine_repair(name: str, *, frozen: bool = False) -> str:
+    """Update the engine, or give the study one seed and one sample per
+    item, on a duplicate when it is frozen."""
+    from . import command_vocabulary as vocabulary
+    target = f"{name}-v2" if frozen else name
+    one = vocabulary.protocol_field(
+        target, f"experiment set-sampling {target} --seeds <n> "
+        "--samples-per-item 1", "seeds='[<n>]'", "samplesPerItem=1")
+    steps = ((f"experiment duplicate {name} {target}", one) if frozen
+             else (one,))
+    return ("Bring that engine up to date (for a cluster site, steerlab-cli "
+            "cluster push --site <id>, then restart its controller; for a "
+            "local runner, restart it from this release), or set one seed "
+            "and one sample per item: " + vocabulary.authoring(*steps))
+
+
 def manifest_derives_seeds(manifest, temperature=None) -> bool:
     """:func:`derives_seeds` for a loaded manifest, at ``temperature`` when
     given (a condition's effective temperature) and the study's otherwise."""
@@ -227,6 +300,25 @@ def manifest_greedy_seed_list_problem(manifest) -> str | None:
                                     instruments=manifest.outcome_instruments)
 
 
+def _submission_runs_the_study(manifest, verb) -> bool:
+    """Whether a submission of ``verb`` runs the study: ``run``, or a
+    ``pipeline`` whose declared stages include it. A pipeline with no block
+    (or one that does not resolve) is left to the engine, which refuses the
+    block itself."""
+    if verb == "run":
+        return True
+    if verb != "pipeline":
+        return False
+    from . import pipeline_spec
+    block = manifest.raw.get("pipeline")
+    try:
+        stages = (pipeline_spec.resolve_pipeline(block).stages
+                  if block is not None else ())
+    except ValueError:
+        stages = ()
+    return "run" in stages
+
+
 def submission_greedy_seed_list_problem(manifest, verb) -> str | None:
     """:func:`greedy_seed_list_problem` for a submission of ``verb``: one
     that runs the study (``run``, or a ``pipeline`` whose declared stages
@@ -235,17 +327,7 @@ def submission_greedy_seed_list_problem(manifest, verb) -> str | None:
     before the rule is never reached. A pipeline with no block (or one that
     does not resolve) is left to the engine, which refuses the block itself.
     Swift twin: ``SubstrateRouting.greedySeedListSubmissionRefusal``."""
-    if verb == "pipeline":
-        from . import pipeline_spec
-        block = manifest.raw.get("pipeline")
-        try:
-            stages = (pipeline_spec.resolve_pipeline(block).stages
-                      if block is not None else ())
-        except ValueError:
-            stages = ()
-        if "run" not in stages:
-            return None
-    elif verb != "run":
+    if not _submission_runs_the_study(manifest, verb):
         return None
     return manifest_greedy_seed_list_problem(manifest)
 
@@ -254,16 +336,27 @@ def frozen_greedy_seed_list_advisory(manifest) -> str | None:
     """What ``verify`` says of a study frozen under an older release that the
     seed rule refuses, or None: it still verifies (its runs stay readable),
     so the reader learns here, not at submission, that running it needs a
-    duplicate with one seed. Advisory code ``refusedWhenRun``. Swift twin
-    ``StudySampling.frozenGreedySeedListAdvisory``; the repair is spelled for
-    the client that shows it."""
+    duplicate with one seed. Advisory code ``refusedWhenRun``. Never for a
+    study whose declared chain has no run stage. Swift twin
+    ``StudySampling.frozenGreedySeedListAdvisory``; the shared fixture pins
+    its text as the Mac command line spells the repair, and each client
+    spells the repair for itself."""
     if manifest.status == "draft":
         return None
+    block = manifest.raw.get("pipeline")
+    if block is not None:
+        from . import pipeline_spec
+        try:
+            stages = pipeline_spec.resolve_pipeline(block).stages
+        except ValueError:
+            stages = ()
+        if "run" not in stages:
+            return None
     problem = manifest_greedy_seed_list_problem(manifest)
     if problem is None:
         return None
-    return (f"this study will be refused when it is submitted or run, "
-            f"because {problem}. To run it: "
+    return (f"this study will be refused when its run is submitted or "
+            f"started, because {problem}. To run it: "
             + greedy_seed_list_repair(manifest.name, frozen=True))
 
 
@@ -284,14 +377,56 @@ def greedy_seed_list_repair(name: str, *, frozen: bool = False) -> str:
             + "  (one seed; or raise the temperature above 0 to sample)")
 
 
-def greedy_samples_problem(temperature, samples_per_item) -> str | None:
+def _samples_are_read(study_kind, instruments) -> bool:
+    """Whether ``samplesPerItem`` decides anything a run writes: a panel's
+    replicates always do (``panel_workflow``), and an ordinary study's
+    sampled text does. An answer-token readout reads each item once
+    whatever the count (``condition_execution.execute_condition``), so a
+    readout-only study's ``samplesPerItem`` is inert (the run's config.json
+    still stamps the declared value, as provenance;
+    ``execution_plan.inert_sampling_advisory`` says it is inert)."""
+    if study_kind == "multiAgent":
+        return True
+    from . import execution_plan
+    return execution_plan.resolve(instruments).generates_sampled_text
+
+
+def greedy_samples_problem(temperature, samples_per_item, study_kind=None,
+                           instruments=None) -> str | None:
     """``verify``'s sentence for several samples per item at temperature 0,
     or None. Also the run's: the submission preflight and run start refuse
-    with it (``study_admission.settings_refusal``)."""
-    if (samples_per_item or 1) > 1 and (not temperature or temperature <= 0):
+    with it (``study_admission.settings_refusal``). Never for a study whose
+    run does not read the count (:func:`_samples_are_read`; review round 3
+    of public issue #9). Swift twin: ``StudySampling.samplesPerItemProblems``."""
+    if ((samples_per_item or 1) > 1 and (not temperature or temperature <= 0)
+            and _samples_are_read(study_kind, instruments)):
         return ("samplesPerItem > 1 requires temperature > 0 "
                 "(greedy decoding makes every sample identical)")
     return None
+
+
+def samples_per_item_problems(temperature, samples_per_item, seed_policy,
+                              study_kind=None, instruments=None) -> list[str]:
+    """``verify``'s joint rules for several samples per item, in order: a
+    temperature above 0 (:func:`greedy_samples_problem`) and the derived
+    seed policy. Neither applies to a study whose run does not read the
+    count, which gets ``execution_plan.inert_sampling_advisory`` instead.
+    Byte-identical to the Swift twin ``StudySampling.samplesPerItemProblems``;
+    the shared fixture ``Tests/Fixtures/cross-engine/study-sampling-seeds.json``
+    pins both."""
+    if (samples_per_item or 1) <= 1 or not _samples_are_read(study_kind,
+                                                             instruments):
+        return []
+    problems = []
+    greedy = greedy_samples_problem(temperature, samples_per_item, study_kind,
+                                    instruments)
+    if greedy:
+        problems.append(greedy)
+    if seed_policy != DERIVED_SHA256:
+        problems.append(
+            "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' "
+            "(per-record seeds derived from condition/prompt/sampleIndex)")
+    return problems
 
 
 def greedy_samples_repair(name: str, *, frozen: bool = False) -> str:

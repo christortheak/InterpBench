@@ -178,6 +178,88 @@ import Testing
             path: "/runs/staged/seeds.tar.gz", verb: "extract", executor: "local", dryRun: true)
     }
 
+    /// A readout-only study at temperature 0 with several seeds runs on this
+    /// release, and a 0.9.21 engine refused it after its model load (public
+    /// issue #9, review round 3): `remote submit-bundle` refuses it before
+    /// submitting to an engine without `greedyRulesSampledTextOnly`.
+    @Test func aReadoutStudyWithSeveralSeedsRefusesOnAnEngineWithoutTheFix()
+        async throws
+    {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "greedyrules-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+        var manifest = try ExperimentStore.create(
+            name: "readout", description: "", modelID: "test/model")
+        manifest.temperature = 0
+        manifest.seeds = [11, 22, 33]
+        manifest.outcomeInstruments = ["answerTokenLogprob"]
+        try ExperimentStore.save(manifest)
+        let hash = ExperimentStore.manifestHash(try ExperimentStore.load(name: "readout"))
+
+        func client(engineHasFix: Bool, expectSubmit: Bool = true) -> ClusterClient {
+            ClusterClient(
+                profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+                session: Self.session { request in
+                    switch request.url?.path {
+                    case "/api/bundles/inspect":
+                        return (Data(#"{"experiment":"readout","experimentContentHash":"\#(hash)","runtimeRequirements":[]}"#.utf8), 200)
+                    case "/api/capabilities":
+                        return (Data((engineHasFix
+                            ? #"{"remoteStudy":{"greedyRulesSampledTextOnly":true}}"#
+                            : #"{"remoteStudy":{"declaredSeedPolicy":true}}"#).utf8), 200)
+                    case "/api/studies/submit-bundle":
+                        if !expectSubmit {
+                            Issue.record("submitted to an engine without the fix")
+                        }
+                        return (Self.submitted, 200)
+                    default:
+                        Issue.record("unexpected request \(request.url?.path ?? "")")
+                        return (Data("{}".utf8), 404)
+                    }
+                })
+        }
+        do {
+            _ = try await client(engineHasFix: false, expectSubmit: false).submitBundle(
+                path: "/runs/staged/readout.tar.gz", verb: "run", executor: "local",
+                dryRun: true)
+            Issue.record("expected the old-engine refusal")
+        } catch {
+            let refusal = (error as? ExperimentError)?.lifecycleRefusal
+            #expect(refusal?.gate == .missingPrerequisite)
+            // Copied from `sampling.greedy_rules_engine_reason`.
+            #expect(
+                refusal?.reason
+                    == "The engine at http://server.test predates the fix for public "
+                    + "issue #9 that lets an answer-token readout study run at "
+                    + "temperature 0 with several seeds or several samples per item: "
+                    + "its capabilities do not list "
+                    + "remoteStudy.greedyRulesSampledTextOnly, so it would refuse "
+                    + "this study after the queue wait and the model load. Nothing "
+                    + "was submitted.")
+            #expect(
+                refusal?.repairAction.contains(
+                    "cluster push --site <id>, then restart its controller") == true)
+            #expect(
+                refusal?.repairAction.hasSuffix(
+                    "steerlab-cli experiment set-sampling readout --seeds <n> "
+                        + "--samples-per-item 1") == true)
+        }
+        // An engine from this release takes it.
+        _ = try await client(engineHasFix: true).submitBundle(
+            path: "/runs/staged/readout.tar.gz", verb: "run", executor: "local", dryRun: true)
+        // The dotted spelling counts too, and the nested one wins.
+        let dotted = try JSONDecoder().decode(
+            ClusterCapabilities.self,
+            from: Data(#"{"features":{"remoteStudy.greedyRulesSampledTextOnly":true}}"#.utf8))
+        #expect(dotted.supportsGreedyRulesSampledTextOnly)
+    }
+
     /// A server-resident study is judged from the server's own manifest.
     @Test func aServerResidentAffectedStudyRefusesOnAnEngineWithoutTheRule()
         async throws

@@ -49,6 +49,12 @@ public struct ClusterCapabilities: Codable, Sendable {
         /// which reuse the fixed seed list for that study shape, so its
         /// submission must refuse there.
         public var declaredSeedPolicy: Bool?
+        /// The temperature-0 rules (one seed, one sample per item) refuse
+        /// only a study that generates sampled text (review round 3 of
+        /// public issue #9). Absent on older servers, which refused a
+        /// readout-only study at temperature 0 with several seeds or samples
+        /// per item after the model load, so its submission must refuse.
+        public var greedyRulesSampledTextOnly: Bool?
         /// A study's `promptReading` declaration and a submission's prompt
         /// reading plan decide how its prompts go through the model (issue
         /// #6). Absent on older servers, which would read a declaring
@@ -243,6 +249,17 @@ public struct ClusterCapabilities: Codable, Sendable {
     public var supportsDeclaredSeedPolicy: Bool {
         if let value = remoteStudy?.declaredSeedPolicy { return value }
         if case .bool(let value)? = features?["remoteStudy.declaredSeedPolicy"] {
+            return value
+        }
+        return false
+    }
+
+    /// The temperature-0 rules refuse only a study that generates sampled
+    /// text (`"remoteStudy.greedyRulesSampledTextOnly"`), in either
+    /// spelling. Python twin: `sampling.remote_has_greedy_rules`.
+    public var supportsGreedyRulesSampledTextOnly: Bool {
+        if let value = remoteStudy?.greedyRulesSampledTextOnly { return value }
+        if case .bool(let value)? = features?["remoteStudy.greedyRulesSampledTextOnly"] {
             return value
         }
         return false
@@ -3139,6 +3156,21 @@ public struct ClusterClient: Sendable {
                 repair: StudySampling.greedySeedListRepair(
                     name: manifest.name, frozen: manifest.status != .draft))
         }
+        // A readout-only study at temperature 0 with several seeds or
+        // samples per item, which an engine from before round 3 of issue #9
+        // would refuse after its model load, is refused here.
+        if SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            let body = try? await experimentManifestBody(name: experiment),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
+            SubstrateRouting.greedyRulesNeeded(manifest: manifest, verb: verb),
+            let refusal = SubstrateRouting.greedyRulesSubmissionRefusal(
+                manifest: manifest, verb: verb, capabilities: try await capabilities(),
+                server: profile.baseURL.absoluteString)
+        {
+            throw ExperimentError.refusing(
+                .missingPrerequisite, refusal,
+                repair: SubstrateRouting.greedyRulesRepair(manifest: manifest))
+        }
         // A server-resident study an older engine would seed with the fixed
         // list (issue #3) is refused here, from the server's own manifest.
         if SubstrateRouting.matrixExecutingVerbs.contains(verb),
@@ -3198,6 +3230,9 @@ public struct ClusterClient: Sendable {
         // Temperature 0 with several seeds (public issue #9): refused before
         // submitting, whatever the engine's release.
         try requireGreedySeedList(inspectedBundle: inspected, verb: verb)
+        // A readout-only study an engine from before round 3 of issue #9
+        // would refuse after its model load: refused before submitting.
+        try await requireGreedyRulesEngine(inspectedBundle: inspected, verb: verb)
         // An older engine would seed a declared derivedSHA256 at one sample
         // per item with the fixed list: refused before submitting.
         try await requireDeclaredSeedPolicy(inspectedBundle: inspected, verb: verb)

@@ -233,6 +233,71 @@ public enum SubstrateRouting {
         return StudySampling.greedySeedListProblem(manifest)
     }
 
+    /// Whether submitting `verb` needs an engine with
+    /// `remoteStudy.greedyRulesSampledTextOnly`: a step that runs an
+    /// ordinary study at temperature 0 listing several seeds or several
+    /// samples per item. (One that generates sampled text is refused on the
+    /// client anyway; what this catches is a readout-only study, which this
+    /// release runs and an older engine refused after its model load.)
+    /// Python twin: `sampling.submission_needs_greedy_rules`.
+    public static func greedyRulesNeeded(manifest: ExperimentManifest, verb: String) -> Bool {
+        guard manifest.studyKind != .multiAgent, manifest.temperature <= 0,
+            matrixExecutingVerbs.contains(verb)
+        else { return false }
+        if verb == "pipeline" {
+            guard let chain = PipelineDraft.parse(manifest.pipeline),
+                chain.stages.contains("run")
+            else { return false }
+        }
+        return manifest.seeds.count > 1 || (manifest.samplesPerItem ?? 1) > 1
+    }
+
+    /// Old-server guard for the round-3 fix of public issue #9: refuses,
+    /// with the Python client's sentence (`sampling.greedy_rules_engine_reason`),
+    /// a study `greedyRulesNeeded` names for a server whose capabilities do
+    /// not list `remoteStudy.greedyRulesSampledTextOnly`. Nil otherwise.
+    public static func greedyRulesSubmissionRefusal(
+        manifest: ExperimentManifest, verb: String,
+        capabilities: ClusterCapabilities?, server: String
+    ) -> String? {
+        guard greedyRulesNeeded(manifest: manifest, verb: verb),
+            capabilities?.supportsGreedyRulesSampledTextOnly != true
+        else { return nil }
+        return "The engine at \(server) predates the fix for public issue #9 "
+            + "that lets an answer-token readout study run at temperature 0 "
+            + "with several seeds or several samples per item: its capabilities "
+            + "do not list remoteStudy.greedyRulesSampledTextOnly, so it would "
+            + "refuse this study after the queue wait and the model load. "
+            + "Nothing was submitted."
+    }
+
+    /// The repair for `greedyRulesSubmissionRefusal`: update the engine, or
+    /// give the study one seed and one sample per item (on a duplicate when
+    /// it is frozen). Python twin: `sampling.greedy_rules_engine_repair`, as
+    /// the Mac command line spells it.
+    public static func greedyRulesRepair(manifest: ExperimentManifest) -> String {
+        let frozen = manifest.status != .draft
+        let target = frozen ? "\(manifest.name)-v2" : manifest.name
+        return "Bring that engine up to date (for a cluster site, steerlab-cli "
+            + "cluster push --site <id>, then restart its controller; for a "
+            + "local runner, restart it from this release), or set one seed "
+            + "and one sample per item: "
+            + (frozen ? "steerlab-cli experiment duplicate \(manifest.name) \(target) && " : "")
+            + "steerlab-cli experiment set-sampling \(target) --seeds <n> "
+            + "--samples-per-item 1"
+    }
+
+    /// The app's one line for a `greedySeedListSubmissionRefusal`: the
+    /// rule's sentence and the repair the command line gives, a frozen
+    /// study's duplicate step included, so the app says what to do next.
+    public static func greedySeedListSubmissionLine(
+        refusal: String, manifest: ExperimentManifest
+    ) -> String {
+        "\(refusal). To run it: "
+            + StudySampling.greedySeedListRepair(
+                name: manifest.name, frozen: manifest.status != .draft)
+    }
+
     /// Old-server guard for a declared prompt reading (issue #6): a study
     /// that declares `promptReading`, on a verb whose prompts the
     /// declaration governs (`PromptReading.readingVerbs`: run, sweep,

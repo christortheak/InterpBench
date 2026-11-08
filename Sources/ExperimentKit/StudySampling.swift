@@ -104,6 +104,39 @@ public enum StudySampling {
             + "raise the temperature above 0 to sample"
     }
 
+    /// Whether `samplesPerItem` decides anything a run writes: a panel's
+    /// replicates always do, and an ordinary study's sampled text does. An
+    /// answer-token readout reads each item once whatever the count, so a
+    /// readout-only study's `samplesPerItem` is inert (`ExecutionPlan.
+    /// inertSamplingAdvisory` says so). Python twin: `sampling._samples_are_read`.
+    static func samplesAreRead(_ manifest: ExperimentManifest) -> Bool {
+        manifest.studyKind == .multiAgent
+            || ExecutionPlan.resolve(instruments: manifest.outcomeInstruments)
+                .generatesSampledText
+    }
+
+    /// `verify`'s joint rules for several samples per item, in order: a
+    /// temperature above 0 and the derived seed policy. Neither applies to a
+    /// study whose run does not read the count (review round 3 of public
+    /// issue #9). Byte-identical to the Python twin
+    /// `sampling.samples_per_item_problems`; the shared fixture pins both.
+    public static func samplesPerItemProblems(_ manifest: ExperimentManifest) -> [String] {
+        guard let samples = manifest.samplesPerItem, samples > 1, samplesAreRead(manifest)
+        else { return [] }
+        var problems: [String] = []
+        if manifest.temperature <= 0 {
+            problems.append(
+                "samplesPerItem > 1 requires temperature > 0 "
+                    + "(greedy decoding makes every sample identical)")
+        }
+        if manifest.seedPolicy != "derivedSHA256" {
+            problems.append(
+                "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' "
+                    + "(per-record seeds derived from condition/prompt/sampleIndex)")
+        }
+        return problems
+    }
+
     /// What `verify` says of a study frozen under an older release that the
     /// seed rule refuses, or nil: it still verifies (its runs stay
     /// readable), so the reader learns here, not at submission, that running
@@ -111,11 +144,16 @@ public enum StudySampling {
     /// Python twin: `sampling.frozen_greedy_seed_list_advisory`, as the Mac
     /// command line spells the repair.
     public static func frozenGreedySeedListAdvisory(_ manifest: ExperimentManifest) -> String? {
-        guard manifest.status != .draft,
-            let problem = greedySeedListProblem(manifest)
-        else { return nil }
-        return "this study will be refused when it is submitted or run, "
-            + "because \(problem). To run it: "
+        guard manifest.status != .draft else { return nil }
+        // Never for a study whose declared chain has no run stage.
+        if let block = manifest.pipeline, block != .null,
+            !(PipelineDraft.parse(block)?.stages.contains("run") ?? false)
+        {
+            return nil
+        }
+        guard let problem = greedySeedListProblem(manifest) else { return nil }
+        return "this study will be refused when its run is submitted or "
+            + "started, because \(problem). To run it: "
             + greedySeedListRepair(name: manifest.name, frozen: true)
     }
 

@@ -424,6 +424,14 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # shape to servers WITHOUT this flag, which would run it the old
             # way (`sampling.declared_policy_changes_seeds`).
             "declaredSeedPolicy": True,
+            # The temperature-0 rules (one seed, one sample per item) refuse
+            # only a study that generates sampled text (review round 3 of
+            # public issue #9): a readout-only study at temperature 0 with
+            # several seeds or samples per item runs, once per item. Earlier
+            # engines refused it after the model load, so clients refuse to
+            # submit that study to servers WITHOUT this flag
+            # (`sampling.submission_needs_greedy_rules`).
+            "greedyRulesSampledTextOnly": True,
             # A study's promptReading declaration, and a submission's
             # --prompt-reading-plan, decide how its prompts go through the
             # model (issue #6). Clients refuse to send a study that declares

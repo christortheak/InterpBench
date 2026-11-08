@@ -1600,6 +1600,13 @@ STUDY_SAMPLING_CASES = [
     ("readout and sampled text, greedy, seed list",
      {"temperature": 0.0, "seeds": [11, 22, 33],
       "outcomeInstruments": ["answerTokenLogprob", "sampledText"]}),
+    # Several samples per item at temperature 0: refused where the run reads
+    # the count (sampled text), inert for readouts alone (review round 3).
+    ("sampled text, greedy, three samples per item",
+     {"temperature": 0.0, "samplesPerItem": 3, "seeds": [11]}),
+    ("readout only, greedy, three samples per item",
+     {"temperature": 0.0, "samplesPerItem": 3, "seeds": [11],
+      "outcomeInstruments": ["answerTokenLogprob"]}),
 ]
 
 
@@ -1607,33 +1614,57 @@ def study_sampling_case(label: str, fields: dict) -> dict:
     """One case through the Python engine's seed rule: the policy in effect,
     the per-item count, every sampled record's seed in emission order
     (condition, prompt, sample), and the advisories `verify` would give."""
-    from steerlab_server.experiment import execution_plan, sampling
+    from steerlab_server.experiment import (command_vocabulary,
+                                            execution_plan, sampling)
     from steerlab_server.experiment.manifest import Manifest
 
     manifest = Manifest.from_dict({"name": "seeds", "modelID": "test/model",
                                    "concepts": [], **fields})
+    generates = execution_plan.resolve(
+        manifest.outcome_instruments).generates_sampled_text
     records = []
-    policy = None
     for condition in STUDY_SAMPLING_CONDITIONS:
         for prompt in STUDY_SAMPLING_PROMPTS:
-            policy, samples = sampling.record_seeds(
+            if not generates:
+                # What the study writes: one readout per (condition, item),
+                # whatever its seeds or samplesPerItem, and no sampled record.
+                records.append({"condition": condition,
+                                "promptID": prompt["id"], "readout": True})
+                continue
+            _policy, samples = sampling.record_seeds(
                 manifest, experiment_hash=STUDY_SAMPLING_EXPERIMENT_HASH,
                 condition=condition, prompt_id=prompt["id"])
             records.extend({"condition": condition, "promptID": prompt["id"],
                             "sampleIndex": index, "seed": seed}
                            for index, seed in samples)
+    frozen = Manifest.from_dict({"name": "seeds", "modelID": "test/model",
+                                 "concepts": [], **fields, "status": "frozen"})
+    with command_vocabulary.speaking_as(command_vocabulary.MAC):
+        frozen_note = sampling.frozen_greedy_seed_list_advisory(frozen)
     return {
         "label": label,
         "manifest": fields,
         "derivesSeeds": sampling.manifest_derives_seeds(manifest),
-        "seedPolicy": policy,
-        "sampleCount": sampling.sample_count(manifest),
-        "generatesSampledText": execution_plan.resolve(
-            manifest.outcome_instruments).generates_sampled_text,
+        "seedPolicy": sampling.run_seed_policy(manifest),
+        # Sampled generations per (condition, item): none for readouts alone.
+        "sampleCount": sampling.sample_count(manifest) if generates else 0,
+        "generatesSampledText": generates,
         "records": records,
         "advisories": sampling.manifest_unused_seed_settings(manifest),
         # The run-start, submission, and draft-verify refusal, or null.
         "refusal": sampling.manifest_greedy_seed_list_problem(manifest),
+        # verify's joint rules for several samples per item, and the
+        # advisory a study whose instruments never read them gets instead.
+        "samplesPerItemProblems": sampling.samples_per_item_problems(
+            manifest.temperature, manifest.samples_per_item,
+            manifest.seed_policy, manifest.study_kind,
+            manifest.outcome_instruments),
+        "inertSamplingAdvisory": execution_plan.inert_sampling_advisory(
+            manifest.outcome_instruments, manifest.temperature,
+            manifest.samples_per_item),
+        # verify's refusedWhenRun advisory for the same study frozen under an
+        # older release, as the Mac command line spells its repair.
+        "frozenAdvisory": frozen_note,
     }
 
 

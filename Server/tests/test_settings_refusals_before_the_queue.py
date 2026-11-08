@@ -652,7 +652,7 @@ def test_a_frozen_readout_only_study_is_not_refused_at_submission(server):
 # --- verify warns of a frozen study the rule will refuse (review round 1) ---------
 
 FROZEN_NOTE = (
-    "this study will be refused when it is submitted or run, because "
+    "this study will be refused when its run is submitted or started, because "
     + GREEDY_THREE + ". To run it: ")
 
 
@@ -941,3 +941,116 @@ def test_a_resumed_chain_is_asked_of_what_remains_at_submission(
                                  executor="slurm", dry_run=True,
                                  resources={"gres": "A100",
                                             "walltime": "00:30:00"})
+
+
+# --- an older engine is refused on the client (review round 3) ----------------------
+
+READOUT_SEEDS = ('seeds=[11,22,33]', 'outcomeInstruments=["answerTokenLogprob"]')
+
+
+def test_the_engine_advertises_the_greedy_rules_and_a_client_can_read_it():
+    from steerlab_server.api.profile import capability_snapshot
+    snapshot = capability_snapshot()
+    assert snapshot["remoteStudy"]["greedyRulesSampledTextOnly"] is True
+    assert sampling.remote_has_greedy_rules(snapshot)
+    assert sampling.remote_has_greedy_rules(
+        {"features": {"remoteStudy.greedyRulesSampledTextOnly": True}})
+    assert not sampling.remote_has_greedy_rules(
+        {"remoteStudy": {"declaredSeedPolicy": True}})
+    assert not sampling.remote_has_greedy_rules(None)
+
+
+def test_the_client_refuses_a_readout_study_for_an_engine_from_before_the_fix(
+        tmp_path, monkeypatch, capsys, script):
+    """A 0.9.21 engine refused a readout-only study at temperature 0 with
+    several seeds after its model load: exactly the issue #9 failure. This
+    release runs it; the client refuses to send it to an engine that does
+    not say so."""
+    from test_run_orchestration import (RUNNER_URL, STUDY_NAME,
+                                        _frozen_workspace, _run)
+    root = _frozen_workspace(tmp_path, monkeypatch, protocol=READOUT_SEEDS)
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
+                             capsys, root=root)
+    assert code == 65, document
+    assert document["error"]["code"] == "greedyRulesUnsupported"
+    assert ("predates the fix for public issue #9"
+            in document["error"]["reason"])
+    assert ("remoteStudy.greedyRulesSampledTextOnly"
+            in document["error"]["reason"])
+    repair = document["error"]["repairAction"]
+    assert "cluster push --site <id>, then restart its controller" in repair
+    assert (f"steerlab experiment set-protocol {STUDY_NAME}-v2 --set "
+            "seeds='[<n>]' --set samplesPerItem=1") in repair
+    assert document["result"]["failedStage"] == "capabilities"
+    assert script.uploads == [] and script.submits == []
+    # An engine from this release takes it.
+    script.greedy_rules = True
+    script.job_status = "prepared"
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
+                             capsys, root=root)
+    assert code == 0, document
+    assert len(script.submits) == 1
+
+
+def test_runner_submit_refuses_a_readout_study_for_an_older_engine(tmp_path):
+    from steerlab_server.client import runner as runner_api
+    root = str(tmp_path)
+    _frozen_readout_study(root, "readout")
+    staged = {"experiment": "readout", "experimentContentHash":
+              Manifest.load("readout", root).content_hash()}
+
+    def check(capabilities, verb="run", workspace=root):
+        runner_api.require_greedy_rules(staged, verb, capabilities,
+                                        "http://runner.invalid", workspace)
+
+    with pytest.raises(runner_api.RunnerRefusal) as refused:
+        check({"remoteStudy": {"declaredSeedPolicy": True}})
+    assert refused.value.code == "greedyRulesUnsupported"
+    # Copied from `SubstrateRouting.greedyRulesSubmissionRefusal`.
+    assert str(refused.value) == (
+        "The engine at http://runner.invalid predates the fix for public "
+        "issue #9 that lets an answer-token readout study run at temperature "
+        "0 with several seeds or several samples per item: its capabilities "
+        "do not list remoteStudy.greedyRulesSampledTextOnly, so it would "
+        "refuse this study after the queue wait and the model load. Nothing "
+        "was submitted.")
+    check({"remoteStudy": {"greedyRulesSampledTextOnly": True}})
+    check({}, verb="analyze")
+    check({}, workspace=None)
+    # A study with one seed and one sample needs nothing of the engine.
+    assert not sampling.submission_needs_greedy_rules(
+        _manifest(temperature=0.0, seeds=[11],
+                  outcomeInstruments=["answerTokenLogprob"]), "run")
+    assert sampling.submission_needs_greedy_rules(
+        _manifest(temperature=0.0, seeds=[11], samplesPerItem=3,
+                  outcomeInstruments=["answerTokenLogprob"]), "run")
+    assert not sampling.submission_needs_greedy_rules(
+        _manifest(temperature=0.7, seeds=[11, 22],
+                  outcomeInstruments=["answerTokenLogprob"]), "run")
+
+
+# --- samplesPerItem only where the run reads it (review round 3) --------------------
+
+def test_a_readout_only_study_with_several_samples_runs_and_is_advised(
+        workspace, capsys):
+    """samplesPerItem 3 at temperature 0 on a readout-only study was refused
+    at verify, submission, and run start, while the inert advisory called the
+    value inert. The readout reads each item once whatever the count."""
+    _verifiable_draft(workspace, capsys)
+    code, _ = _client(["experiment", "set-protocol", "demo", "--set",
+                       "samplesPerItem=3", "--set",
+                       'outcomeInstruments=["answerTokenLogprob"]'], capsys)
+    assert code == 0
+    code, document = _client(["experiment", "verify", "demo"], capsys)
+    assert code == 0, document
+    codes = [a["code"] for a in document["advisories"]]
+    assert "choiceItemsWithoutInstrument" in codes
+    manifest = Manifest.load("demo", str(workspace))
+    assert study_admission.settings_refusal(manifest) is None
+    # Beside sampled text it is still refused.
+    both = _manifest(temperature=0.0, samplesPerItem=3,
+                     seedPolicy="derivedSHA256",
+                     outcomeInstruments=["answerTokenLogprob", "sampledText"])
+    assert ("samplesPerItem > 1 requires temperature > 0 (greedy decoding "
+            "makes every sample identical)") in both.verify()
+    assert study_admission.settings_refusal(both) is not None

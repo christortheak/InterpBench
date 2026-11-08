@@ -87,6 +87,13 @@ struct StudySamplingTests {
             let advisories: [String]
             /// The run-start, submission, and draft-verify refusal, or nil.
             let refusal: String?
+            /// `verify`'s samplesPerItem rules, where the run reads the count.
+            let samplesPerItemProblems: [String]
+            /// The advisory a study whose instruments never sample gets.
+            let inertSamplingAdvisory: String?
+            /// `verify`'s refusedWhenRun advisory for the same study frozen
+            /// under an older release, as this command line spells it.
+            let frozenAdvisory: String?
         }
 
         /// The manifest's sampling fields; an absent key is undeclared.
@@ -98,11 +105,14 @@ struct StudySamplingTests {
             let outcomeInstruments: [String]?
         }
 
+        /// A sampled record (`sampleIndex`, `seed`), or, for a study of
+        /// readouts alone, the one readout per item it writes (`readout`).
         struct Record: Decodable, Equatable {
             let condition: String
             let promptID: String
-            let sampleIndex: Int
-            let seed: UInt64
+            var sampleIndex: Int? = nil
+            var seed: UInt64? = nil
+            var readout: Bool? = nil
         }
     }
 
@@ -131,16 +141,26 @@ struct StudySamplingTests {
     /// items with the same text and different IDs draw different streams.
     @Test func seedRuleMatchesThePythonEngineOnTheSharedFixture() throws {
         let fixture = try seedFixture()
-        #expect(fixture.cases.count >= 13)
+        #expect(fixture.cases.count >= 15)
         #expect(Set(fixture.prompts.map(\.prompt)).count == 1)
         for value in fixture.cases {
             let study = manifest(value.manifest)
+            let generates = ExecutionPlan.resolve(instruments: study.outcomeInstruments)
+                .generatesSampledText
             #expect(StudySampling.derivesSeeds(study) == value.derivesSeeds, "\(value.label)")
             #expect(StudySampling.policy(study) == value.seedPolicy, "\(value.label)")
-            #expect(StudySampling.count(study) == value.sampleCount, "\(value.label)")
+            #expect(
+                (generates ? StudySampling.count(study) : 0) == value.sampleCount,
+                "\(value.label)")
             var records: [SeedFixture.Record] = []
             for condition in fixture.conditions {
                 for prompt in fixture.prompts {
+                    if !generates {
+                        // One readout per (condition, item), no sampled record.
+                        records.append(.init(
+                            condition: condition, promptID: prompt.id, readout: true))
+                        continue
+                    }
                     for index in 0..<StudySampling.count(study) {
                         records.append(.init(
                             condition: condition, promptID: prompt.id, sampleIndex: index,
@@ -154,9 +174,20 @@ struct StudySamplingTests {
             #expect(records == value.records, "\(value.label)")
             #expect(StudySampling.unusedSeedSettings(study) == value.advisories, "\(value.label)")
             #expect(StudySampling.greedySeedListProblem(study) == value.refusal, "\(value.label)")
+            #expect(generates == value.generatesSampledText, "\(value.label)")
             #expect(
-                ExecutionPlan.resolve(instruments: study.outcomeInstruments)
-                    .generatesSampledText == value.generatesSampledText, "\(value.label)")
+                StudySampling.samplesPerItemProblems(study) == value.samplesPerItemProblems,
+                "\(value.label)")
+            #expect(
+                ExecutionPlan.inertSamplingAdvisory(
+                    instruments: study.outcomeInstruments, temperature: study.temperature,
+                    samplesPerItem: study.samplesPerItem) == value.inertSamplingAdvisory,
+                "\(value.label)")
+            var frozen = study
+            frozen.status = .frozen
+            #expect(
+                StudySampling.frozenGreedySeedListAdvisory(frozen) == value.frozenAdvisory,
+                "\(value.label)")
         }
     }
 
@@ -170,7 +201,9 @@ struct StudySamplingTests {
         ])
         // Readouts alone read each item once: never refused, and told the
         // list is not used.
-        let readouts = try seedFixture().cases.filter { !$0.generatesSampledText }
+        let readouts = try seedFixture().cases.filter {
+            !$0.generatesSampledText && $0.manifest.seeds.count > 1
+        }
         #expect(readouts.count == 2)
         for value in readouts {
             #expect(value.refusal == nil)

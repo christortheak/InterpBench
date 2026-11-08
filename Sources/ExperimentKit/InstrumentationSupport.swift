@@ -98,6 +98,30 @@ extension ClusterClient {
                 name: name, frozen: manifest.status != .draft))
     }
 
+    /// Refuse to submit a staged bundle whose study runs at temperature 0
+    /// with several seeds or samples per item, to an engine without
+    /// `remoteStudy.greedyRulesSampledTextOnly`, which would refuse it after
+    /// the queue wait and the model load. Same evidence rule as
+    /// `requireDeclaredSeedPolicy`. Python twin: `runner.require_greedy_rules`.
+    func requireGreedyRulesEngine(inspectedBundle inspected: JSONValue, verb: String) async throws {
+        guard SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            case .object(let metadata) = inspected,
+            case .string(let name)? = metadata["experiment"], !name.isEmpty,
+            case .string(let hash)? = metadata["experimentContentHash"],
+            let manifest = try? ExperimentStore.load(name: name),
+            ExperimentStore.manifestHash(manifest) == hash,
+            SubstrateRouting.greedyRulesNeeded(manifest: manifest, verb: verb)
+        else { return }
+        if let refusal = SubstrateRouting.greedyRulesSubmissionRefusal(
+            manifest: manifest, verb: verb, capabilities: try await capabilities(),
+            server: profile.baseURL.absoluteString)
+        {
+            throw ExperimentError.refusing(
+                .missingPrerequisite, refusal,
+                repair: SubstrateRouting.greedyRulesRepair(manifest: manifest))
+        }
+    }
+
     /// Refuse to submit a staged bundle whose study an engine without the
     /// declared seed policy would seed with the fixed list (issue #3). The
     /// bundle names its study and that study's content hash; the study is

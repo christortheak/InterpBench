@@ -1969,6 +1969,17 @@ def _experiment(invocation: Invocation) -> CLIResult:
                     instruments=document.get("outcomeInstruments")):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("seedSettingNotUsed", note))
+            # A sampling value the instruments never read, said where it was
+            # written. Swift twin: `set-sampling`'s and `set-instruments`'.
+            from .experiment import execution_plan as _plan
+            inert = _plan.inert_sampling_advisory(
+                document.get("outcomeInstruments"),
+                document.get("temperature", 0.0),
+                document.get("samplesPerItem", 1))
+            if inert:
+                sys.stderr.write(f"ADVISORY: {inert}\n")
+                advisories.append(_advisory("choiceItemsWithoutInstrument",
+                                            inert))
         return CLIResult(
             message=line, changed=bool(applied),
             state="okWithAdvisories" if advisories else "ready",
@@ -2276,6 +2287,17 @@ def _experiment(invocation: Invocation) -> CLIResult:
             for note in _sampling.manifest_unused_seed_settings(manifest):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("seedSettingNotUsed", note))
+            # A sampling value the study's instruments never read (a
+            # readout-only study's temperature or samplesPerItem): said here,
+            # never refused. Swift twin: the Mac `experiment verify`.
+            from .experiment import execution_plan as _plan
+            inert = _plan.inert_sampling_advisory(
+                manifest.outcome_instruments, manifest.temperature,
+                manifest.samples_per_item)
+            if inert:
+                sys.stderr.write(f"ADVISORY: {inert}\n")
+                advisories.append(_advisory("choiceItemsWithoutInstrument",
+                                            inert))
             # A study frozen under an older release that a rule added since
             # refuses when it is submitted or run (public issue #9): it
             # verifies, so its runs stay readable, and the reader learns here.
@@ -4571,6 +4593,10 @@ def _run(invocation: Invocation) -> CLIResult:
     from .experiment import prompt_reading, sampling
     seed_rule_changed = sampling.submission_needs_declared_seed_policy(
         manifest, study_verb)
+    # A study an engine from before review round 3 of issue #9 would refuse
+    # after its model load: refused at the same stage, for the same reason.
+    greedy_rules_needed = sampling.submission_needs_greedy_rules(
+        manifest, study_verb)
     # A declared prompt reading an older engine would ignore (issue #6):
     # refused at the same stage, for the same reason.
     reading_declared = prompt_reading.submission_needs_capability(
@@ -4585,6 +4611,7 @@ def _run(invocation: Invocation) -> CLIResult:
             max_bytes=max_bytes, evidence_out=evidence_out,
             started_at=started_at, runner_api=runner_api, bundles=bundles,
             seed_rule_changed=seed_rule_changed,
+            greedy_rules_needed=greedy_rules_needed,
             reading_declared=reading_declared)
     except ClientRefusal:
         raise
@@ -4614,6 +4641,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
                  evidence_out: str | None, started_at: float,
                  runner_api, bundles,
                  seed_rule_changed: bool = False,
+                 greedy_rules_needed: bool = False,
                  reading_declared: bool = False) -> CLIResult:
     """Stages 2–9. Split from :func:`_run` only so the stage-table decoration
     above has one place to sit."""
@@ -4655,6 +4683,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
             evidence_out=evidence_out, started_at=started_at,
             workspace=workspace, runner_api=runner_api, bundles=bundles,
             time=time, seed_rule_changed=seed_rule_changed,
+            greedy_rules_needed=greedy_rules_needed,
             reading_declared=reading_declared)
     except runner_api.RunnerError as exc:
         # Same translation `_runner` makes, plus the stage table: the authoring
@@ -4675,6 +4704,7 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
               evidence_out: str | None, started_at: float, workspace: str,
               runner_api, bundles, time,
               seed_rule_changed: bool = False,
+              greedy_rules_needed: bool = False,
               reading_declared: bool = False) -> CLIResult:
     """Stages 3–9: everything that touches the wire or the workspace."""
 
@@ -4706,6 +4736,19 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             stages, "capabilities", code=sampling.SEED_POLICY_UNSUPPORTED_CODE,
             reason=sampling.outdated_engine_reason(client.base_url),
             repair=sampling.outdated_engine_repair(), common=common,
+            facts={"runnerOffers": {
+                "engineVersion": identity.get("engineVersion")}})
+    if greedy_rules_needed and not sampling.remote_has_greedy_rules(
+            capabilities):
+        # An older engine would refuse a readout-only study at temperature
+        # 0 with several seeds or samples per item, after its model load.
+        # Swift twin: `SubstrateRouting.greedyRulesSubmissionRefusal`.
+        raise _die(
+            stages, "capabilities", code=sampling.GREEDY_RULES_UNSUPPORTED_CODE,
+            reason=sampling.greedy_rules_engine_reason(client.base_url),
+            repair=sampling.greedy_rules_engine_repair(
+                name, frozen=manifest_facts.get("status") != "draft"),
+            common=common,
             facts={"runnerOffers": {
                 "engineVersion": identity.get("engineVersion")}})
     from .experiment import prompt_reading

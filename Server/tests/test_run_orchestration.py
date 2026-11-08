@@ -114,6 +114,10 @@ class Script:
         #: ``remoteStudy.promptReading``; False = an engine from before a
         #: study could declare how its prompts are read (issue #6).
         self.prompt_reading = False
+        #: ``remoteStudy.greedyRulesSampledTextOnly``; False = an engine from
+        #: before a readout-only study could run at temperature 0 with
+        #: several seeds or samples per item (issue #9, review round 3).
+        self.greedy_rules = False
 
         #: What the runner will claim the upload hashed to. ``None`` = agree.
         self.reported_upload_sha: str | None = None
@@ -187,9 +191,12 @@ class FakeRunner:
                     **({"declaredSeedPolicy": True}
                        if self.script.declared_seed_policy else {}),
                     **({"promptReading": True}
-                       if self.script.prompt_reading else {})}}
+                       if self.script.prompt_reading else {}),
+                    **({"greedyRulesSampledTextOnly": True}
+                       if self.script.greedy_rules else {})}}
                    if (self.script.declared_seed_policy
-                       or self.script.prompt_reading) else {}),
+                       or self.script.prompt_reading
+                       or self.script.greedy_rules) else {}),
             },
         }
 

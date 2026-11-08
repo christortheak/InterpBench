@@ -1566,16 +1566,14 @@ class Manifest:
 
         # Stochastic sampling policy: samplesPerItem > 1 requires temperature > 0
         # and a deterministic per-record seed derivation.
-        if self.samples_per_item > 1:
-            from . import sampling as _sampling
-            greedy_samples = _sampling.greedy_samples_problem(
-                self.temperature, self.samples_per_item)
-            if greedy_samples:
-                violations.append(greedy_samples)
-            if self.seed_policy != "derivedSHA256":
-                violations.append(
-                    "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' "
-                    "(per-record seeds derived from condition/prompt/sampleIndex)")
+        # Only where the run reads the count (review round 3): a study of
+        # answer-token readouts alone reads each item once, and is told its
+        # samplesPerItem is inert instead (execution_plan). Swift twin:
+        # StudySampling.samplesPerItemProblems, same sentences.
+        from . import sampling as _sampling
+        violations += _sampling.samples_per_item_problems(
+            self.temperature, self.samples_per_item, self.seed_policy,
+            self.study_kind, self.outcome_instruments)
         # …and at temperature 0 an ordinary study lists exactly one seed
         # (public issue #9): every seed gives the same greedy response, so
         # each extra seed writes an identical record per item. A DRAFT only,

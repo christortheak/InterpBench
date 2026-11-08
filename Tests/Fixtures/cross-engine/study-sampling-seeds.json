@@ -5,7 +5,9 @@
         "the seed list (3 seeds) is not used under seedPolicy derivedSHA256: each item runs samplesPerItem (1) time, each with its own seed derived from the study hash, condition, prompt ID, and sample index. To generate more responses per item, raise samplesPerItem."
       ],
       "derivesSeeds": true,
+      "frozenAdvisory": null,
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "derivedSHA256, one sample per item, warm, seed list",
       "manifest": {
         "samplesPerItem": 1,
@@ -45,12 +47,15 @@
       ],
       "refusal": null,
       "sampleCount": 1,
+      "samplesPerItemProblems": [],
       "seedPolicy": "derivedSHA256"
     },
     {
       "advisories": [],
       "derivesSeeds": true,
+      "frozenAdvisory": null,
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "derivedSHA256, one sample per item, warm, one seed",
       "manifest": {
         "samplesPerItem": 1,
@@ -88,12 +93,15 @@
       ],
       "refusal": null,
       "sampleCount": 1,
+      "samplesPerItemProblems": [],
       "seedPolicy": "derivedSHA256"
     },
     {
       "advisories": [],
       "derivesSeeds": true,
+      "frozenAdvisory": null,
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "derivedSHA256, three samples per item, warm",
       "manifest": {
         "samplesPerItem": 3,
@@ -179,12 +187,15 @@
       ],
       "refusal": null,
       "sampleCount": 3,
+      "samplesPerItemProblems": [],
       "seedPolicy": "derivedSHA256"
     },
     {
       "advisories": [],
       "derivesSeeds": false,
+      "frozenAdvisory": null,
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "manifestSeeds, warm",
       "manifest": {
         "seedPolicy": "manifestSeeds",
@@ -271,12 +282,15 @@
       ],
       "refusal": null,
       "sampleCount": 3,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
       "advisories": [],
       "derivesSeeds": false,
+      "frozenAdvisory": null,
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "undeclared, warm",
       "manifest": {
         "seeds": [
@@ -362,6 +376,7 @@
       ],
       "refusal": null,
       "sampleCount": 3,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
@@ -369,7 +384,9 @@
         "seedPolicy derivedSHA256 has no effect at temperature 0: decoding is greedy and no seed is used. Seeds are derived per record only when the temperature is above 0."
       ],
       "derivesSeeds": false,
+      "frozenAdvisory": null,
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "derivedSHA256, greedy",
       "manifest": {
         "seedPolicy": "derivedSHA256",
@@ -406,12 +423,15 @@
       ],
       "refusal": null,
       "sampleCount": 1,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
       "advisories": [],
       "derivesSeeds": false,
+      "frozenAdvisory": null,
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "undeclared, greedy",
       "manifest": {
         "seeds": [
@@ -447,12 +467,15 @@
       ],
       "refusal": null,
       "sampleCount": 1,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
       "advisories": [],
       "derivesSeeds": false,
+      "frozenAdvisory": "this study will be refused when its run is submitted or started, because at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample. To run it: steerlab-cli experiment duplicate seeds seeds-v2 && steerlab-cli experiment set-sampling seeds-v2 --seeds <n>  (one seed; or raise the temperature above 0 to sample)",
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "manifestSeeds, greedy, seed list",
       "manifest": {
         "seedPolicy": "manifestSeeds",
@@ -539,12 +562,15 @@
       ],
       "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
       "sampleCount": 3,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
       "advisories": [],
       "derivesSeeds": false,
+      "frozenAdvisory": "this study will be refused when its run is submitted or started, because at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample. To run it: steerlab-cli experiment duplicate seeds seeds-v2 && steerlab-cli experiment set-sampling seeds-v2 --seeds <n>  (one seed; or raise the temperature above 0 to sample)",
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "derivedSHA256, greedy, seed list",
       "manifest": {
         "seedPolicy": "derivedSHA256",
@@ -631,12 +657,15 @@
       ],
       "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
       "sampleCount": 3,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
       "advisories": [],
       "derivesSeeds": false,
+      "frozenAdvisory": "this study will be refused when its run is submitted or started, because at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample. To run it: steerlab-cli experiment duplicate seeds seeds-v2 && steerlab-cli experiment set-sampling seeds-v2 --seeds <n>  (one seed; or raise the temperature above 0 to sample)",
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "undeclared, greedy, seed list",
       "manifest": {
         "seeds": [
@@ -722,6 +751,7 @@
       ],
       "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
       "sampleCount": 3,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
@@ -729,7 +759,9 @@
         "the seed list (3 seeds) is not used: this study records answer-token readouts only, and a readout reads each item once and draws no seed at any temperature. To generate responses that use the seeds, add sampledText to outcomeInstruments."
       ],
       "derivesSeeds": false,
+      "frozenAdvisory": null,
       "generatesSampledText": false,
+      "inertSamplingAdvisory": null,
       "label": "readout only, greedy, seed list",
       "manifest": {
         "outcomeInstruments": [
@@ -746,78 +778,27 @@
         {
           "condition": "baseline",
           "promptID": "respondent-001",
-          "sampleIndex": 0,
-          "seed": 11
-        },
-        {
-          "condition": "baseline",
-          "promptID": "respondent-001",
-          "sampleIndex": 1,
-          "seed": 22
-        },
-        {
-          "condition": "baseline",
-          "promptID": "respondent-001",
-          "sampleIndex": 2,
-          "seed": 33
+          "readout": true
         },
         {
           "condition": "baseline",
           "promptID": "respondent-002",
-          "sampleIndex": 0,
-          "seed": 11
-        },
-        {
-          "condition": "baseline",
-          "promptID": "respondent-002",
-          "sampleIndex": 1,
-          "seed": 22
-        },
-        {
-          "condition": "baseline",
-          "promptID": "respondent-002",
-          "sampleIndex": 2,
-          "seed": 33
+          "readout": true
         },
         {
           "condition": "steered",
           "promptID": "respondent-001",
-          "sampleIndex": 0,
-          "seed": 11
-        },
-        {
-          "condition": "steered",
-          "promptID": "respondent-001",
-          "sampleIndex": 1,
-          "seed": 22
-        },
-        {
-          "condition": "steered",
-          "promptID": "respondent-001",
-          "sampleIndex": 2,
-          "seed": 33
+          "readout": true
         },
         {
           "condition": "steered",
           "promptID": "respondent-002",
-          "sampleIndex": 0,
-          "seed": 11
-        },
-        {
-          "condition": "steered",
-          "promptID": "respondent-002",
-          "sampleIndex": 1,
-          "seed": 22
-        },
-        {
-          "condition": "steered",
-          "promptID": "respondent-002",
-          "sampleIndex": 2,
-          "seed": 33
+          "readout": true
         }
       ],
       "refusal": null,
-      "sampleCount": 3,
+      "sampleCount": 0,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     },
     {
@@ -825,7 +806,9 @@
         "the seed list (3 seeds) is not used: this study records answer-token readouts only, and a readout reads each item once and draws no seed at any temperature. To generate responses that use the seeds, add sampledText to outcomeInstruments."
       ],
       "derivesSeeds": true,
+      "frozenAdvisory": null,
       "generatesSampledText": false,
+      "inertSamplingAdvisory": "this study scores options deterministically \u2014 no sampling, so temperature 0.7 is inert \u2014 the deterministic instruments never sample, so the declared value changes nothing. Remove it, or add a generating instrument if sampled output was intended.",
       "label": "readout only, warm, derivedSHA256, seed list",
       "manifest": {
         "outcomeInstruments": [
@@ -843,36 +826,35 @@
         {
           "condition": "baseline",
           "promptID": "respondent-001",
-          "sampleIndex": 0,
-          "seed": 1060262012863694703
+          "readout": true
         },
         {
           "condition": "baseline",
           "promptID": "respondent-002",
-          "sampleIndex": 0,
-          "seed": 807249983815239017
+          "readout": true
         },
         {
           "condition": "steered",
           "promptID": "respondent-001",
-          "sampleIndex": 0,
-          "seed": 5974560820258424598
+          "readout": true
         },
         {
           "condition": "steered",
           "promptID": "respondent-002",
-          "sampleIndex": 0,
-          "seed": 315500303309602878
+          "readout": true
         }
       ],
       "refusal": null,
-      "sampleCount": 1,
+      "sampleCount": 0,
+      "samplesPerItemProblems": [],
       "seedPolicy": "derivedSHA256"
     },
     {
       "advisories": [],
       "derivesSeeds": false,
+      "frozenAdvisory": "this study will be refused when its run is submitted or started, because at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample. To run it: steerlab-cli experiment duplicate seeds seeds-v2 && steerlab-cli experiment set-sampling seeds-v2 --seeds <n>  (one seed; or raise the temperature above 0 to sample)",
       "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
       "label": "readout and sampled text, greedy, seed list",
       "manifest": {
         "outcomeInstruments": [
@@ -962,6 +944,99 @@
       ],
       "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
       "sampleCount": 3,
+      "samplesPerItemProblems": [],
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "frozenAdvisory": null,
+      "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
+      "label": "sampled text, greedy, three samples per item",
+      "manifest": {
+        "samplesPerItem": 3,
+        "seeds": [
+          11
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        }
+      ],
+      "refusal": null,
+      "sampleCount": 1,
+      "samplesPerItemProblems": [
+        "samplesPerItem > 1 requires temperature > 0 (greedy decoding makes every sample identical)",
+        "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' (per-record seeds derived from condition/prompt/sampleIndex)"
+      ],
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "frozenAdvisory": null,
+      "generatesSampledText": false,
+      "inertSamplingAdvisory": "this study scores options deterministically \u2014 no sampling, so samplesPerItem 3 is inert \u2014 the deterministic instruments never sample, so the declared value changes nothing. Remove it, or add a generating instrument if sampled output was intended.",
+      "label": "readout only, greedy, three samples per item",
+      "manifest": {
+        "outcomeInstruments": [
+          "answerTokenLogprob"
+        ],
+        "samplesPerItem": 3,
+        "seeds": [
+          11
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "readout": true
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "readout": true
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "readout": true
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "readout": true
+        }
+      ],
+      "refusal": null,
+      "sampleCount": 0,
+      "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
     }
   ],
