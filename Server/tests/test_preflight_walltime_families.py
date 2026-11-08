@@ -136,13 +136,14 @@ def test_a_local_judge_evaluate_keeps_generation_pricing(meta):
     shape, no rendering discount."""
     _seed(meta, [_entry(220.0)])
     check = _walltime(_manifest(judges=LOCAL_PANEL), 1664, verb="evaluate")
-    assert check["status"] == "fail"
+    # Over the wall, an estimate warns (review round 4); nothing certain.
+    assert check["status"] == "warn"
     assert check["data"]["instrumentFamily"] == fam.JUDGED_EVALUATE
     assert check["data"]["judgingCustody"] == "local"
     # 1664 ÷ 220/h × 1.5 = 11.35 h of generating, + the 15 min every job
     # pays to reach its first record.
     assert check["data"]["estimatedHours"] == pytest.approx(11.60, abs=0.05)
-    assert "raise the walltime or split the matrix" in check["message"]
+    assert "request --walltime 12:00:00 or more" in check["message"]
 
 
 def test_a_credentialed_external_panel_judges_inline_and_is_priced(
@@ -157,7 +158,7 @@ def test_a_credentialed_external_panel_judges_inline_and_is_priced(
     check = _walltime(_manifest(judges=EXTERNAL_PANEL), 1664, verb="evaluate")
     assert check["data"]["instrumentFamily"] == fam.JUDGED_EVALUATE
     assert check["data"]["judgingCustody"] == "inline"
-    assert check["status"] == "fail"
+    assert check["status"] == "warn"
 
 
 def test_a_run_verb_is_never_parked_however_the_panel_is_pinned(meta):
@@ -195,11 +196,11 @@ def test_a_family_rate_is_used_when_history_exists(meta):
     assert check["data"]["rateSource"] == "family"
     assert check["data"]["recordsPerHour"] == 2000.0
     assert check["data"]["estimatedHours"] == pytest.approx(1.50, abs=0.01)
-    assert "deterministic-logprob family's own observed rate over 5 job(s)" \
-        in check["message"]
-    # The same records under the global rate would have been refused.
+    assert "deterministic-logprob family's mean rate over 5 past job(s) of " \
+        "acme/tiny on A100" in check["message"]
+    # The same records under the global rate would have been over the wall.
     _seed(meta, [_entry(220.0)])
-    assert _walltime(manifest, 1664)["status"] == "fail"
+    assert _walltime(manifest, 1664)["status"] == "warn"
 
 
 def test_the_fallback_to_the_global_rate_is_labelled(meta):
@@ -207,7 +208,7 @@ def test_the_fallback_to_the_global_rate_is_labelled(meta):
     _seed(meta, [_entry(220.0)])
     check = _walltime(_manifest(outcomeInstruments=["answerTokenLogprob"]),
                       1664)
-    assert check["status"] == "fail"
+    assert check["status"] == "warn"
     assert check["data"]["rateSource"] == "global"
     assert "FALLBACK to the global rate across all instrument families" \
         in check["message"]
@@ -388,7 +389,8 @@ def test_the_refusal_threshold_follows_the_per_shard_estimate(meta):
     ever use, the exact over-ask the check itself warns against."""
     _seed(meta, [_entry(291.0)])
     refused = _walltime(_manifest(), 7488, walltime="13:00:00")
-    assert refused["status"] == "fail"          # ≈38.6 h against 13 h
+    assert refused["status"] == "warn"          # ≈38.6 h against 13 h
+    assert "request --walltime 39:00:00 or more" in refused["message"]
     sharded = _walltime(_manifest(), 7488, walltime="13:00:00", shard_count=4)
     assert sharded["status"] == "ok"            # ≈9.9 h per shard
     assert sharded["data"]["estimatedHours"] == pytest.approx(9.90, abs=0.05)

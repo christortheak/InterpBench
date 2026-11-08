@@ -71,6 +71,7 @@ import json
 import os
 import signal as signal_mod
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -760,6 +761,47 @@ def _size_or_zero(path: str) -> int:
         return 0
 
 
+class RecordPace:
+    """When this process wrote its first and last generation record, and how
+    many it wrote (public issue #11): the pace of the records themselves,
+    without the model load and startup before the first one. Reset by the
+    bundle executor at the start of a job and stamped on its child record
+    (``recordPace``), from which the throughput history takes a job's compute
+    time per record: (last − first) ÷ (records − 1). Records a resumed run
+    had already written are not counted: only this process's own."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self) -> None:
+        with self._lock:
+            self.first: float | None = None
+            self.last: float | None = None
+            self.count = 0
+
+    def note(self) -> None:
+        now = time.time()
+        with self._lock:
+            if self.first is None:
+                self.first = now
+            self.last = now
+            self.count += 1
+
+    def snapshot(self) -> dict | None:
+        """``{"records", "firstRecordAt", "lastRecordAt"}``, or None when
+        fewer than two records were written (no interval to measure)."""
+        with self._lock:
+            if self.count < 2 or self.first is None or self.last is None:
+                return None
+            return {"records": self.count, "firstRecordAt": self.first,
+                    "lastRecordAt": self.last}
+
+
+#: This process's generation records (see :class:`RecordPace`).
+RECORD_PACE = RecordPace()
+
+
 class GenerationWriter:
     """Append-discipline ``generations.jsonl`` writer with a skip set and
     between-records checkpointing.
@@ -847,6 +889,8 @@ class GenerationWriter:
         self.completed_keys.add(key)
         self._handle.write(json.dumps(record) + "\n")
         self._handle.flush()
+        if os.path.basename(self.path) == GENERATIONS_FILENAME:
+            RECORD_PACE.note()
         if self.checkpoint is not None and self.checkpoint.requested:
             self.checkpoint_now(reason="signal")
 

@@ -1971,6 +1971,9 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
     from .manifest import Manifest
 
     started = time.time()
+    # The pace of this job's own records, for the throughput history (issue
+    # #11): without the model load before the first one.
+    resume_mod.RECORD_PACE.reset()
     run_directory: str | None = None
     status = "succeeded"
     error: str | None = None
@@ -2268,6 +2271,12 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
         if concept_scope_token is not None:
             validation_workflow.bundle_concept_scope.reset(concept_scope_token)
         result["finishedAt"] = time.time()
+        pace = resume_mod.RECORD_PACE.snapshot()
+        if pace is not None:
+            # Additive: when this job wrote its first and last record, and
+            # how many (``resume.RecordPace``). The reconciler carries the
+            # child's result onto the job record unchanged.
+            result["recordPace"] = pace
         if record_path:
             write_child_record(record_path, kind=f"bundle-execute:{verb}",
                                status=status, result=result, error=error,
