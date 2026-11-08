@@ -4225,14 +4225,18 @@ envelope's `result.walltimeNotice`): the estimate, the walltime to ask for
 (rounded up to the hour), and splitting the study as the alternative; past
 twice the request it says the job is very likely to run out of time. It says
 what happens at the walltime by the step (`data.atWalltime`: `resumes`,
-`resumesInRunStage`, or `stops`): a `run` keeps its finished records and a
-`sweep` its finished cells, and either can be resumed; a pipeline passes the
-checkpoint to its `run` stage only, so it can be resumed only when the
-walltime finds it there; `extract`, `validate`, and `evaluate`, and a
-pipeline in any other stage, stop and must be submitted again. With no past job near this length, the notice
+`resumesInRunStage`, or `stops`): a `run` keeps its finished records and
+can be resumed; a pipeline passes the checkpoint to its `run` stage only, so
+it can be resumed only when the walltime finds it there; `extract`,
+`validate`, `evaluate`, and a standalone `sweep` (to which `bundle execute`
+gives no checkpoint), and a pipeline in any other stage, stop
+and must be submitted again. With no past job near this length, the notice
 (`data.promptLengthNotice`) names the nearest past job and how far it is
 (`data.farFromHistory`). A request for a GPU of no named type (`gpu:1`) is
-kept in its own history bucket, `unknownGPU`.
+kept in its own history bucket, `unknownGPU`, and reports `data.gpuType` as
+null on every pricing path; history filed before that under the request's
+count (`1`) is read, and folded into, that bucket. A type named by a number
+(`gpu:3090:1`) stays that type.
 
 A history that does not record its items' length gets the notice when these
 average 8,192 tokens or more. The estimate never sets the job's time limit:
