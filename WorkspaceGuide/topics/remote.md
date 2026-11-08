@@ -125,7 +125,11 @@ scheduler refuses for a limit that never frees (above the cluster's maximum
 for one job) is refused at once, with the scheduler's words and the repair;
 the run stays cancelled, so resume it again within the limit. A held part
 the scheduler refuses that way later fails its run with the same words and
-repair in the run's error; report it, and do not wait for it. An engine older than this answers a
+repair in the run's error; report it, and do not wait for it. When the
+scheduler refuses with only "Job violates accounting/QOS policy" and no
+reason code, it may be the job limit or a limit on the request, so the part
+stays held and its note says the scheduler gave no reason; if it stays held,
+check the walltime against the cluster's limit for one job. An engine older than this answers a
 refused fan-out as a success, so on one, check `steerlab-cli remote jobs`
 and count the parts. **And stagger submissions where the site caps queued jobs per user:**
 K shards are K independent scheduler submissions, so a fan-out that crosses

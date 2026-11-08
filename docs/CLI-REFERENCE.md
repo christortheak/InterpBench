@@ -4470,8 +4470,13 @@ Consequences, stated plainly:
   `AssocJobLimit`), with or without a trailing `Limit`; sbatch's general
   "Job violates accounting/QOS policy"
   sentence does too once the same request was accepted for another part of
-  the run (alone it may name a per-job size or time limit, which never
-  frees). Any other limit code beside it (`QOSMaxWallDurationPerJobLimit`,
+  the run. Alone, for a request no part has had accepted, it may be the job
+  count or a per-job size or time limit, which never frees: at submission
+  the fan-out is refused, and for a held part (at a tick, or at Resume) the
+  part stays held, never fails its run on it, keeps no other run waiting,
+  and its note says the scheduler gave no reason and to check the walltime
+  against the cluster's limit for one job (review round 5). Any other limit
+  code beside it (`QOSMaxWallDurationPerJobLimit`,
   `QOSMaxGRESPerJob`, `PartitionTimeLimit`, …) never waits: at submission
   the fan-out is refused, and for a held part the run is cancelled and failed
   with the scheduler's words and a repair ("request a walltime within the
@@ -4490,11 +4495,13 @@ Consequences, stated plainly:
   claim's from the claim's time (else the job record's creation), and the
   managed campaign's export and cancel checks from the cell's recorded
   creation; with no time to search from, the answer is "cannot say", never
-  "absent". A Resume whose `--walltime` the scheduler refuses for a limit
-  that never frees is refused at once, with the repair, and the run stays
-  cancelled: the first part it continues is handed to the scheduler in the
-  request (or the same refusal of a part that had run is read), never held
-  only to fail on the next tick. A scheduler that
+  "absent". A Resume whose `--walltime` the scheduler refuses for a named
+  limit that never frees is refused at once, with the repair, and the run
+  stays cancelled: the first part it continues is handed to the scheduler in
+  the request (or the same refusal of a part that had run is read), never
+  held only to fail on the next tick. A part whose script is gone refuses the
+  Resume with what is missing, and the repair is a fresh submission. Two
+  Resumes at once hold each part again only once. A scheduler that
   cannot be reached keeps every run's held parts waiting; a maintenance
   window in one run's way keeps that run's parts held and the runs behind it
   are still submitted; any other refusal cancels the run and fails it, and
