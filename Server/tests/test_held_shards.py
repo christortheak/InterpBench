@@ -564,15 +564,24 @@ def test_a_resume_refused_without_a_reason_keeps_its_parts_held(
     assert "without saying why" in answer["message"]
     assert "check the walltime against the cluster's limit for one job" in \
         answer["message"]
+    # Review round 6: the answer says the parts are held, not that they
+    # continue, with a typed field and the scheduler's sentence.
+    assert answer["heldUnexplained"] is True
+    assert "Job violates accounting/QOS policy" in answer["schedulerMessage"]
+    assert "are held, not running" in answer["message"]
+    assert "now continue" not in answer["message"]
     held = [jobs.get(entry["jobId"]) for entry in answer["resumedShards"]]
     assert len(held) == 2 and all(jobs.is_held(part) for part in held)
     assert jobs.get(submission.job_id).status == "running"
     shards = job_status(jobs, jobs.get(submission.job_id))["shards"]
     assert shards[2]["heldNote"] == HELD_PART_UNEXPLAINED_NOTE
 
-    # The slot frees, or the cause was the count after all: they go.
+    # The slot frees, or the cause was the count after all: at the next
+    # attempt (its wait is on record, review round 6), they go.
     monkeypatch.delenv("FAKE_SBATCH_FAIL_IF_ARG")
-    jobs._held_deferred_until.clear()
+    assert held[0].result["held"]["nextAttemptAt"] > \
+        held[0].result["held"]["lastAttemptAt"]
+    _due(jobs, held[0])
     _tick(jobs)
     assert [part.status for part in
             (jobs.get(p.id) for p in held)] == ["submitted", "submitted"]
@@ -756,6 +765,125 @@ def test_the_general_sentence_alone_holds_and_never_stalls_another_run(
     # The later run was not kept waiting behind it.
     assert [p.status for p in _parts(jobs, later)] == ["submitted",
                                                        "submitted"]
+
+
+def _due(jobs, part):
+    """Make ``part``'s next attempt due now (as if its wait had passed)."""
+    part = jobs.get(part.id)
+    held = dict(part.result["held"])
+    held["nextAttemptAt"] = 0.0
+    part.result = {**part.result, "held": held}
+    jobs.store.update(part)
+    jobs._held_deferred_until.clear()
+
+
+def _unexplained_run(tmp_path, monkeypatch, name):
+    """A run every part of which was held at the first by a reason code,
+    and whose scheduler now refuses with the general sentence alone."""
+    _limited(monkeypatch, accepted=0)
+    jobs, submission = _submit(tmp_path, monkeypatch, name=name, parallel=2)
+    _limited(monkeypatch, accepted=0, message=POLICY)
+    return jobs, submission
+
+
+def test_unexplained_refusals_back_off_to_half_an_hour(tmp_path, monkeypatch,
+                                                       fake_slurm):
+    """Review round 6: one sbatch a minute for ever was the old answer. Each
+    refusal of the same request that gives no reason waits longer: 1, 2, 4,
+    8, 16, then 30 minutes, stamped on the record."""
+    jobs, submission = _unexplained_run(tmp_path, monkeypatch, "heldbackoff")
+    first = _parts(jobs, submission)[0]
+    delays = []
+    for attempt in range(1, 8):
+        _due(jobs, first)
+        _tick(jobs)
+        held = jobs.get(first.id).result["held"]
+        assert held["unexplainedRefusals"] == attempt
+        delays.append(round(held["nextAttemptAt"] - held["lastAttemptAt"]))
+    assert delays == [60, 120, 240, 480, 960, 1800, 1800]
+    # Within the wait, the scheduler is not asked again.
+    calls = len(fake_slurm.calls("sbatch"))
+    jobs._held_deferred_until.clear()
+    _tick(jobs)
+    assert len(fake_slurm.calls("sbatch")) == calls
+    assert jobs.get(submission.job_id).status == "submitted"
+
+
+def test_a_day_of_unexplained_refusals_fails_the_run_resumably(
+        tmp_path, monkeypatch, fake_slurm):
+    from steerlab_server.api.jobs import cancel_resume_hint
+    jobs, submission = _unexplained_run(tmp_path, monkeypatch, "heldgiveup")
+    first = _parts(jobs, submission)[0]
+    _due(jobs, first)
+    _tick(jobs)
+    held = dict(jobs.get(first.id).result["held"])
+    held["unexplainedSince"] = held["lastAttemptAt"] - 24 * 3600 - 1
+    held["nextAttemptAt"] = 0.0
+    part = jobs.get(first.id)
+    part.result = {**part.result, "held": held}
+    jobs.store.update(part)
+    jobs._held_deferred_until.clear()
+    _tick(jobs)
+
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "failed"
+    assert "without saying why" in parent.error
+    assert "Job violates accounting/QOS policy" in parent.error
+    assert ("Request a walltime within the cluster's limit for one job "
+            "(--walltime), then resume the run") in parent.error
+    assert parent.result["heldGaveUp"]["refusals"] == 2
+    assert not any(jobs.is_held(p) for p in _parts(jobs, submission))
+    assert cancel_resume_hint(parent)["offered"] is True
+
+    # It stays resumable: within the limit, the parts are held again and go.
+    _slot_frees(monkeypatch)
+    answer = jobs.resubmit(submission.job_id)
+    assert answer["ok"] is True
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "running"
+    assert "heldGaveUp" not in parent.result
+    assert parent.result["heldGaveUpBefore"]["part"] == first.id
+    _tick(jobs)
+    assert [tail.status for tail in
+            (jobs._shard_chain_tail(p) for p in _parts(jobs, submission))] == [
+        "submitted", "submitted"]
+
+
+def test_a_slot_that_frees_first_submits_the_part(tmp_path, monkeypatch,
+                                                  fake_slurm):
+    """The cause was the job count after all: when the slot frees before
+    the bound, the part is accepted at its next attempt, and the record
+    keeps how long it waited."""
+    jobs, submission = _unexplained_run(tmp_path, monkeypatch, "heldslotfree")
+    first = _parts(jobs, submission)[0]
+    for _ in range(2):
+        _due(jobs, first)
+        _tick(jobs)
+    assert jobs.get(first.id).result["held"]["unexplainedRefusals"] == 2
+    _slot_frees(monkeypatch)
+    _due(jobs, first)
+    _tick(jobs)
+    assert [p.status for p in _parts(jobs, submission)] == ["submitted",
+                                                            "submitted"]
+    assert jobs.get(first.id).result["heldBeforeSubmit"][
+        "unexplainedRefusals"] == 2
+    assert jobs.get(submission.job_id).status == "submitted"
+
+
+def test_a_named_job_count_ends_a_run_of_unexplained_refusals(
+        tmp_path, monkeypatch, fake_slurm):
+    jobs, submission = _unexplained_run(tmp_path, monkeypatch, "heldnamed")
+    first = _parts(jobs, submission)[0]
+    for _ in range(2):
+        _due(jobs, first)
+        _tick(jobs)
+    _limited(monkeypatch, accepted=0)
+    _due(jobs, first)
+    _tick(jobs)
+    held = jobs.get(first.id).result["held"]
+    for key in ("lastRefusalUnexplained", "unexplainedRefusals",
+                "unexplainedSince", "nextAttemptAt"):
+        assert key not in held, key
 
 
 def test_a_maintenance_window_defers_one_run_and_not_the_next(
