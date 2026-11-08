@@ -29,8 +29,8 @@ prompt before it answers, so several hundred long transcripts can take ten
 minutes or more; both clients wait up to an hour. A submission that was sent
 and never answered is `submitOutcomeUnknown`, state `pending` (exit 12), and
 not a failure: the server is probably still preparing the job. Look first,
-with `remote jobs` on the Mac or `runner jobs` on the cross-platform client;
-the job usually appears within a few minutes. Every submission carries a
+in this client's list of the server's jobs (below); the job usually appears
+within a few minutes. Every submission carries a
 submission key derived from what is submitted. A server that advertises
 `cluster.submissionKey` answers a repeat of the same submission with the job
 the first one created, while that job is being prepared or has not ended,
@@ -66,7 +66,10 @@ with `steerlab-cli experiment freeze <name> --run-substrate server`, because
 the validate evidence came from the cluster's engine. Then package the frozen
 study, upload it, and submit `--verb run`. Analyze there too, with `--verb
 analyze`: this Mac reads a cluster run's results and does not re-measure
-them. Without `--executor`, `submit-bundle` uses the server's own executor
+them. A `submit-bundle` that answers `submitOutcomeUnknown` (exit 12) is
+followed by `steerlab-cli remote jobs --site <id> --json`, never by a second
+submit unless `result.repeatIsSafe` is true or no job appears. Without
+`--executor`, `submit-bundle` uses the server's own executor
 (Slurm on a cluster), except `analyze` and `verify`, which load no model and
 run on the controller. `--executor local` puts a model
 verb inside the controller's small CPU allocation. The verb warns, and it is

@@ -27,8 +27,8 @@ prompt before it answers, so several hundred long transcripts can take ten
 minutes or more; both clients wait up to an hour. A submission that was sent
 and never answered is `submitOutcomeUnknown`, state `pending` (exit 12), and
 not a failure: the server is probably still preparing the job. Look first,
-with `remote jobs` on the Mac or `runner jobs` on the cross-platform client;
-the job usually appears within a few minutes. Every submission carries a
+in this client's list of the server's jobs (below); the job usually appears
+within a few minutes. Every submission carries a
 submission key derived from what is submitted. A server that advertises
 `cluster.submissionKey` answers a repeat of the same submission with the job
 the first one created, while that job is being prepared or has not ended,
