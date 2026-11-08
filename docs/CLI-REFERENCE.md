@@ -4464,7 +4464,16 @@ Consequences, stated plainly:
   never submitted twice: the accounting search runs from the attempt's own
   time (`sacct -S <attempt less an hour> -E now`, through the site's
   configured sacct), because `sacct --name` alone starts at today's midnight;
-  a search the scheduler cannot answer keeps the part held. A scheduler that
+  a search the scheduler cannot answer keeps the part held. Every other
+  search by name does the same (review round 3): a stale resubmission
+  claim's from the claim's time (else the job record's creation), and the
+  managed campaign's export and cancel checks from the cell's recorded
+  creation; with no time to search from, the answer is "cannot say", never
+  "absent". A Resume whose `--walltime` the scheduler refuses for a limit
+  that never frees is refused at once, with the repair, and the run stays
+  cancelled: the first part it continues is handed to the scheduler in the
+  request (or the same refusal of a part that had run is read), never held
+  only to fail on the next tick. A scheduler that
   cannot be reached keeps every run's held parts waiting; a maintenance
   window in one run's way keeps that run's parts held and the runs behind it
   are still submitted; any other refusal cancels the run and fails it, and
