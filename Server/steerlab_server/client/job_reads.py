@@ -21,6 +21,13 @@ _JOB_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 LACKS_JOB_READS_CODE = "jobStatusUnsupported"
 
+#: What a part SteerLab holds says when the runner sent no sentence (issue
+#: #12). Twin literal of ``api/jobs.HELD_PART_NOTE`` (this module never
+#: imports the engine) and of the Mac client's
+#: ``RemoteJobStatusText.heldPartNote``.
+HELD_PART_NOTE = ("held by SteerLab: the cluster's job limit is reached; it "
+                  "is submitted when a slot frees")
+
 
 def _refusal(**kwargs):
     from ..client_cli import ClientRefusal
@@ -108,6 +115,26 @@ def log_tail(client, invocation, common: dict) -> CLIResult:
                  "response": document})
 
 
+def held_parts_summary(submission: dict) -> tuple[str, str] | None:
+    """``(phrase, note)`` for a submission whose split run has parts held by
+    SteerLab because the cluster's job limit was reached (issue #12), or
+    None. The phrase rides the one-line message; the note is the runner's own
+    sentence, printed as it is. Twin of the Mac client's
+    ``ShardedSubmission.heldParts``."""
+    held = submission.get("shardsHeld") if isinstance(submission, dict) else None
+    if not isinstance(held, dict):
+        return None
+    count, parts = held.get("count"), held.get("partCount")
+    if not isinstance(count, int) or count < 1:
+        return None
+    phrase = (f"{count} of {parts} parts held by SteerLab until slots free"
+              if isinstance(parts, int) else
+              f"{count} part(s) held by SteerLab until slots free")
+    note = held.get("message") if isinstance(held.get("message"), str) else (
+        f"{phrase}; the controller submits each, in order, when a slot frees")
+    return phrase, note
+
+
 # --- plain text ------------------------------------------------------------------
 
 _ENDED_SCHEDULER_STATES = frozenset({"succeeded", "failed", "cancelled",
@@ -155,8 +182,16 @@ def status_message(document: dict) -> str:
                  f"has not caught up yet)")
     elif document.get("schedulerOutcome"):
         text += f" (the scheduler recorded {document['schedulerOutcome']})"
+    elif document.get("held"):
+        text += " (held by SteerLab until the cluster's job limit frees a slot)"
     records = _records_phrase(document.get("progress"))
-    return text + (f"; {records}" if records else "")
+    text += f"; {records}" if records else ""
+    shards = document.get("shards") or []
+    held = sum(1 for shard in shards if shard.get("held"))
+    if held:
+        text += (f"; {held} of {len(shards)} parts held by SteerLab until "
+                 "slots free")
+    return text
 
 
 def status_lines(document: dict) -> list[str]:
@@ -214,6 +249,13 @@ def tail_lines(document: dict) -> list[str]:
 
 def _body(entry: dict, indent: str) -> list[str]:
     lines = []
+    if entry.get("held"):
+        # Issue #12: a part SteerLab holds has no scheduler job yet.
+        line = entry.get("heldNote") or HELD_PART_NOTE
+        since = (entry.get("held") or {}).get("since")
+        if isinstance(since, (int, float)) and not isinstance(since, bool):
+            line += f" (held since {_stamp(since)})"
+        lines.append(indent + line)
     view = entry.get("scheduler")
     if isinstance(view, dict):
         lines.append(f"{indent}scheduler: {_scheduler_phrase(view)}")

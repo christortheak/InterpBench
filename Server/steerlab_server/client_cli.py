@@ -3713,7 +3713,13 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
                 f"{submission.get('verb')} to {client.base_url} as job "
                 f"{job_id}"
                 + (" (dry run)" if submission.get("dryRun") else ""))
+        from .client.job_reads import held_parts_summary
+        held = held_parts_summary(submission)   # issue #12
+        if held:
+            line += f"; {held[0]}"
         print(line)
+        if held:
+            print(f"note: {held[1]}")
         return CLIResult(
             message=line, changed=True,
             payload={**common, "jobId": job_id,
@@ -3729,6 +3735,7 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
                      "runnerIdentity": identity,
                      "slurmJobID": submission.get("slurmJobID"),
                      "shardJobIDs": submission.get("shardJobIDs"),
+                     "shardsHeld": submission.get("shardsHeld"),
                      "submissionDirectory": submission.get(
                          "submissionDirectory"),
                      "recordsDirectory": submission.get("recordsDirectory"),
@@ -4795,13 +4802,17 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                  "dryRun": bool(submission.get("dryRun")),
                  "slurmJobID": submission.get("slurmJobID"),
                  "shardJobIDs": submission.get("shardJobIDs"),
+                 "shardsHeld": submission.get("shardsHeld"),
                  "submissionDirectory": submission.get("submissionDirectory")}
     _record(stages, "submit", STAGE_OK, jobId=job_id,
             verb=submission.get("verb"), executor=submission.get("executor"),
             dryRun=bool(submission.get("dryRun")))
+    from .client.job_reads import held_parts_summary
+    held = held_parts_summary(submission)   # issue #12
     _note("submit", f"job {job_id} ({submission.get('verb')} on "
                     f"{submission.get('executor')})"
-                    + (" — dry run" if submission.get("dryRun") else ""))
+                    + (" — dry run" if submission.get("dryRun") else "")
+                    + (f"; {held[1]}" if held else ""))
 
     follow_ups = [
         f"{PROGRAM} runner jobs {job_id} --runner {client.base_url}",

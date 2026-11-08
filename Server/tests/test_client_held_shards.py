@@ -1,0 +1,113 @@
+"""Issue #12 on the Python client: ``runner submit --parallel`` against a
+runner whose scheduler meets its job limit, and ``runner status`` of a split
+run with held parts.
+
+Driven through the real parser and envelope against the real ASGI app
+(``test_client_runner.wired_cli``), with the committed fake scheduler
+binaries on PATH. Nothing contacts a real scheduler.
+"""
+
+import json
+
+import pytest
+
+pytest.importorskip("fastapi")
+pytest.importorskip("httpx")
+
+from steerlab_server import client_cli
+
+from test_sharding import _staged_bundle, fake_slurm  # noqa: F401 - fixture
+from test_client_runner import (  # noqa: F401 - fixtures
+    _envelope, runner_env, service, wired_cli)
+
+RUNNER = ["--runner", "http://testserver"]
+LIMIT = ("sbatch: error: QOSMaxSubmitJobPerUserLimit\\n"
+         "sbatch: error: Batch job submission failed: Job violates "
+         "accounting/QOS policy (job submit limit, user's size and/or time "
+         "limits)")
+
+
+def _submit_split_run(wired, tmp_path, monkeypatch, capsys, *, name):
+    monkeypatch.setenv("STEERLAB_EXECUTOR", "slurm")
+    bundle = _staged_bundle(tmp_path, name=name)
+    code, document, _ = _envelope(["runner", "upload", bundle, *RUNNER], capsys)
+    assert code == 0, document
+    staged, digest = (document["result"]["runnerPath"],
+                      document["result"]["sha256"])
+    argv = ["runner", "submit", *RUNNER, "--bundle-path", staged,
+            "--bundle-sha", digest, "--verb", "run", "--executor", "slurm",
+            "--parallel", "3", "--target-root", wired["target"]]
+    code = client_cli.main(argv + ["--json"])
+    captured = capsys.readouterr()
+    return code, json.loads(captured.out), captured.err
+
+
+def test_a_split_run_with_held_parts_is_a_success_with_a_note(
+        wired_cli, fake_slurm, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "2")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", LIMIT)
+    code, document, _ = _submit_split_run(wired_cli, tmp_path, monkeypatch,
+                                          capsys, name="clientheld")
+    assert code == 0, document
+    held = document["result"]["shardsHeld"]
+    assert held["count"] == 1 and held["partCount"] == 3
+    assert document["message"].endswith(
+        "; 1 of 3 parts held by SteerLab until slots free")
+    assert fake_slurm.calls("scancel") == []
+
+
+def test_a_split_run_refused_for_another_reason_exits_nonzero(
+        wired_cli, fake_slurm, tmp_path, monkeypatch, capsys):
+    """Before, the runner answered 200 and the client exited 0 while the
+    parts it had submitted were cancelled and the run was failed."""
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "1")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE",
+                       "sbatch: error: Invalid partition name specified")
+    code, document, _ = _submit_split_run(wired_cli, tmp_path, monkeypatch,
+                                          capsys, name="clientfailed")
+    assert code != 0, document
+    assert document["state"] != "ready"
+    reason = document["error"]["reason"]
+    assert "the split run was not started" in reason
+    assert "Invalid partition name specified" in reason
+    assert len(fake_slurm.calls("scancel")) == 1
+
+
+def test_runner_status_shows_held_parts_in_plain_words():
+    from steerlab_server.client import job_reads
+    document = {
+        "jobId": "p1", "status": "submitted", "notes": [
+            "1 of 2 parts is held by SteerLab: the cluster's job limit is "
+            "reached."],
+        "shards": [
+            {"jobId": "a", "status": "running", "executorJobID": "6401",
+             "shardIndex": 0, "shardCount": 2, "found": True,
+             "held": None, "heldNote": None, "notes": []},
+            {"jobId": "b", "status": "pending", "executorJobID": None,
+             "shardIndex": 1, "shardCount": 2, "found": True,
+             "held": {"reason": "clusterJobLimit", "since": 1_700_000_000.0},
+             "heldNote": ("held by SteerLab: the cluster's job limit is "
+                          "reached; it is submitted when a slot frees"),
+             "notes": []},
+        ],
+    }
+    lines = job_reads.status_lines(document)
+    assert "  part 2 of 2: job b [pending]" in lines
+    held_line = next(line for line in lines if "held by SteerLab:" in line
+                     and line.startswith("    "))
+    assert held_line.startswith(
+        "    held by SteerLab: the cluster's job limit is reached; it is "
+        "submitted when a slot frees (held since ")
+    assert job_reads.status_message(document) == (
+        "job p1 is submitted; 1 of 2 parts held by SteerLab until slots free")
+    assert job_reads.status_message(document["shards"][1]) == (
+        "job b is pending (held by SteerLab until the cluster's job limit "
+        "frees a slot)")
+
+    # A runner that sends the stamp but no sentence still reads plainly.
+    del document["shards"][1]["heldNote"]
+    assert any(line.startswith("    " + job_reads.HELD_PART_NOTE)
+               for line in job_reads.status_lines(document))
+    # A part that is not held says nothing of it.
+    assert not any("held" in line for line in job_reads.status_lines(
+        document["shards"][0]))
