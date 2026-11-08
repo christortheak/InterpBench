@@ -18,7 +18,7 @@ from .study_admission import verify_or_warn
 from .run_artifacts import write_config_snapshot
 from .run_status import heal_after_completion
 from .pipeline_ledger import (PIPELINE_LEDGER_SCHEMA,
-    read_pipeline_ledger as _read_pipeline_ledger,
+    read_pipeline_ledger as _read_pipeline_ledger, stages_to_run,
     workspace_reference,
     write_pipeline_ledger as _write_pipeline_ledger)
 from .pipeline_evidence import (find_minted_agent,
@@ -100,21 +100,6 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
     _log = log or print
     manifest = Manifest.load(name, root)
     raw_block = manifest.raw.get("pipeline")
-    # A chain that runs the study meets run start's settings refusals HERE,
-    # before the verification below, the model acquisition, and every stage
-    # ahead of `run` (review round 1 of public issue #9: inside a chain they
-    # fired only at the run stage, after extract, validate, sweep, and
-    # promote). The settings cannot change between stages: promote adds
-    # arms, never a temperature or a seed. An unreadable block is refused
-    # below, in its own words.
-    try:
-        declared = (pspec.resolve_pipeline(raw_block).stages
-                    if raw_block is not None else ())
-    except ValueError:
-        declared = ()
-    if "run" in declared:
-        from . import study_admission
-        study_admission.refuse_settings(manifest)
     verify_or_warn(manifest, root)
     if raw_block is None:
         # The chain is preregistered DATA, not a default (engineer review
@@ -195,9 +180,19 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
             _log("pipeline resume: cleared the parked stamp — the chain "
                  "is live again")
 
-    completed = (ledger or {}).get("stageResults") or {}
-    remaining = [s for s in spec.stages
-                 if (completed.get(s) or {}).get("status") != "completed"]
+    remaining = stages_to_run(spec.stages, ledger)
+    # A chain whose run is still AHEAD meets run start's settings refusals
+    # here, before the model acquisition and every stage before `run`
+    # (review round 1 of public issue #9: inside a chain they fired only at
+    # the run stage, after extract, validate, sweep, and promote). Asked of
+    # the stages still to run, never of the declared list (round 3): a chain
+    # parked in evaluate or analyze after its run completed has nothing left
+    # that the rules govern, and refusing its continuation would strand the
+    # finished run's evidence. The settings cannot change between stages:
+    # promote adds arms, never a temperature or a seed.
+    if "run" in remaining:
+        from . import study_admission
+        study_admission.refuse_settings(manifest)
     # Preflight ONLY the remaining stages: a resumed chain whose judged
     # sweep already completed must not refuse for a since-cleared key.
     pipeline_inline_judging_preflight(manifest, remaining)

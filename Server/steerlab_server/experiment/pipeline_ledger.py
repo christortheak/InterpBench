@@ -130,6 +130,21 @@ def write_pipeline_ledger(run_directory: str, ledger: dict) -> None:
 
 
 
+def stages_to_run(stages, ledger: dict | None) -> list[str]:
+    """The declared ``stages`` a chain still has to run: those its ledger
+    has not recorded as completed, and none once the ledger carries a
+    disposition (a completed or aborted chain returns idempotently, and an
+    aborted chain is a recorded scientific stop a requeue must not re-run).
+    No ledger, a fresh chain: every declared stage. One rule for the chain's
+    own start (``pipeline_workflow.pipeline``) and the engine's submission
+    preflight for a resumed chain."""
+    if ledger and ledger.get("disposition"):
+        return []
+    completed = (ledger or {}).get("stageResults") or {}
+    return [s for s in stages
+            if (completed.get(s) or {}).get("status") != "completed"]
+
+
 def read_pipeline_ledger(run_directory: str) -> dict:
     with open(pipeline_ledger_path(run_directory), encoding="utf-8") as handle:
         data = json.load(handle)

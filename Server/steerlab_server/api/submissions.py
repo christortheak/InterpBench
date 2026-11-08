@@ -245,9 +245,14 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     # here, before anything is written or queued (public issue #9), as does a
     # declared agent comparison whose arms would not run.
     _refuse_pipeline_block(manifest, verb)
-    _refuse_settings(manifest, verb, stages)
+    # A resumed chain is asked of the stages it still has to run (round 3):
+    # one parked in evaluate or analyze after its run completed is not
+    # refused for settings only its finished run read.
+    to_run = _stages_still_to_run(stages, verb, resume_directory,
+                                  target_for_paths)
+    _refuse_settings(manifest, verb, to_run)
     _refuse_inert_conditions(manifest, verb)
-    _refuse_prompt_rules(manifest, verb, stages,
+    _refuse_prompt_rules(manifest, verb, to_run,
                          _prompts_text_for_study(manifest, prompts_path, root))
     # A malformed promptReading declaration refuses here, before anything is
     # written; the engine would otherwise refuse it after the queue wait.
@@ -765,6 +770,27 @@ def _refuse_pipeline_block(manifest: Manifest | None, verb: str) -> None:
     raise SubmissionRefusal(
         _refused_before_the_queue(problem, repair),
         code=lifecycle_gates.STUDY_DECLARATION, repair_action=repair)
+
+
+def _stages_still_to_run(stages: list[str] | None, verb: str,
+                         resume_directory: str | None,
+                         target_root: str) -> list[str] | None:
+    """For a resumed ``pipeline``, the declared stages its ledger has not
+    completed (``pipeline_ledger.stages_to_run``, the rule the chain's own
+    start applies); otherwise the declared stages unchanged. A ledger that
+    cannot be read is left to the chain, which refuses it in its own
+    words."""
+    if verb != "pipeline" or not stages or not resume_directory:
+        return stages
+    from ..experiment import pipeline_ledger
+    from ..experiment.bundles import resolve_against_target
+    try:
+        ledger = pipeline_ledger.read_pipeline_ledger(
+            os.path.abspath(resolve_against_target(resume_directory,
+                                                   target_root)))
+    except (OSError, ValueError):
+        return stages
+    return pipeline_ledger.stages_to_run(stages, ledger)
 
 
 def _runs_the_study(verb: str, stages: list[str] | None) -> bool:

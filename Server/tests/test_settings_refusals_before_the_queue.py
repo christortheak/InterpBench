@@ -776,3 +776,114 @@ def test_runner_submit_refuses_a_staged_study_the_seed_rule_refuses(tmp_path,
     manifest.raw["pipeline"] = {"stages": ["extract", "validate"]}
     assert sampling.submission_greedy_seed_list_problem(
         manifest, "pipeline") is None
+
+
+# --- a resumed chain is asked of what remains (review round 3) ---------------------
+
+def _parked_chain(root, name, stage_results):
+    """A pipeline run directory whose ledger records ``stage_results``."""
+    from steerlab_server.experiment import pipeline_ledger
+    manifest = Manifest.load(name, root)
+    directory = os.path.join(root, "runs", f"{name}-pipeline")
+    os.makedirs(directory)
+    pipeline_ledger.write_pipeline_ledger(directory, {
+        "schema": pipeline_ledger.PIPELINE_LEDGER_SCHEMA,
+        "experiment": name, "experimentHash": manifest.content_hash(),
+        "stages": list(manifest.raw["pipeline"]["stages"]),
+        "disposition": None, "stageResults": stage_results})
+    return directory
+
+
+def _unexpected(*args, **kwargs):
+    raise AssertionError("this capability must not be used")
+
+
+def _chain_stages(**overrides):
+    from steerlab_server.experiment.pipeline_workflow import PipelineStages
+    callbacks = dict.fromkeys(("extract", "validate", "sweep", "run",
+                               "evaluate", "analyze", "promote"), _unexpected)
+    return PipelineStages(**{**callbacks, **overrides})
+
+
+def test_a_chain_whose_run_completed_resumes_into_analyze_unrefused(
+        tmp_path, monkeypatch):
+    """Every post-run continuation still lists `run` among its declared
+    stages, so asking the declared list refused a chain parked in analyze
+    after its run had completed: the orphan reconcile, the post-merge
+    continuation, and a requeue of a finished chain all raised."""
+    from steerlab_server.experiment.pipeline_workflow import (PipelineModels,
+                                                              pipeline)
+    root = str(tmp_path)
+    _frozen_under_an_older_release(
+        root, "greedy", monkeypatch, temperature=0.0, seeds=[11, 22, 33],
+        pipeline={"stages": ["run", "analyze"]})
+    source = os.path.join(root, "runs", "completed-run")
+    os.makedirs(source)
+    directory = _parked_chain(root, "greedy", {
+        "run": {"status": "completed", "runDirectory": source}})
+    analysed = []
+
+    def analyze(name, root, **kwargs):
+        analysed.append(kwargs["source_run"])
+        result = os.path.join(root, "runs", "analysis")
+        os.makedirs(result)
+        return result
+
+    out = pipeline("greedy", root, pipeline_run_directory=directory,
+                   stages=_chain_stages(analyze=analyze),
+                   models=PipelineModels(acquire=_unexpected,
+                                         pin_revision=_unexpected),
+                   log=lambda _: None)
+    assert out == directory
+    assert analysed == [source]
+    # A requeue of the finished chain returns idempotently.
+    assert pipeline("greedy", root, pipeline_run_directory=directory,
+                    stages=_chain_stages(),
+                    models=PipelineModels(acquire=_unexpected,
+                                          pin_revision=_unexpected),
+                    log=lambda _: None) == directory
+
+
+def test_a_chain_with_its_run_ahead_is_refused_before_the_model(
+        tmp_path, monkeypatch):
+    from steerlab_server.experiment.pipeline_workflow import (PipelineModels,
+                                                              pipeline)
+    root = str(tmp_path)
+    _frozen_under_an_older_release(
+        root, "greedy", monkeypatch, temperature=0.0, seeds=[11, 22, 33],
+        pipeline={"stages": ["extract", "run", "analyze"]})
+    directory = _parked_chain(root, "greedy", {
+        "extract": {"status": "completed",
+                    "runDirectory": os.path.join(root, "runs", "x")}})
+    with pytest.raises(lifecycle_gates.LifecycleError) as refused:
+        pipeline("greedy", root, pipeline_run_directory=directory,
+                 stages=_chain_stages(),
+                 models=PipelineModels(acquire=_unexpected,
+                                       pin_revision=_unexpected),
+                 log=lambda _: None)
+    assert str(refused.value) == GREEDY_THREE
+
+
+def test_a_resumed_chain_is_asked_of_what_remains_at_submission(
+        server, monkeypatch):
+    monkeypatch.setenv("STEERLAB_SLURM_GPU_TYPES", "L4,A100,H100")
+    root, jobs = server
+    _frozen_under_an_older_release(
+        root, "greedy", monkeypatch, temperature=0.0, seeds=[11, 22, 33],
+        pipeline={"stages": ["run", "analyze"]})
+    source = os.path.join(root, "runs", "completed-run")
+    os.makedirs(source)
+    directory = _parked_chain(root, "greedy", {
+        "run": {"status": "completed", "runDirectory": source}})
+    # Its run completed: the continuation is not refused for its seeds.
+    submissions.submit_study("greedy", verb="pipeline", jobs=jobs,
+                             executor="slurm", dry_run=True,
+                             resume_directory=directory,
+                             resources={"gres": "A100",
+                                        "walltime": "00:30:00"})
+    # A fresh chain that runs the study still is.
+    with pytest.raises(submissions.SubmissionRefusal):
+        submissions.submit_study("greedy", verb="pipeline", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
