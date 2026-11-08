@@ -116,11 +116,13 @@ PREFLIGHT_PARKED_JUDGMENT_FIXED_HOURS = 1.0 / 6.0
 PREFLIGHT_JOB_STARTUP_HOURS = 0.25
 
 # --- prompt length (public issue #11) -----------------------------------------
-#: How many times longer than the throughput history's items this submission's
-#: must be before the walltime check says so in plain words. A rate measured on
-#: one length of prompt and applied to another is an extrapolation; at four
-#: times the length, reading the prompt is already a different job, and on long
-#: prompts attention makes reading grow faster than in proportion.
+#: How many times longer than the longest, or shorter than the shortest, item
+#: the throughput history read this submission's items must be before the
+#: walltime check says so in plain words and stops refusing on the estimate
+#: alone. A rate measured on one length of prompt and applied to another is an
+#: extrapolation; at four times the length, reading the prompt is already a
+#: different job (attention makes long prompts grow faster than in
+#: proportion, and short items carry a fixed cost each).
 PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO = 4.0
 
 
@@ -2672,16 +2674,19 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
 
     And one correction for prompt length (public issue #11): ``measured`` is
     the submission's one count of its task prompts, and its average rendering
-    is stamped as ``promptTokensPerRecord`` so the throughput fold can record
-    how long the history's items were (``promptTokens`` on a family entry).
-    A deterministic-logprob record is one forward pass over its prompt, so
-    that family's rate is scaled by this submission's prompt tokens per record
-    over the history's prompt basis. A generating family is priced by the
-    tokens it generates, as before. Either way, when this submission's items
-    are at least :data:`PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO` times longer
-    than the history's, or the history does not record its items' length and
-    these are long, ``data.promptLengthNotice`` says so in plain words and the
-    check is at least a warning.
+    is stamped as ``promptTokensPerRecord`` so the throughput fold can pool
+    the prompt tokens the history's jobs read and the hours they took
+    (``promptTokens`` on a family entry). A deterministic-logprob record is
+    one forward pass over its prompt, so that family is priced from the
+    pooled reading rate: records × prompt tokens per record ÷ tokens an hour.
+    A generating family is priced by the tokens it generates, as before.
+    When this submission's items are more than
+    :data:`PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO` times longer than the
+    longest, or shorter than the shortest, the history read, the estimate is
+    an extrapolation: ``data.promptLengthNotice`` says so in plain words with
+    the repair, the check is a warning, and it never fails on the estimate
+    alone. A history that does not record its items' length gets the notice
+    when these are long.
     """
     check_id = "walltime"
     if manifest is None:
@@ -2759,7 +2764,7 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                     f"{shard_records} records"
                     if shard_count > 1 else f"{planned_records} records")
     if rate_source == "family":
-        basis = (f"{records_note} ÷ {rate:.0f}/h × "
+        basis = (f"{records_note} ÷ {_rate_words(rate)}/h × "
                  f"{PREFLIGHT_WALLTIME_MARGIN}, at the "
                  f"{family.label} family's own observed rate over "
                  f"{entry.get('samples')} job(s)")
@@ -2768,7 +2773,7 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                   f"{gpu_type or 'an unspecified GPU'} yet"
                   if family is not None
                   else "the instrument family could not be classified")
-        basis = (f"{records_note} ÷ {rate:.0f}/h × "
+        basis = (f"{records_note} ÷ {_rate_words(rate)}/h × "
                  f"{PREFLIGHT_WALLTIME_MARGIN}, FALLBACK to the global rate "
                  f"across all instrument families — {unseen}, and the global "
                  "figure mixes fast scored readouts with slow sampled "
@@ -2830,70 +2835,109 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
         # Said in the check's own data (where both clients read it into the
         # submission envelope) and its message, and never quieter than a
         # warning: an estimate this far from its history is advice to read.
+        # One extrapolated far from its history never refuses on its own:
+        # it may be wrong by the same factor in either direction.
         check["data"]["promptLengthNotice"] = notice
         check["message"] = f"{check['message']}. {notice}"
-        if check["status"] == "ok":
+        if check["status"] == "ok" or (prompt["far"]
+                                       and check["status"] == "fail"):
             check["status"] = "warn"
     return check
+
+
+def _rate_words(rate: float) -> str:
+    """A records-per-hour figure as the estimate line prints it: whole
+    records from ten an hour up, two significant figures below (a 150,000-
+    token readout can take longer than an hour)."""
+    return f"{rate:.0f}" if rate >= 10 else f"{rate:.2g}"
 
 
 def _prompt_length_pricing(family, entry: dict | None, rate_source: str,
                            rate: float, prompt_tokens: int | None) -> dict:
     """How this submission's prompt length prices against the rate's history
     (issue #11): the rate to use, the factor to scale the estimate by, the
-    clause the estimate's basis gains, the data it records, and the plain
-    notice when the history's items were much shorter (or unrecorded and
-    these are long). Never raises: prompt length is pricing metadata.
+    clause the estimate's basis gains, the data it records, the plain notice
+    when the history's items were much longer or shorter (or unrecorded and
+    these are long), and whether the estimate is so far from its history
+    that it may not refuse on its own (``far``). Never raises: prompt length
+    is pricing metadata.
 
-    The history is a family entry's ``promptTokens`` block
-    (``housekeeping.fold_throughput``): ``basis`` is the prompt tokens per
-    record its first stamped sample read, and ``recordsPerHour`` the mean of
-    its stamped samples, each normalized to that basis where the family's
-    time scales with prompt length."""
+    The history is a family entry's pooled ``promptTokens`` block
+    (``housekeeping.prompt_history``): the prompt tokens its stamped jobs
+    read an hour, and the shortest and longest prompt tokens per record among
+    them. A family whose record is a forward pass over its prompt
+    (``PROMPT_BOUNDED_FAMILIES``) is priced from that reading rate; a
+    generating family keeps its generated-token pricing."""
     result = {"rate": rate, "scale": 1.0, "basis": "", "data": {},
-              "notice": None}
+              "notice": None, "far": False}
     if prompt_tokens is None:
         return result
-    history = (entry.get("promptTokens")
+    history = (housekeeping.prompt_history(entry)
                if entry and rate_source == "family" else None)
-    basis_tokens = history.get("basis") if isinstance(history, dict) else None
     scales = (family is not None
               and family.id in instrument_family.PROMPT_BOUNDED_FAMILIES)
-    if isinstance(basis_tokens, (int, float)) and basis_tokens > 0:
-        ratio = prompt_tokens / basis_tokens
-        result["data"]["promptTokensBasis"] = basis_tokens
-        result["data"]["promptTokensBasisSamples"] = history.get("samples")
+    if history is not None:
+        low, high = history["minPerRecord"], history["maxPerRecord"]
+        seen = (f"about {low:,.0f}" if low == high
+                else f"{low:,.0f} to {high:,.0f}")
+        result["data"]["promptTokensHistory"] = {
+            "tokensPerHour": round(history["tokensPerHour"], 3),
+            "minPerRecord": low, "maxPerRecord": high,
+            "samples": history["samples"]}
         if scales:
-            based = history.get("recordsPerHour")
-            if isinstance(based, (int, float)) and based > 0:
-                result["rate"] = float(based)
-                result["data"]["recordsPerHour"] = float(based)
-                result["data"]["recordsPerHourBasis"] = "promptTokens"
-            result["scale"] = ratio
+            reading = history["tokensPerHour"] / prompt_tokens
+            result["rate"] = reading
+            result["data"]["recordsPerHour"] = round(reading, 3)
+            result["data"]["recordsPerHourBasis"] = "promptTokens"
             result["basis"] = (
-                f", scaled ×{ratio:.3g} from the rate's {basis_tokens:,.0f}-"
-                f"token prompt basis to this submission's {prompt_tokens:,} "
-                "prompt tokens per record — reading a prompt assumed to take "
-                "time in proportion to its length")
+                f", at the family's observed reading rate of "
+                f"{history['tokensPerHour']:,.0f} prompt tokens an hour over "
+                f"{history['samples']} job(s) (items of {seen} prompt "
+                f"tokens), for this submission's {prompt_tokens:,} per record "
+                "— reading a prompt assumed to take time in proportion to its "
+                "length")
         else:
             result["basis"] = (
-                f"; the rate was measured on items of about "
-                f"{basis_tokens:,.0f} prompt tokens and these average "
-                f"{prompt_tokens:,}, which this family's estimate does not "
-                "scale by")
-        if ratio >= PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO:
+                f"; the rate was measured on items of {seen} prompt tokens "
+                f"and these average {prompt_tokens:,}, which this family's "
+                "estimate does not scale by")
+        ratio = PREFLIGHT_PROMPT_LENGTH_NOTICE_RATIO
+        repair = ("Ask for more time than the estimate, or split the study "
+                  "into smaller parts, or submit a few items first to "
+                  "measure.")
+        if prompt_tokens > ratio * high:
+            result["far"] = True
+            result["data"]["farFromHistory"] = "longer"
             result["notice"] = (
                 "The throughput history behind this walltime estimate came "
-                f"from items of about {basis_tokens:,.0f} prompt tokens; this "
-                f"submission's items average {prompt_tokens:,}, about "
-                f"{ratio:,.0f} times longer. "
+                f"from items of {seen} prompt tokens; this submission's items "
+                f"average {prompt_tokens:,}, about "
+                f"{prompt_tokens / high:,.0f} times longer. "
                 + ("The estimate assumes reading time grows in proportion to "
                    "prompt length, but reading very long prompts can take "
-                   "longer than that. Ask for more time than the estimate."
+                   "longer than that, or less. "
                    if scales else
                    "The estimate prices this study by the tokens it "
-                   "generates and does not price reading the longer "
-                   "prompts. Ask for more time than the estimate."))
+                   "generates and does not price reading the longer prompts. ")
+                + "So far from its history, the estimate cannot tell whether "
+                "the walltime is enough, and it does not refuse on its own. "
+                + repair)
+        elif prompt_tokens * ratio < low:
+            result["far"] = True
+            result["data"]["farFromHistory"] = "shorter"
+            result["notice"] = (
+                "The throughput history behind this walltime estimate came "
+                f"from items of {seen} prompt tokens; this submission's items "
+                f"average {prompt_tokens:,}, about "
+                f"{low / prompt_tokens:,.0f} times shorter. "
+                + ("Short items each carry a cost a rate measured on long "
+                   "items does not show, so this estimate may be too short. "
+                   if scales else
+                   "The estimate prices this study by the tokens it "
+                   "generates, so it may be longer than the job needs. ")
+                + "So far from its history, the estimate cannot tell whether "
+                "the walltime is enough, and it does not refuse on its own. "
+                + repair)
         return result
     result["basis"] = (
         f"; the rate history does not record how long its items were, so the "
