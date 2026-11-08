@@ -1156,6 +1156,10 @@ def test_the_held_pass_reads_a_stored_override_itself(
             parent.error
         assert "the scheduler refused it" not in parent.error
         assert "--walltime HH:MM:SS" in parent.error
+        # The run failed outright, so it cannot be resumed: the repair says
+        # to submit again, never to resume it.
+        assert "submit the study again" in parent.error.lower()
+        assert "remote resubmit" not in parent.error
 
 
 def test_a_retry_refused_for_a_limit_that_never_frees_is_refused(
@@ -1789,3 +1793,30 @@ def test_the_submit_route_answers_a_failed_fanout_as_an_error(
     assert response.status_code == 200, response.text
     assert response.json()["shardsHeld"]["count"] == 2
     client.close()
+
+
+@pytest.mark.parametrize("value", ["+90", "1_000", "1:-5:00", "-5", "\u0661\u0662"])
+def test_a_walltime_field_is_ascii_digits_only(value):
+    """Review round 10: ``int`` takes these, sbatch does not; refuse them
+    where the walltime is typed, never later at the held pass."""
+    from steerlab_server.api import executors
+    with pytest.raises(ValueError):
+        executors.validated_walltime(value)
+
+
+def test_a_maintenance_window_reads_a_walltime_in_days(tmp_path):
+    """Review round 10: a site default written in days must price against
+    the maintenance calendar, not raise as if the scheduler refused it."""
+    import datetime as _dt
+    import json as _json
+    from steerlab_server.api import executors
+    now = _dt.datetime.now(_dt.timezone.utc)
+    calendar = tmp_path / "maintenance.json"
+    calendar.write_text(_json.dumps([{
+        "start": (now + _dt.timedelta(hours=20)).isoformat(),
+        "end": (now + _dt.timedelta(hours=30)).isoformat(),
+        "label": "window"}]))
+    assert executors.first_crossing_window("1-00:00:00", str(calendar)) is not None
+    assert executors.first_crossing_window("12:00:00", str(calendar)) is None
+    with pytest.raises(ValueError):
+        executors.first_crossing_window("UNLIMITED", str(calendar))

@@ -1975,7 +1975,12 @@ def first_crossing_window(walltime: str, calendar_path: str | None) -> dict | No
     if not os.path.exists(calendar_path):
         return None
     now = datetime.now(timezone.utc)
-    end = now + _parse_walltime(walltime)
+    # Any spelling Slurm reads, days included (a site default of
+    # ``1-00:00:00`` must not fail here as if the scheduler had refused it).
+    seconds = _parse_slurm_duration(walltime)
+    if seconds is None:
+        raise ValueError(f"SteerLab could not read the walltime {walltime!r}")
+    end = now + timedelta(seconds=seconds)
     try:
         with open(calendar_path, encoding="utf-8") as handle:
             windows = json.load(handle)
@@ -1994,15 +1999,23 @@ def first_crossing_window(walltime: str, calendar_path: str | None) -> dict | No
     return None
 
 
+def _walltime_field(text: str) -> int:
+    """One field of a walltime: ASCII digits only. ``int`` alone would take
+    ``+90``, ``1_000``, or ``-5``, which sbatch does not (review round 10)."""
+    if not (text.isascii() and text.isdigit()):
+        raise ValueError(f"not a walltime field: {text!r}")
+    return int(text)
+
+
 def _parse_walltime(value: str) -> timedelta:
     parts = value.split(":")
     if len(parts) == 3:
-        h, m, s = (int(p) for p in parts)
+        h, m, s = (_walltime_field(p) for p in parts)
         return timedelta(hours=h, minutes=m, seconds=s)
     if len(parts) == 2:
-        m, s = (int(p) for p in parts)
+        m, s = (_walltime_field(p) for p in parts)
         return timedelta(minutes=m, seconds=s)
-    return timedelta(minutes=int(value))
+    return timedelta(minutes=_walltime_field(value))
 
 
 def normalized_walltime(value: str | None) -> str | None:

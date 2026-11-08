@@ -125,6 +125,14 @@ def unreadable_walltime_repair(job_id: str) -> str:
         "--runner <url>)")
 
 
+def unreadable_walltime_submit_again_repair() -> str:
+    """The way on when the held pass cannot read a part's stored walltime:
+    the run fails outright (it did not give up), so it cannot be resumed;
+    submit the study again with a walltime SteerLab can read."""
+    return ("submit the study again with a walltime within the cluster's limit "
+            "for one job, written as HH:MM:SS (--walltime HH:MM:SS)")
+
+
 def held_unexplained_delay(count: int) -> float:
     """The wait after the ``count``-th unexplained refusal in a row."""
     return min(HELD_UNEXPLAINED_FIRST_DELAY_SECONDS * 2 ** max(0, count - 1),
@@ -2227,7 +2235,7 @@ class JobManager:
                     return "unreadableWalltime"
                 return self._fail_fanout_from_held_part(
                     parent, part, why,
-                    repair=unreadable_walltime_repair(parent.id))
+                    repair=unreadable_walltime_submit_again_repair())
             override = readable
         token = f"slhd-{part.id}-{uuid.uuid4().hex[:8]}"
         now = time.time()
