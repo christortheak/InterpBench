@@ -24,6 +24,7 @@ from ..experiment import bundles, paths
 from ..experiment.manifest import Manifest
 from . import housekeeping
 from . import instrument_family
+from . import submission_keys
 from .executors import (SlurmExecutor, SlurmResources, _parse_walltime,
                         first_crossing_window, normalized_dependency)
 from .jobs import HELD_PART_NOTE, JobManager
@@ -351,7 +352,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
         if dry_run:
             job = jobs.record_external(
                 "study-submit", status="prepared", executor="local", job_id=job_id,
-                requested_resources=local_resources,
+                requested_resources=submission_keys.keyed(local_resources),
                 result=base_result,
                 log=f"prepared local study submission {experiment}:{verb} (dry run)")
             return StudySubmission(job.id, experiment, verb, "local", True, run_bundle,
@@ -385,7 +386,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
             return _local_child_outcome(job, proc, base_result, record_path)
 
         job = jobs.submit("study-submit", _run_local,
-                          requested_resources=local_resources)
+                          requested_resources=submission_keys.keyed(local_resources))
         return StudySubmission(job.id, experiment, verb, "local", False, run_bundle,
                                None, None, command, records_dir, submission_dir)
 
@@ -456,9 +457,9 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
         log += " (PREFLIGHT OVERRIDDEN: verdict fail, forced by caller)"
     job = jobs.record_external(
         "study-submit", status=status, executor="slurm", executor_job_id=slurm_id,
-        requested_resources=_stamped_resources(bundle, manifest, preflight,
-                                               overridden, records_dir=records_dir,
-                                               prompt_reading_plan=reading_plan),
+        requested_resources=submission_keys.keyed(_stamped_resources(
+            bundle, manifest, preflight, overridden, records_dir=records_dir,
+            prompt_reading_plan=reading_plan)),
         job_id=job_id,
         result={"runBundle": run_bundle, "slurmBundle": bundle.to_dict(),
                 "command": command, "recordsDirectory": records_dir,
@@ -595,7 +596,7 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
         if dry_run:
             job = jobs.record_external(
                 "study-submit-bundle", status="prepared", executor="local",
-                job_id=job_id, requested_resources=local_resources,
+                job_id=job_id, requested_resources=submission_keys.keyed(local_resources),
                 result=base_result,
                 log=f"prepared local bundled study {experiment}:{verb} (dry run)")
             if parallel_note:
@@ -613,7 +614,7 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
             return _local_child_outcome(job, proc, base_result, record_path)
 
         job = jobs.submit("study-submit-bundle", _run_local,
-                          requested_resources=local_resources)
+                          requested_resources=submission_keys.keyed(local_resources))
         if parallel_note:
             job.log(parallel_note)
         return StudySubmission(job.id, experiment, verb, "local", False, meta,
@@ -679,9 +680,9 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
         log += f" ({parallel_note})"
     job = jobs.record_external(
         "study-submit-bundle", status=status, executor="slurm", executor_job_id=slurm_id,
-        requested_resources=_stamped_resources(bundle, manifest, preflight,
-                                               overridden, records_dir=records_dir,
-                                               prompt_reading_plan=reading_plan),
+        requested_resources=submission_keys.keyed(_stamped_resources(
+            bundle, manifest, preflight, overridden, records_dir=records_dir,
+            prompt_reading_plan=reading_plan)),
         job_id=job_id,
         result={**base_result, "slurmBundle": bundle.to_dict(),
                 "preflight": preflight,
@@ -1060,7 +1061,7 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
     parent = jobs.record_external(
         "study-submit-bundle", status="pending", executor="slurm",
         executor_job_id=None, job_id=parent_job_id,
-        requested_resources=parent_resources,
+        requested_resources=submission_keys.keyed(parent_resources),
         result={"runBundle": meta,
                 "recordsDirectory": records_dir,
                 "submissionDirectory": submission_dir,
