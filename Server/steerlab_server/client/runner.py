@@ -77,6 +77,13 @@ CALLER may safely retry, stated so nobody has to guess:
   — ``runner jobs`` — not to submit again. That is why the sha pre-check
   happens on a separate, idempotent ``inspect`` call *before* the submit: the
   one thing worth verifying is verified while verifying is still free.
+  Since public issue #11 every submit carries a ``submissionKey``
+  (:func:`submission_key`), and a runner that advertises
+  ``cluster.submissionKey`` answers a repeat with the job the first request
+  created while that job is being prepared or has not ended. That makes a
+  repeat by a PERSON harmless there; this adapter still never repeats one
+  itself, and a submit that was sent and never answered raises
+  :class:`SubmitOutcomeUnknown` (``pending``), never a failure.
 
 The token
 ---------
@@ -137,6 +144,17 @@ _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 #: and an adapter that gives up early turns a slow answer into a phantom
 #: failure the caller cannot distinguish from a real one.
 DEFAULT_TIMEOUT = 60.0
+
+#: How long a study submission may take to answer, in seconds (public issue
+#: #11). The server measures every task prompt before it answers, which for
+#: several hundred long transcripts takes minutes; a client that stopped
+#: waiting at :data:`DEFAULT_TIMEOUT` reported a failure while the job was
+#: still being created. The same hour the science routes allow. An explicit
+#: caller budget (``timeout=``) still takes precedence.
+SUBMIT_TIMEOUT = 3600.0
+
+#: The version of the submission-key derivation (:func:`submission_key`).
+SUBMISSION_KEY_VERSION = 1
 
 #: How much of an evidence bundle the client will accept by default before
 #: refusing. A cap the CALLER can raise, never a silent truncation: the
@@ -384,6 +402,63 @@ class RunnerUnreachable(RunnerError):
     code = "runnerUnreachable"
 
 
+class SubmitOutcomeUnknown(RunnerUnreachable):
+    """The submit request was sent and never answered (public issue #11).
+
+    Not a failure: the runner may still be preparing the job, and on a
+    cluster it usually is. ``pending`` (exit 12): work may be in flight, and
+    the repair is to look. A repeat is harmless only on a runner that
+    advertises ``cluster.submissionKey`` (``repeatIsSafe`` in ``detail``),
+    which answers it with the job the first request created."""
+
+    state = "pending"
+    code = "submitOutcomeUnknown"
+
+
+def submission_key(body: dict, bundle_sha256: str | None) -> str:
+    """The submission key for one ``submit-bundle`` request (issue #11).
+
+    The SHA-256 of the request body itself, as canonical JSON, with the
+    staged path replaced by the bundle's own digest: the same request for the
+    same bundle always carries the same key (a re-upload stages the same
+    bytes at a new path), and any change to what is submitted — the verb,
+    the resources, the parts, the target root, a dry run — changes it."""
+    document = {k: v for k, v in body.items()
+                if k not in ("bundlePath", "submissionKey")}
+    document["bundleSha256"] = bundle_sha256 or body.get("bundlePath")
+    document["submissionKeyVersion"] = SUBMISSION_KEY_VERSION
+    canonical = json.dumps(document, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def walltime_notice(submission: dict | None) -> str | None:
+    """The walltime check's plain-language notice (issue #11): the throughput
+    history it priced from came from much shorter items than this
+    submission's, or does not say how long its items were. None when the
+    check carries none, or the runner is older."""
+    preflight = (submission or {}).get("preflight")
+    checks = preflight.get("checks") if isinstance(preflight, dict) else None
+    for check in checks or []:
+        if isinstance(check, dict) and check.get("id") == "walltime":
+            data = check.get("data")
+            notice = data.get("promptLengthNotice") if isinstance(data, dict) else None
+            return notice if isinstance(notice, str) and notice else None
+    return None
+
+
+#: What a proxy in front of a runner answers when IT stops waiting: the
+#: runner behind it may still be working on the request.
+GATEWAY_STATUSES = (502, 504)
+
+
+def submits_once(capabilities: dict | None) -> bool:
+    """Whether a runner answers a repeated submission with the job it already
+    made (``cluster.submissionKey``)."""
+    cluster = (capabilities or {}).get("cluster")
+    return isinstance(cluster, dict) and cluster.get("submissionKey") is True
+
+
 # --- the address ----------------------------------------------------------
 
 
@@ -585,6 +660,8 @@ class RunnerClient:
         self.base_url = normalize_base_url(base_url)
         self.timeout = DEFAULT_TIMEOUT if timeout is None else float(timeout)
         self._diagnostic_timeout = 3600.0 if timeout is None else self.timeout
+        self._submit_timeout = (SUBMIT_TIMEOUT if timeout is None
+                                else self.timeout)
         self.verify = verify
         self.max_download_bytes = int(max_download_bytes)
         # Single underscore, and never rendered: see `__repr__` and `scrub`.
@@ -1003,10 +1080,69 @@ class RunnerClient:
             body["resources"] = dict(resources)
         if env:
             body["env"] = dict(env)
-        submission = self._json("POST", "/api/studies/submit-bundle", json_body=body)
+        # Issue #11: the key that makes a repeat of this request harmless on
+        # a runner that understands it (an older runner ignores the key).
+        body["submissionKey"] = submission_key(body, staged.get("bundleSha256"))
+        # Read before the submit, while reading is free: whether a repeat of
+        # this request would be answered with the job it creates.
+        try:
+            repeat_is_safe = submits_once(self.capabilities())
+        except RunnerError:
+            repeat_is_safe = False
+        try:
+            # The submit's own read budget, on the client this adapter built;
+            # an injected client keeps the budget it carries (see __init__).
+            submission = self._json(
+                "POST", "/api/studies/submit-bundle", json_body=body,
+                timeout=self._submit_timeout if self._owns_client else None)
+        except RunnerUnreachable as exc:
+            raise self._outcome_unknown(
+                exc.reason, remote_path=remote_path, verb=verb,
+                repeat_is_safe=repeat_is_safe) from exc
+        except RunnerHTTPError as exc:
+            if exc.status not in GATEWAY_STATUSES:
+                raise
+            # A proxy in front of the runner gave up waiting; the runner
+            # behind it may still be preparing the job.
+            raise self._outcome_unknown(
+                f"a proxy answered {exc.status}: {exc.reason}",
+                remote_path=remote_path, verb=verb,
+                repeat_is_safe=repeat_is_safe) from exc
         if reread_choices:
             confirm_reread(submission, self.base_url)
         return submission
+
+    @property
+    def submit_timeout(self) -> float:
+        """The read budget of a study submission (:data:`SUBMIT_TIMEOUT`
+        unless the caller set ``timeout=``)."""
+        return self._submit_timeout
+
+    def _outcome_unknown(self, why: str, *, remote_path: str, verb: str,
+                         repeat_is_safe: bool) -> SubmitOutcomeUnknown:
+        """The typed answer for a submit that was sent and never answered."""
+        safe = repeat_is_safe
+        if safe:
+            repair = (
+                f"steerlab runner jobs --runner {self.base_url}  (the runner "
+                "is most likely still preparing the job). Submitting the same "
+                "request again is safe: this runner answers a repeat with the "
+                "job the first request created, and never submits it twice")
+        else:
+            repair = (
+                f"steerlab runner jobs --runner {self.base_url}  (look before "
+                "you submit again: this runner does not recognise a repeated "
+                "submission, so a second submit is a second study). Submit "
+                f"again only if no job for {remote_path} --verb {verb} appears "
+                "within a few minutes")
+        return SubmitOutcomeUnknown(
+            self.scrub(f"the submit request to {self.base_url} was sent and "
+                       f"never answered ({why}) — the runner may still "
+                       "be preparing the job, so this is not a failure"),
+            repair_action=repair,
+            detail={"bundlePath": remote_path, "verb": verb,
+                    "repeatIsSafe": safe,
+                    "submitTimeoutSeconds": self._submit_timeout})
 
     # -- jobs --------------------------------------------------------------
 

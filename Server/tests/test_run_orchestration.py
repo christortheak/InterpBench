@@ -781,7 +781,9 @@ def test_a_submit_transport_error_is_never_retried_and_says_to_look(
 
     A timeout after submit is genuinely ambiguous — the job may exist, and on
     Slurm it may already hold an allocation. Retrying would be a second study.
-    The repair is to LOOK, and the exact command is in the document.
+    The repair is to LOOK, and the exact command is in the document. Since
+    public issue #11 it is ``pending`` (exit 12), never a failure: on a
+    cluster the runner is usually still preparing the job.
     """
     script.submit_error = runner_api.RunnerUnreachable(
         "ReadTimeout reaching /api/studies/submit-bundle",
@@ -790,8 +792,11 @@ def test_a_submit_transport_error_is_never_retried_and_says_to_look(
     code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL], capsys,
                              root=workspace)
 
-    assert code == 70, document
-    assert document["state"] == "failed"
+    assert code == 12, document
+    assert document["state"] == "pending"
+    assert document["result"]["repeatIsSafe"] is False
+    assert "a second submit is a second study" in \
+        document["error"]["repairAction"]
     assert document["error"]["code"] == client_cli.SUBMIT_OUTCOME_UNKNOWN_CODE
     assert document["result"]["failedStage"] == "submit"
     assert document["result"]["retried"] is False
