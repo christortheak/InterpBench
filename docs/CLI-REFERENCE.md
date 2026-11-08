@@ -2606,7 +2606,7 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 | `remote status` | Report one job's scheduler view, records written so far, and how it ended, then exit; a split run reports each part. |
 | `remote logs` | Stream one job's log; with --tail N, print its last N lines and those of its own scheduler output, then exit. |
 | `remote cancel` | Request cancellation of one job. |
-| `remote resubmit` | Resume a checkpointed or cancelled job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. The request waits up to an hour, because the server can run sbatch inside it; one that was sent and never answered is `resumeOutcomeUnknown` (`pending`, exit 12), with the repair to check the job's status (`remote status`) before resuming again. |
+| `remote resubmit` | Resume a checkpointed or cancelled job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. |
 | `remote fetch` | Download one server artifact without importing it. |
 | `remote import` | Download, hash-verify, and import an evidence bundle into runs/. |
 | `remote import-chain` | Import a whole pipeline chain, verifying existing evidence without overwriting it. |
