@@ -127,6 +127,22 @@ public struct RemoteJobStatusReport: Sendable {
         }
     }
 
+    /// A part SteerLab holds, not yet submitted, because the cluster's job
+    /// limit is reached (issue #12). Its status reads `pending`.
+    public struct Held: Sendable {
+        /// `clusterJobLimit`.
+        public var reason: String?
+        public var since: Double?
+        /// sbatch's own words when it refused the part.
+        public var schedulerMessage: String?
+
+        init(_ fields: LenientFields) {
+            reason = fields.string("reason")
+            since = fields.double("since")
+            schedulerMessage = fields.string("schedulerMessage")
+        }
+    }
+
     public var schemaVersion: Int?
     public var jobId: String?
     public var kind: String?
@@ -152,6 +168,10 @@ public struct RemoteJobStatusReport: Sendable {
     public var deathDetail: String?
     public var progress: Progress?
     public var notes: [String]?
+    /// Issue #12: set on a part SteerLab holds; `heldNote` is the server's
+    /// sentence for it.
+    public var held: Held?
+    public var heldNote: String?
     /// A split run: one entry per part (its current continuation, when the
     /// part was resumed).
     public var shards: [RemoteJobStatusReport]?
@@ -180,6 +200,8 @@ public struct RemoteJobStatusReport: Sendable {
         deathDetail = fields.string("deathDetail")
         progress = fields.fields("progress").map(Progress.init)
         notes = fields.strings("notes")
+        held = fields.fields("held").map(Held.init)
+        heldNote = fields.string("heldNote")
         shards = fields.objects("shards")?.map(RemoteJobStatusReport.init)
         shardIndex = fields.int("shardIndex")
         shardCount = fields.int("shardCount")
@@ -309,6 +331,13 @@ public enum RemoteJobStatusText {
     /// The most lines `remote logs --tail` asks for; the server's own cap.
     public static let maximumTailLines = 1000
 
+    /// What a part SteerLab holds says when the server sent no sentence
+    /// (issue #12). Twin of the engine's `HELD_PART_NOTE` and the Python
+    /// client's `job_reads.HELD_PART_NOTE`.
+    public static let heldPartNote =
+        "held by SteerLab: the cluster's job limit is reached; it is submitted "
+        + "when a slot frees"
+
     /// Whether `value` can name a job on the server: letters, digits, `.`,
     /// `_`, and `-`, at most 128 characters, never `.` or `..`. Checked
     /// before the id becomes part of a request path, so it can only ever
@@ -361,9 +390,16 @@ public enum RemoteJobStatusText {
                 + "record has not caught up yet)"
         } else if let outcome = report.schedulerOutcome {
             text += " (the scheduler recorded \(outcome))"
+        } else if report.held != nil {
+            text += " (held by SteerLab until the cluster's job limit frees a slot)"
         }
         if let records = recordsPhrase(report.progress) {
             text += "; \(records)"
+        }
+        let shards = report.shards ?? []
+        let held = shards.filter { $0.held != nil }.count
+        if held > 0 {
+            text += "; \(held) of \(shards.count) parts held by SteerLab until slots free"
         }
         return text
     }
@@ -431,6 +467,14 @@ public enum RemoteJobStatusText {
         for report: RemoteJobStatusReport, indent: String, timeZone: TimeZone
     ) -> [String] {
         var lines: [String] = []
+        if let held = report.held {
+            // Issue #12: a part SteerLab holds has no scheduler job yet.
+            var line = indent + (report.heldNote ?? heldPartNote)
+            if let since = held.since {
+                line += " (held since \(stamp(since, timeZone: timeZone)))"
+            }
+            lines.append(line)
+        }
         if let view = report.scheduler {
             lines.append(indent + "scheduler: " + schedulerPhrase(view, timeZone: timeZone))
         }

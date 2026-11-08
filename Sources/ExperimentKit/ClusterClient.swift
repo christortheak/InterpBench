@@ -1055,6 +1055,9 @@ public struct RemoteStudySubmission: Codable, Sendable {
     /// Sharded fan-out: the K shard child job-record ids in shard order.
     /// Nil on unsharded submissions and older servers.
     public var shardJobIDs: [String]? = nil
+    /// Issue #12: the parts the server holds because the cluster's job limit
+    /// was reached. Nil when every part was submitted, and from older servers.
+    public var shardsHeld: HeldShards? = nil
 }
 
 // MARK: - Preflight (WS4 contract)

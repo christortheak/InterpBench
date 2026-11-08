@@ -2958,8 +2958,13 @@ public struct ExperimentCLIRunner: Sendable {
             await recordJobOrigin(
                 submission.jobId, experiment: submission.experiment, verb: submission.verb,
                 operation: "submit-bundle")
+            // Issue #12: a split run with held parts is a success, said
+            // plainly; one refused for any other reason was an error above.
+            let held = ShardedSubmission.heldParts(submission.shardsHeld)
+            if let held { sink.err("note: \(held.note)\n") }
             return try respond(
-                submission, message: "submitted \(path)",
+                submission,
+                message: "submitted \(path)" + (held.map { "; \($0.phrase)" } ?? ""),
                 extra: [
                     // Where the executor came from: the flag, the server's
                     // own, analyze's controller default, or the fallback.
