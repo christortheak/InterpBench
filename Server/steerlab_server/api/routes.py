@@ -38,8 +38,17 @@ from .model_registry import ModelRegistry
 from .profile import (ServerProfile, capability_snapshot, server_role,
                       validate_profile, workspace_switch_policy)
 from .safe_paths import SafePathResolver, is_contained, safe_name
-from .submissions import PreflightRejection, submit_run_bundle, submit_study
+from .submissions import (PreflightRejection, SubmissionRefusal,
+                          submit_run_bundle, submit_study)
 from . import variant_chat
+
+
+def _refusal_detail(exc: SubmissionRefusal) -> dict:
+    """A typed submission refusal's 400 body: the message both clients read
+    (``detail.message``, the same words the bare string carried), with its
+    code and repair beside it for a caller that switches on them."""
+    return {"code": exc.code, "message": str(exc),
+            "repairAction": exc.repair_action}
 
 
 def _controller_blocks_resident_models() -> bool:
@@ -4092,6 +4101,8 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(
                 status_code=400,
                 detail={"message": str(exc), "preflight": exc.preflight})
+        except SubmissionRefusal as exc:
+            raise HTTPException(status_code=400, detail=_refusal_detail(exc))
         except (OSError, RuntimeError, ValueError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return submission.to_dict()
@@ -4140,6 +4151,8 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(
                 status_code=400,
                 detail={"message": str(exc), "preflight": exc.preflight})
+        except SubmissionRefusal as exc:
+            raise HTTPException(status_code=400, detail=_refusal_detail(exc))
         except (OSError, RuntimeError, ValueError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return submission.to_dict()

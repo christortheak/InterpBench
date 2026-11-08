@@ -29,13 +29,9 @@ from . import command_vocabulary as vocabulary
 
 
 def _declare_an_arm(name: str) -> str:
-    """Declaring a measured arm: an authoring act, so the command is spelled
-    for the reader's authoring client. This engine never authors."""
-    return vocabulary.authoring(
-        (f"experiment declare-condition {name} <arm> --slots "
-         "<concept>:<layer>:<alpha>",
-         f"experiment declare-condition {name} <arm> --slots "
-         "<concept>:<layer>:<alpha> --alpha-units norm|raw"))
+    """Declaring a measured arm (``study_admission.declare_an_arm_repair``,
+    shared with the submission preflight)."""
+    return study_admission.declare_an_arm_repair(name)
 
 
 def run(name: str, prompts_file: str | None = None, root: str | None = None,
@@ -143,8 +139,7 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
             # instead of 96), now machine-readable on both engines.
             raise lifecycle_gates.refusing(
                 lifecycle_gates.INERT_CONDITIONS, inert_problem,
-                repair=("declare arms the study's studyType actually runs — "
-                        + _declare_an_arm(name)))
+                repair=study_admission.inert_arms_repair(name))
         # The other road to a silent baseline-only run (WP0 dry run #0,
         # P0-2): a concept study whose arms were never declared at all. Same
         # place, same reason — before any queue wait or model load.

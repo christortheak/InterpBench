@@ -104,6 +104,26 @@ def settings_refusal(manifest: Manifest) -> lifecycle_gates.LifecycleError | Non
     return None
 
 
+def declare_an_arm_repair(name: str) -> str:
+    """Declaring a measured arm: an authoring act, so the command is spelled
+    for the reader's authoring client (this engine never authors). The
+    repair for a concept study that declares none, at run start and at the
+    engine's submission preflight."""
+    return vocabulary.authoring(
+        (f"experiment declare-condition {name} <arm> --slots "
+         "<concept>:<layer>:<alpha>",
+         f"experiment declare-condition {name} <arm> --slots "
+         "<concept>:<layer>:<alpha> --alpha-units norm|raw"))
+
+
+def inert_arms_repair(name: str) -> str:
+    """The repair for a declared agent comparison whose injection arms would
+    not run (``manifest.inert_conditions_problem``), at run start and at the
+    engine's submission preflight."""
+    return ("declare arms the study's studyType actually runs — "
+            + declare_an_arm_repair(name))
+
+
 def refuse_settings(manifest: Manifest) -> None:
     """Raise :func:`settings_refusal`'s refusal, when there is one."""
     refusal = settings_refusal(manifest)

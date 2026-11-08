@@ -427,6 +427,60 @@ def test_a_concept_study_with_no_arm_is_refused_at_submission(
                                             "walltime": "00:30:00"})
 
 
+DECLARE_AN_ARM = (
+    "on your authoring client: steerlab-cli experiment declare-condition "
+    "{name} <arm> --slots <concept>:<layer>:<alpha>  (Mac command line), or "
+    "steerlab experiment declare-condition {name} <arm> --slots "
+    "<concept>:<layer>:<alpha> --alpha-units norm|raw  (cross-platform "
+    "client)")
+
+
+@pytest.mark.parametrize("fields, name, repair", [
+    ({"conditions": []}, "no-arm", DECLARE_AN_ARM),
+    ({"studyType": "agentComparison"}, "inert",
+     "declare arms the study's studyType actually runs — " + DECLARE_AN_ARM),
+])
+def test_the_arm_refusals_are_typed_on_the_engine_cli_and_the_route(
+        server, monkeypatch, capsys, fields, name, repair):
+    """They raised a plain ValueError, so `study submit` printed
+    "ValueError: …" and exited 1 with no code or repair, and the route's
+    400 carried prose alone. Run start has always typed them."""
+    from starlette.testclient import TestClient
+    from steerlab_server import cli
+    from steerlab_server.api.app import app
+    root, jobs = server
+    _study(root, name, **fields)
+    repair = repair.format(name=name)
+    with pytest.raises(submissions.SubmissionRefusal) as refused:
+        submissions.submit_study(name, verb="run", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+    assert refused.value.code == "inertConditions"
+    assert refused.value.repair_action == repair
+    # The engine's command line answers with the code and the repair.
+    capsys.readouterr()
+    code = cli.main(["study", "submit", name, "--verb", "run", "--executor",
+                     "slurm", "--dry-run", "--gres", "A100", "--walltime",
+                     "00:30:00", "--json"])
+    document = json.loads(capsys.readouterr().out)
+    assert code != 0, document
+    assert document["state"] == "refused"
+    assert document["error"]["code"] == "inertConditions"
+    assert document["error"]["repairAction"] == repair
+    # The route's 400 carries them beside the message both clients read.
+    monkeypatch.delenv("STEERLAB_SERVER_ROLE", raising=False)
+    response = TestClient(app).post("/api/studies/submit", json={
+        "experiment": name, "verb": "run", "executor": "slurm",
+        "dryRun": True, "resources": {"gres": "A100", "walltime": "00:30:00"}})
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "inertConditions"
+    assert detail["repairAction"] == repair
+    assert detail["message"] == str(refused.value)
+    assert _submissions_written(root) == []
+
+
 def test_steps_that_do_not_run_the_study_are_not_refused(server, monkeypatch):
     """A frozen study's existing evidence can still be analysed, and a
     pipeline that does not run it is not refused for its seeds."""

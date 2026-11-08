@@ -737,13 +737,21 @@ def _refuse_inert_conditions(manifest: Manifest | None, verb: str) -> None:
     concept study has no arm while it is extracted, validated, and swept."""
     if manifest is None or verb not in ("run", "pipeline"):
         return
+    from ..experiment import lifecycle_gates, study_admission
     from ..experiment.manifest import (inert_conditions_problem,
                                        no_measured_conditions_problem)
+    # Typed (round 3), as run start types them: `inertConditions`, with the
+    # same repair, so `study submit --json` answers with a code and a
+    # repairAction rather than "ValueError: …" and exit 1.
     problem = inert_conditions_problem(manifest.raw)
+    repair = study_admission.inert_arms_repair(manifest.name)
     if problem is None and verb == "run":
         problem = no_measured_conditions_problem(manifest.raw)
+        repair = study_admission.declare_an_arm_repair(manifest.name)
     if problem:
-        raise ValueError(f"submission refused: {problem}")
+        raise SubmissionRefusal(
+            _refused_before_the_queue(problem, repair),
+            code=lifecycle_gates.INERT_CONDITIONS, repair_action=repair)
 
 
 def _refuse_pipeline_block(manifest: Manifest | None, verb: str) -> None:
