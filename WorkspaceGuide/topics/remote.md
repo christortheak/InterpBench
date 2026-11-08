@@ -143,9 +143,13 @@ reason code, it may be the job limit or a limit on the request, so the part
 stays held and its note says the scheduler gave no reason; if it stays held,
 check the walltime against the cluster's limit for one job. SteerLab asks
 again less and less often, and after 24 hours of such refusals fails the run
-with the scheduler's words; Resume then continues it. A Resume answered that
-way says its parts are held, not running (`heldUnexplained`), and is
-`pending` (12): read the run's status, and tell the researcher. An engine older than this answers a
+with the scheduler's words (never while another part of it runs). Resume it
+with a walltime within the cluster's limit for one job: `steerlab-cli remote
+resubmit <job-id> --walltime HH:MM:SS`; a Resume at the refused walltime is
+refused. A Resume answered that way says its parts are held, not running
+(`heldUnexplained`), and is `pending` (12): read the run's status, and tell
+the researcher. A Resume held for a job count, or for a scheduler that did
+not answer, says until what (`heldReason`) and succeeds. An engine older than this answers a
 refused fan-out as a success, so on one, check `steerlab-cli remote jobs`
 and count the parts. **And stagger submissions where the site caps queued jobs per user:**
 K shards are K independent scheduler submissions, so a fan-out that crosses

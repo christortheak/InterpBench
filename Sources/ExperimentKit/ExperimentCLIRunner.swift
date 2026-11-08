@@ -3284,6 +3284,12 @@ public struct ExperimentCLIRunner: Sendable {
                         + "against the cluster's limit for one job")
                 return held
             }
+            if resubmission.heldReason != nil, let note = resubmission.message {
+                // Review round 7: held for a reason that frees (a job limit,
+                // no answer yet). A success, as a hold at submission is,
+                // with the note.
+                sink.err("note: \(note)\n")
+            }
             let message: String
             if resubmission.resumedAfterCancel == true,
                 resubmission.resumedShards != nil

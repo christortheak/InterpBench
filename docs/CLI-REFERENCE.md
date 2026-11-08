@@ -4495,13 +4495,23 @@ Consequences, stated plainly:
   waits longer than the last (1, 2, 4, 8, 16, then 30 minutes, stamped on
   the part as `unexplainedRefusals`, `unexplainedSince`, and
   `nextAttemptAt`), and 24 hours of them fail the run with the scheduler's
-  words and the walltime repair; the run stays resumable (`heldGaveUp`, and
-  Resume is offered). A named job count, or the part's acceptance, ends the
-  count. A Resume whose first held part is refused that way answers
+  words and the walltime repair, unless another part of the run is with the
+  scheduler: a run with a live part never gives up, and keeps waiting. The
+  failed run stays resumable within the limit (`heldGaveUp`, with the refused
+  `walltime`): a Resume that would ask for that walltime again is refused at
+  once with the repair, so the app, whose Resume sends no walltime, offers
+  none and its line names `steerlab-cli remote resubmit <job-id> --walltime
+  HH:MM:SS` (review round 7). A named job count, or the part's acceptance,
+  ends the count. A Resume whose first held part is refused that way answers
   `heldUnexplained: true` with `schedulerMessage`, says the parts are held,
   not running, and both clients report it as `pending` (12) with the next
   step: read the run's status, and if its parts stay held, check the
-  walltime (review round 6). Any other limit
+  walltime (review round 6). One held for a named job count, for a
+  scheduler that did not answer, or for a maintenance window answers
+  `heldReason` (`jobLimit`, `schedulerUnanswered`, `maintenanceWindow`), says
+  the parts are held until a slot frees, the scheduler answers, or the
+  window passes, and is a success (0) with that note (review round 7). Any
+  other limit
   code beside it (`QOSMaxWallDurationPerJobLimit`,
   `QOSMaxGRESPerJob`, `PartitionTimeLimit`, …) never waits: at submission
   the fan-out is refused, and for a held part the run is cancelled and failed
