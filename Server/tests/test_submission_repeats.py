@@ -490,3 +490,48 @@ def test_a_repeat_of_a_split_run_reports_its_held_parts_as_they_are(
     assert kept["shardsHeld"]["count"] == 2
     # Two repeats, no new parts: 2 accepted + 1 refused + 2 after the tick.
     assert len(fake_slurm.calls("sbatch")) == 5
+
+
+def test_held_parts_are_worded_by_the_reason_they_wait(jobs):
+    """A part waiting for a maintenance window is not said to wait for the
+    job limit (review round 3): each held part is worded by its latest
+    refusal."""
+    limit = "sbatch: error: QOSMaxSubmitJobPerUserLimit"
+    window = "requested walltime crosses a configured maintenance window"
+
+    def submit():
+        parent = jobs.record_external(
+            "study-submit-bundle", status="submitted", executor="slurm",
+            requested_resources=submission_keys.keyed(
+                {"parallelJobs": 3, "shardChildren": []}))
+        children = []
+        for index, refusal in enumerate((None, limit, window)):
+            held = None if refusal is None else {
+                "reason": "clusterJobLimit", "since": 1.0,
+                "schedulerMessage": limit, "lastRefusal": refusal}
+            child = jobs.record_external(
+                "study-submit-bundle-shard",
+                status="submitted" if held is None else "pending",
+                executor="slurm",
+                executor_job_id="fake-scheduler-1" if held is None else None,
+                requested_resources={"shardIndex": index, "parentJob": parent.id},
+                result={"held": held} if held else {})
+            children.append(child.id)
+        parent.requested_resources = {**parent.requested_resources,
+                                      "shardChildren": children}
+        jobs.store.update(parent)
+        return submissions.StudySubmission(
+            parent.id, "demo", "run", "slurm", False, {}, None, None, [],
+            "/r", "/s", shard_job_ids=children)
+
+    _once(jobs, submit)
+    repeat = _once(jobs, submit)
+    held = repeat["shardsHeld"]
+    assert held["count"] == 2
+    assert held["reasons"] == {"clusterJobLimit": 1, "maintenanceWindow": 1}
+    assert held["message"].startswith(
+        "1 of 3 parts have been submitted; 2 are still held by SteerLab: "
+        "1 because the cluster's job limit is reached; 1 because its walltime "
+        "would cross a maintenance window")
+    assert "because the cluster's job limit is reached. The" not in \
+        held["message"]
