@@ -894,3 +894,44 @@ def test_the_fold_adopts_legacy_untyped_history(meta, tmp_path):
     assert [(e["gpuType"], e["samples"], e["recordsPerHour"])
             for e in table["entries"]] == [(hk.UNTYPED_GPU_BUCKET, 4, 32.5)]
     assert hk.throughput_lookup(MODEL, hk.UNTYPED_GPU_BUCKET)["samples"] == 4
+
+
+def _two_legacy_keys(meta):
+    """Pre-round-5 history under two legacy keys for one model: ``1`` (3
+    samples at 10 an hour) and ``2`` (1 sample at 30 an hour, with one
+    stamped prompt-length job)."""
+    _seed(meta, [
+        {"modelId": MODEL, "gpuType": "1", "recordsPerHour": 10.0,
+         "samples": 3, "updatedAt": "2026-10-01T00:00:00+00:00"},
+        {"modelId": MODEL, "gpuType": "2", "recordsPerHour": 30.0,
+         "samples": 1, "updatedAt": "2026-10-02T00:00:00+00:00",
+         "promptTokens": _history(_row(2000, 30, 1.0, job="legacy2"))}])
+
+
+def test_two_legacy_untyped_keys_are_read_as_one(meta):
+    """Review round 8: the lookup read only the most-sampled legacy entry,
+    so the other's samples were lost. Both are one history: 4 samples, at
+    (10 × 3 + 30 × 1) ÷ 4 = 15 an hour."""
+    _two_legacy_keys(meta)
+    entry = hk.throughput_lookup(MODEL, hk.UNTYPED_GPU_BUCKET)
+    assert entry["samples"] == 4
+    assert entry["recordsPerHour"] == 15.0
+    assert [row.get("jobId") for row in hk.prompt_history(entry)] == ["legacy2"]
+
+
+def test_the_fold_adopts_two_legacy_untyped_keys_as_one_entry(meta, tmp_path):
+    """Review round 8: folding an untyped job adopts every legacy key, its
+    samples merged, into one entry under the bucket. A job of 10 records in
+    360 s is 100 an hour: (15 × 4 + 100) ÷ 5 = 32."""
+    _two_legacy_keys(meta)
+    store = DurableJobStore(str(tmp_path / "legacy2.sqlite"))
+    store.insert(Job(id="u3", kind="study-submit-bundle", status="succeeded",
+                     result={"elapsedSeconds": 360, "recordCount": 10},
+                     requested_resources={"modelID": MODEL, "gres": "gpu:1"},
+                     executor="slurm", _store=store))
+    table = hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    assert [(e["gpuType"], e["samples"], e["recordsPerHour"])
+            for e in table["entries"]] == [(hk.UNTYPED_GPU_BUCKET, 5, 32.0)]
+    entry = hk.throughput_lookup(MODEL, hk.UNTYPED_GPU_BUCKET)
+    assert entry["samples"] == 5
+    assert [row.get("jobId") for row in hk.prompt_history(entry)] == ["legacy2"]

@@ -829,8 +829,13 @@ def test_a_day_of_unexplained_refusals_fails_the_run_resumably(
     assert parent.status == "failed"
     assert "without saying why" in parent.error
     assert "Job violates accounting/QOS policy" in parent.error
-    assert ("Request a walltime within the cluster's limit for one job "
-            "(--walltime), then resume the run") in parent.error
+    # Review round 8: the repair names both ways on, on both clients.
+    assert ("Choose one: resume it with a walltime within the cluster's "
+            "limit for one job") in parent.error
+    assert (f"steerlab-cli remote resubmit {parent.id} "
+            "--retry-refused-walltime") in parent.error
+    assert (f"steerlab runner resubmit {parent.id} --retry-refused-walltime "
+            "--runner <url>") in parent.error
     assert parent.result["heldGaveUp"]["refusals"] == 2
     assert parent.result["heldGaveUp"]["walltime"] == "00:30:00"
     assert not any(jobs.is_held(p) for p in _parts(jobs, submission))
@@ -839,29 +844,45 @@ def test_a_day_of_unexplained_refusals_fails_the_run_resumably(
     # there; the line names the command that helps.
     hint = cancel_resume_hint(parent)
     assert hint["offered"] is False and hint["needsWalltime"] is True
-    assert (f"steerlab-cli remote resubmit {submission.job_id} --walltime "
-            "HH:MM:SS") in hint["explanation"]
-    assert "at walltime 00:30:00" in hint["explanation"]
+    assert hint["refusedWalltime"] == "00:30:00"
+    # Review round 8: both choices, on both clients, and never "refused the
+    # walltime": the cause may have been the job count.
+    job_id = submission.job_id
+    for command in (f"steerlab-cli remote resubmit {job_id} --walltime HH:MM:SS",
+                    f"steerlab runner resubmit {job_id} --walltime HH:MM:SS",
+                    f"steerlab-cli remote resubmit {job_id} "
+                    "--retry-refused-walltime",
+                    f"steerlab runner resubmit {job_id} "
+                    "--retry-refused-walltime"):
+        assert command in hint["explanation"], command
+    assert "refused its parts at walltime 00:30:00, without a reason, for " \
+        "a day" in hint["explanation"]
 
-    # At the refused walltime (none given, or the same spelled another way),
-    # the Resume is refused at once, with the repair, and nothing moves.
+    # At that walltime (none given, or the same spelled another way) and
+    # without the acknowledgement, the Resume is refused at once, with both
+    # choices, and nothing moves.
     _slot_frees(monkeypatch)
     calls = len(fake_slurm.calls("sbatch"))
     for asked in (None, "30:00"):
         with pytest.raises(ResubmitRefused) as refused:
             jobs.resubmit(submission.job_id, walltime=asked)
         message = str(refused.value)
-        assert "refused its walltime 00:30:00 for a day without saying why" \
-            in message
-        assert ("Resume it with a walltime within the cluster's limit for "
-                "one job: steerlab-cli remote resubmit "
-                f"{submission.job_id} --walltime HH:MM:SS") in message
+        assert ("the scheduler refused its parts at walltime 00:30:00, "
+                "without a reason, for a day") in message
+        assert "refused its walltime" not in message
+        assert (f"steerlab-cli remote resubmit {job_id} --walltime "
+                "HH:MM:SS") in message
+        assert (f"steerlab-cli remote resubmit {job_id} "
+                "--retry-refused-walltime") in message
     assert len(fake_slurm.calls("sbatch")) == calls
     assert jobs.get(submission.job_id).status == "failed"
 
     # Within the limit, the parts are held again and go.
     answer = jobs.resubmit(submission.job_id, walltime="00:20:00")
     assert answer["ok"] is True
+    # Worded by what happened (review round 8): it stopped, not cancelled.
+    assert answer["message"].startswith(
+        f"Run {job_id} stopped after a day of refusals that gave no reason;")
     parent = jobs.get(submission.job_id)
     assert parent.status == "running"
     assert "heldGaveUp" not in parent.result
@@ -870,6 +891,121 @@ def test_a_day_of_unexplained_refusals_fails_the_run_resumably(
     assert [tail.status for tail in
             (jobs._shard_chain_tail(p) for p in _parts(jobs, submission))] == [
         "submitted", "submitted"]
+
+
+def _gave_up_run(tmp_path, monkeypatch, name):
+    """A run whose parts were held at the first by a reason code, then
+    refused without a reason for a day: it gave up."""
+    jobs, submission = _unexplained_run(tmp_path, monkeypatch, name)
+    first = _parts(jobs, submission)[0]
+    _due(jobs, first)
+    _tick(jobs)
+    held = dict(jobs.get(first.id).result["held"])
+    held["unexplainedSince"] = held["lastAttemptAt"] - 24 * 3600 - 1
+    held["nextAttemptAt"] = 0.0
+    part = jobs.get(first.id)
+    part.result = {**part.result, "held": held}
+    jobs.store.update(part)
+    jobs._held_deferred_until.clear()
+    _tick(jobs)
+    assert jobs.get(submission.job_id).status == "failed"
+    return jobs, submission
+
+
+def test_a_gave_up_run_retries_the_same_walltime_when_asked_to(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 8: "unexplained" may have been the job count, as in issue
+    #12's queues that stay full for days. Once slots free, a Resume at the
+    same, correct walltime runs when the request acknowledges it."""
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch, "heldretrysame")
+    _slot_frees(monkeypatch)
+    with pytest.raises(ResubmitRefused):
+        jobs.resubmit(submission.job_id)
+    answer = jobs.resubmit(submission.job_id, retry_refused_walltime=True)
+    assert answer["ok"] is True
+    assert jobs.get(submission.job_id).status == "running"
+    _tick(jobs)
+    tails = [jobs._shard_chain_tail(p) for p in _parts(jobs, submission)]
+    assert [tail.status for tail in tails] == ["submitted", "submitted"]
+    # At the same walltime: no override rides sbatch's command line.
+    assert all("--time=" not in call for call in fake_slurm.calls("sbatch")[-2:])
+
+
+def test_the_route_reads_the_acknowledgement(tmp_path, monkeypatch,
+                                             fake_slurm):
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from steerlab_server.api.routes import ServiceState, build_router
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch, "heldretryroute")
+    _slot_frees(monkeypatch)
+    monkeypatch.setenv("STEERLAB_JOBS_DB", str(tmp_path / "route-jobs.sqlite"))
+    state = ServiceState()
+    state._jobs = jobs  # the routes see the run that gave up
+    app = FastAPI()
+    app.include_router(build_router(state))
+    client = TestClient(app)
+    refused = client.post(f"/api/jobs/{submission.job_id}/resubmit", json={})
+    assert refused.status_code == 409
+    assert "--retry-refused-walltime" in refused.json()["detail"]
+    accepted = client.post(f"/api/jobs/{submission.job_id}/resubmit",
+                           json={"retryRefusedWalltime": True})
+    assert accepted.status_code == 200, accepted.text
+    client.close()
+
+
+def test_walltimes_compare_in_every_slurm_spelling():
+    from steerlab_server.api.jobs import same_walltime
+    assert same_walltime("1-00:00:00", "24:00:00")
+    assert same_walltime("30:00", "00:30:00")
+    assert same_walltime("1-12", "36:00:00")
+    assert not same_walltime("2-00:00:00", "24:00:00")
+    assert not same_walltime("", "")
+    assert not same_walltime("UNLIMITED", "UNLIMITED")
+
+
+def test_a_site_default_in_days_is_compared_as_the_same_walltime(
+        tmp_path, monkeypatch, fake_slurm):
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch, "helddays")
+    parent = jobs.get(submission.job_id)
+    parent.result = {**parent.result, "heldGaveUp": {
+        **parent.result["heldGaveUp"], "walltime": "1-00:00:00"}}
+    jobs.store.update(parent)
+    with pytest.raises(ResubmitRefused, match="at walltime 1-00:00:00"):
+        jobs.resubmit(submission.job_id, walltime="24:00:00")
+
+
+def test_a_checkpointed_part_is_not_live(tmp_path, monkeypatch, fake_slurm):
+    """Review round 8 (the reviewer's probe): a checkpointed part's job has
+    ended. It does not keep the run from giving up, and the log never says
+    it is with the scheduler."""
+    _limited(monkeypatch, accepted=1)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldckptlive",
+                               parallel=2)
+    running, waiting = _parts(jobs, submission)
+    _override_held_walltime(jobs, submission, "48:00:00")
+    _slot_frees(monkeypatch)
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=48:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", POLICY)
+    checkpointed = jobs.get(running.id)
+    checkpointed.status = "checkpointed"
+    jobs.store.update(checkpointed)
+    assert jobs._live_parts_of(jobs.get(submission.job_id),
+                               excluding=waiting.id) == []
+    _due(jobs, waiting)
+    _tick(jobs)
+    held = dict(jobs.get(waiting.id).result["held"])
+    held["unexplainedSince"] = held["lastAttemptAt"] - 24 * 3600 - 1
+    part = jobs.get(waiting.id)
+    part.result = {**part.result, "held": held}
+    jobs.store.update(part)
+    _due(jobs, waiting)
+    _tick(jobs)
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "failed"
+    assert "heldGaveUp" in parent.result
+    assert not any("with the scheduler" in line
+                   for line in jobs.get(waiting.id).all_logs())
 
 
 def test_a_run_with_a_live_part_never_gives_up(tmp_path, monkeypatch,
@@ -905,8 +1041,13 @@ def test_a_run_with_a_live_part_never_gives_up(tmp_path, monkeypatch,
     assert jobs.get(running.id).status == "submitted"
     assert jobs.is_held(jobs.get(waiting.id))
     assert jobs.get(waiting.id).result["held"]["unexplainedRefusals"] == 2
-    assert any("keeps waiting rather than stop them" in line
-               for line in jobs.get(waiting.id).all_logs())
+    # Review round 8: past the bound with a live part, the log says it keeps
+    # waiting, never that it stops the run.
+    past_bound = [line for line in jobs.get(waiting.id).all_logs()
+                  if "Refusal 2 of this kind" in line]
+    assert len(past_bound) == 1
+    assert "keeps waiting rather than stop them" in past_bound[0]
+    assert "stops the run after" not in past_bound[0]
 
 
 def test_a_resume_held_for_a_named_job_count_says_so(tmp_path, monkeypatch,
@@ -944,6 +1085,7 @@ def test_a_resume_whose_sbatch_went_unanswered_says_so(tmp_path, monkeypatch,
     assert answer["ok"] is True
     assert answer["heldReason"] == "schedulerUnanswered"
     assert "are held until the scheduler answers" in answer["message"]
+    assert "did not answer about the first just now" in answer["message"]
     assert "first checks whether that attempt landed" in answer["message"]
     assert "now continue" not in answer["message"]
 
@@ -1278,6 +1420,9 @@ def test_a_timed_out_sbatch_keeps_the_attempt_for_the_name_search(
     part = jobs.get(_parts(jobs, submission)[2].id)
     assert jobs.is_held(part)
     token = part.result["held"]["attempt"]["submissionName"]
+    # Review round 8: unanswered is not "not taken".
+    assert any("did not answer about" in line and "was not taken" not in line
+               for line in part.all_logs())
 
     # Next tick: the scheduler knows the job by that name, so it is adopted.
     monkeypatch.setattr(executors.SlurmExecutor, "submit", real_submit)

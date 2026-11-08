@@ -3778,8 +3778,15 @@ def build_router(state: ServiceState) -> APIRouter:
                            "(there is no scheduler limit to raise); "
                            "re-request without walltime")
             return _resume_cancelled_in_process(job)
+        # Optional ``{"retryRefusedWalltime": true}`` (issue #12, review
+        # round 8): resume a run that gave up after a day of refusals that
+        # gave no reason at the walltime those refusals met, acknowledging
+        # that the cause may have been the job limit. Only a literal true.
+        retry_refused = (body or {}).get("retryRefusedWalltime") is True
         try:
-            return state.jobs.resubmit(job_id, walltime=walltime)
+            return state.jobs.resubmit(
+                job_id, walltime=walltime,
+                retry_refused_walltime=retry_refused)
         except ResubmitRefused as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except Exception as exc:  # noqa: BLE001 - sbatch and kin; run stays parked

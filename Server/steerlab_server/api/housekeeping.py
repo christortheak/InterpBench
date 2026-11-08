@@ -695,19 +695,89 @@ def is_legacy_untyped_key(key) -> bool:
                                      or _is_gpu_count(key))
 
 
+def _untyped_entries(entries: list, model_id: str,
+                     instrument_family: str | None) -> list[dict]:
+    """Every entry for (model, family) that belongs to the untyped bucket:
+    the bucket's own, and any under a legacy untyped key (``1``, ``2``,
+    ``gpu``; review rounds 6 and 8)."""
+    return [e for e in entries
+            if e.get("modelId") == model_id
+            and e.get("instrumentFamily") == instrument_family
+            and (e.get("gpuType") == UNTYPED_GPU_BUCKET
+                 or is_legacy_untyped_key(e.get("gpuType")))]
+
+
+def _merged_history(candidates: list[dict]) -> dict:
+    """One entry for several that hold the same (model, family) history
+    under different keys (review round 8: two legacy keys, ``1`` and ``2``,
+    were read as one entry and the less-sampled one's samples were lost).
+    Samples add; records per hour is their sample-weighted mean, each entry's
+    rate first expressed at the most-sampled entry's token basis where both
+    carry one (rates are inverse-linear in generated tokens, as the fold
+    takes them); stamped prompt-length jobs are kept from all of them. A
+    single candidate is returned as it is."""
+    if len(candidates) == 1:
+        return candidates[0]
+    ordered = sorted(candidates, key=lambda e: int(e.get("samples") or 0),
+                     reverse=True)
+    base = ordered[0]
+    basis = base.get("tokensBasis") if _number(base.get("tokensBasis")) else None
+    samples = 0
+    weighted = 0.0
+    for entry in candidates:
+        count = int(entry.get("samples") or 0)
+        rate = float(entry.get("recordsPerHour") or 0.0)
+        own = entry.get("tokensBasis")
+        if basis is not None and _number(own) and own != basis:
+            rate = rate * float(own) / float(basis)
+        samples += count
+        weighted += rate * count
+    merged = {key: value for key, value in base.items()
+              if key != "promptTokens"}
+    merged["gpuType"] = UNTYPED_GPU_BUCKET
+    merged["samples"] = samples
+    if samples:
+        merged["recordsPerHour"] = round(weighted / samples, 3)
+    merged["updatedAt"] = max(str(e.get("updatedAt") or "")
+                              for e in candidates) or base.get("updatedAt")
+    rows: list[dict] = []
+    for entry in sorted(candidates, key=lambda e: str(e.get("updatedAt") or "")):
+        rows.extend({k: row[k] for k in _ROW_KEYS
+                     if k in row and k != "hoursPerRecord"}
+                    for row in (prompt_history(entry) or []))
+    if rows:
+        merged["promptTokens"] = {"jobs": rows[-PROMPT_HISTORY_JOBS:]}
+    return merged
+
+
 def _history_entry(entries: list, model_id: str, gpu_type: str | None,
                    instrument_family: str | None) -> dict | None:
     """The entry kept for (model, GPU key, family): the one under the key
-    itself, else, for the untyped bucket, the most-sampled entry under a
-    legacy untyped key (review round 6)."""
-    same = [e for e in entries
-            if e.get("modelId") == model_id
-            and e.get("instrumentFamily") == instrument_family]
-    exact = next((e for e in same if e.get("gpuType") == gpu_type), None)
-    if exact is not None or gpu_type != UNTYPED_GPU_BUCKET:
-        return exact
-    legacy = [e for e in same if is_legacy_untyped_key(e.get("gpuType"))]
-    return max(legacy, key=lambda e: int(e.get("samples") or 0), default=None)
+    itself, and for the untyped bucket, everything under it or under a
+    legacy untyped key, read as one (review rounds 6 and 8)."""
+    if gpu_type == UNTYPED_GPU_BUCKET:
+        candidates = _untyped_entries(entries, model_id, instrument_family)
+        return _merged_history(candidates) if candidates else None
+    return next((e for e in entries
+                 if e.get("modelId") == model_id
+                 and e.get("instrumentFamily") == instrument_family
+                 and e.get("gpuType") == gpu_type), None)
+
+
+def _adopt_untyped(entries: list, model_id: str,
+                   instrument_family: str | None) -> dict | None:
+    """The fold's untyped entry: every untyped and legacy entry for (model,
+    family) merged into one, in the table, under the untyped bucket."""
+    candidates = _untyped_entries(entries, model_id, instrument_family)
+    if not candidates:
+        return None
+    merged = _merged_history(candidates)
+    if len(candidates) > 1:
+        entries[:] = [entry for entry in entries
+                      if not any(entry is candidate for candidate in candidates)]
+        entries.append(merged)
+    merged["gpuType"] = UNTYPED_GPU_BUCKET
+    return merged
 
 
 def throughput_lookup(model_id: str, gpu_type: str | None,
@@ -888,11 +958,14 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
             tokens = stamped_max_tokens(job.requested_resources)
             prompt_tokens = stamped_prompt_tokens(job.requested_resources)
             for bucket in (None, family) if family else (None,):
-                entry = _history_entry(entries, model_id, gpu_type, bucket)
-                if entry is not None and entry.get("gpuType") != gpu_type:
-                    # Legacy untyped history is adopted into the bucket, so
-                    # the next lookup still finds all of it.
-                    entry["gpuType"] = gpu_type
+                if gpu_type == UNTYPED_GPU_BUCKET:
+                    # Legacy untyped history, under every legacy key, is
+                    # adopted into the bucket as one entry (review rounds 6
+                    # and 8), so the next lookup still finds all of it.
+                    entry = _adopt_untyped(entries, model_id, bucket)
+                else:
+                    entry = _history_entry(entries, model_id, gpu_type,
+                                           bucket)
                 if entry is None:
                     minted = {
                         "modelId": model_id,
