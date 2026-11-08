@@ -154,7 +154,9 @@ DEFAULT_TIMEOUT = 60.0
 SUBMIT_TIMEOUT = 3600.0
 
 #: The version of the submission-key derivation (:func:`submission_key`).
-SUBMISSION_KEY_VERSION = 1
+#: 2: the bundle is named by its content (:func:`bundle_content_digest`), not
+#: by its archive digest, which a repackaging changes.
+SUBMISSION_KEY_VERSION = 2
 
 #: How much of an evidence bundle the client will accept by default before
 #: refusing. A cap the CALLER can raise, never a silent truncation: the
@@ -428,6 +430,9 @@ class RunnerUnreachable(RunnerError):
 
     state = "failed"
     code = "runnerUnreachable"
+    #: Whether the request may have reached the runner before the answer was
+    #: lost (False: the connection was never made, so nothing was sent).
+    request_sent = True
 
 
 class SubmitOutcomeUnknown(RunnerUnreachable):
@@ -435,25 +440,59 @@ class SubmitOutcomeUnknown(RunnerUnreachable):
 
     Not a failure: the runner may still be preparing the job, and on a
     cluster it usually is. ``pending`` (exit 12): work may be in flight, and
-    the repair is to look. A repeat is harmless only on a runner that
-    advertises ``cluster.submissionKey`` (``repeatIsSafe`` in ``detail``),
-    which answers it with the job the first request created."""
+    the repair is to look. On a runner that advertises
+    ``cluster.submissionKey`` (``repeatIsSafe`` in ``detail``), the same
+    command with the same flags, from this client, is answered with the job
+    the first request created; a command with any flag changed is a new
+    submission."""
 
     state = "pending"
     code = "submitOutcomeUnknown"
 
 
-def submission_key(body: dict, bundle_sha256: str | None) -> str:
+def bundle_content_digest(metadata: dict | None) -> str | None:
+    """What a run bundle CONTAINS, as one digest: its study's name and
+    content hash, and every packaged file's path and SHA-256, in path order
+    (the ``entries`` of ``steerlab-bundle.json``). Never its packaging time
+    (``createdAt``), its path, or the archive's own digest, which every
+    repackaging of an unchanged study changes. None when the metadata lists
+    no files (a bundle from before ``entries``)."""
+    entries = (metadata or {}).get("entries")
+    if not isinstance(entries, list) or not entries:
+        return None
+    rows = sorted(({"path": str(entry.get("path")),
+                    "sha256": str(entry.get("sha256"))}
+                   for entry in entries if isinstance(entry, dict)),
+                  key=lambda row: row["path"])
+    document = {"entries": rows,
+                "experiment": str(metadata.get("experiment") or ""),
+                "experimentContentHash": str(
+                    metadata.get("experimentContentHash") or "")}
+    canonical = json.dumps(document, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def submission_key(body: dict, bundle: dict | str | None) -> str:
     """The submission key for one ``submit-bundle`` request (issue #11).
 
     The SHA-256 of the request body itself, as canonical JSON, with the
-    staged path replaced by the bundle's own digest: the same request for the
-    same bundle always carries the same key (a re-upload stages the same
-    bytes at a new path), and any change to what is submitted — the verb,
-    the resources, the parts, the target root, a dry run — changes it."""
+    staged path replaced by what the bundle contains
+    (:func:`bundle_content_digest` of the runner's inspection, ``bundle``):
+    the same command with the same flags, for the same study, carries the
+    same key however often it is repackaged and uploaded, and any change to
+    what is submitted — the verb, the executor, the parts, the target root,
+    the dtype or device, evidence, a source run, a dry run — changes it.
+    ``bundle`` may also be a digest string (the archive's, for a bundle that
+    lists no files)."""
+    if isinstance(bundle, dict):
+        identity = (bundle_content_digest(bundle)
+                    or bundle.get("bundleSha256") or body.get("bundlePath"))
+    else:
+        identity = bundle or body.get("bundlePath")
     document = {k: v for k, v in body.items()
                 if k not in ("bundlePath", "submissionKey")}
-    document["bundleSha256"] = bundle_sha256 or body.get("bundlePath")
+    document["bundleContent"] = identity
     document["submissionKeyVersion"] = SUBMISSION_KEY_VERSION
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":"),
                            ensure_ascii=False)
@@ -462,9 +501,9 @@ def submission_key(body: dict, bundle_sha256: str | None) -> str:
 
 def walltime_notice(submission: dict | None) -> str | None:
     """The walltime check's plain-language notice (issue #11): the throughput
-    history it priced from came from much shorter items than this
-    submission's, or does not say how long its items were. None when the
-    check carries none, or the runner is older."""
+    history it priced from came from much longer or much shorter items than
+    this submission's, or does not say how long its items were. None when
+    the check carries none, or the runner is older."""
     preflight = (submission or {}).get("preflight")
     checks = preflight.get("checks") if isinstance(preflight, dict) else None
     for check in checks or []:
@@ -850,14 +889,21 @@ class RunnerClient:
                 method, url, params=params, json=json_body, content=content,
                 headers=self._headers(headers), **({"timeout": httpx.Timeout(self.timeout, read=timeout)} if timeout is not None else {}))
         except httpx.HTTPError as exc:
-            raise RunnerUnreachable(
+            unreachable = RunnerUnreachable(
                 self.scrub(f"{type(exc).__name__} reaching {url}: {exc}"),
                 repair_action=(
                     f"check that a runner is serving {self.base_url} and that "
                     "this machine can reach it — an SSH tunnel that has "
                     "dropped looks exactly like this. `steerlab runner "
                     f"capabilities --runner {self.base_url}` is the smallest "
-                    "request that answers the question.")) from exc
+                    "request that answers the question."))
+            # Whether the request can have reached the runner: a connection
+            # that was never made (refused, no route, a connect or pool
+            # timeout) sent nothing (issue #11).
+            unreachable.request_sent = not isinstance(
+                exc, (httpx.ConnectError, httpx.ConnectTimeout,
+                      httpx.PoolTimeout, httpx.UnsupportedProtocol))
+            raise unreachable from exc
         self._raise_for_status(response, url=url)
         return response
 
@@ -1112,7 +1158,7 @@ class RunnerClient:
             body["env"] = dict(env)
         # Issue #11: the key that makes a repeat of this request harmless on
         # a runner that understands it (an older runner ignores the key).
-        body["submissionKey"] = submission_key(body, staged.get("bundleSha256"))
+        body["submissionKey"] = submission_key(body, staged)
         try:
             # The submit's own read budget, on the client this adapter built;
             # an injected client keeps the budget it carries (see __init__).
@@ -1120,6 +1166,10 @@ class RunnerClient:
                 "POST", "/api/studies/submit-bundle", json_body=body,
                 timeout=self._submit_timeout if self._owns_client else None)
         except RunnerUnreachable as exc:
+            if not exc.request_sent:
+                # Nothing was sent: an ordinary connection failure, and the
+                # repair is to reach the runner, not to look for a job.
+                raise
             raise self._outcome_unknown(
                 exc.reason, remote_path=remote_path, verb=verb) from exc
         except RunnerHTTPError as exc:
@@ -1153,9 +1203,11 @@ class RunnerClient:
         if safe:
             repair = (
                 f"steerlab runner jobs --runner {self.base_url}  (the runner "
-                "is most likely still preparing the job). Submitting the same "
-                "request again is safe: this runner answers a repeat with the "
-                "job the first request created, and never submits it twice")
+                "is most likely still preparing the job). If none appears once "
+                "the runner has finished measuring, run the same command again "
+                "with the same flags: this runner answers that repeat with the "
+                "job the first request created. A command with any flag "
+                "changed is a new submission")
         else:
             repair = (
                 f"steerlab runner jobs --runner {self.base_url}  (look before "

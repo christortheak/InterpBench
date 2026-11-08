@@ -56,14 +56,14 @@ def test_the_key_matches_its_hand_written_derivation():
     out by hand, hashed by hashlib."""
     import hashlib
     body = {"bundlePath": "/x.tar.gz", "verb": "run", "dryRun": False}
-    canonical = ('{"bundleSha256":"' + "f" * 64 + '","dryRun":false,'
-                 '"submissionKeyVersion":1,"verb":"run"}')
+    canonical = ('{"bundleContent":"' + "f" * 64 + '","dryRun":false,'
+                 '"submissionKeyVersion":2,"verb":"run"}')
     assert runner_api.submission_key(body, "f" * 64) == \
         hashlib.sha256(canonical.encode()).hexdigest()
     # The same digest the Swift client's derivation is pinned to
     # (SubmissionRepeatCLITests.theKeyMatchesItsHandWrittenDerivation).
     assert runner_api.submission_key(body, "f" * 64) == (
-        "7d123640164d76866a737e457c97322da19275130de077cab5230977acfec7f2")
+        "e5a4afb57cef35974fb494d3a5ababbeb528e81a8082c0f0a682a27b5cc195e1")
 
 
 class _SlowRunner(http.server.BaseHTTPRequestHandler):
@@ -172,7 +172,10 @@ def test_a_submit_that_is_never_answered_is_pending_not_failed(
     assert "never answered" in error.reason
     assert f"steerlab runner jobs --runner {url}" in error.repair_action
     if advertised:
-        assert "again is safe" in error.repair_action
+        assert "run the same command again with the same flags" in \
+            error.repair_action
+        assert "A command with any flag changed is a new submission" in \
+            error.repair_action
     else:
         assert "a second submit is a second study" in error.repair_action
     # Exactly one attempt: nothing is retried.
