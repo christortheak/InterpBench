@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.22] — 2026-11-08
+
 - **A study that cannot run is refused before the queue, not after it**
   (public issues #9 and #10).
   - **The temperature-0 seed rule.** At temperature 0 decoding is greedy, so
@@ -86,8 +88,11 @@ migration that rewrites frozen bytes.
   never holds up another run's parts. A Resume refused for a named limit
   is refused at once. A refusal that gives no reason holds the parts, says
   so, and is retried less and less often (up to every 30 minutes); after a
-  day of such refusals the run fails with the walltime repair and can still
-  be resumed, at a walltime within the cluster's limit. A Resume whose parts
+  day of such refusals the run fails, and can be resumed at a walltime within
+  the cluster's limit, or retried at the walltime that was refused with
+  `--retry-refused-walltime` (the app asks first). A walltime written in days
+  is read as hours. A run never gives up while another of its parts is with
+  the scheduler. A Resume whose parts
   end up held says so; one held after a refusal that gave no reason is
   reported as pending (exit 12). A maintenance window delays only its own
   run. The searches that keep a part from being
