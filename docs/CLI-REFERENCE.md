@@ -4448,16 +4448,27 @@ Consequences, stated plainly:
   `QOSMaxSubmitJobPerAccountLimit`, `QOSGrpSubmitJobsLimit`,
   `AssocMaxSubmitJobLimit`, `AssocGrpSubmitJobsLimit`) hold that part and
   every later one; sbatch's general "Job violates accounting/QOS policy"
-  sentence does too once an earlier part of the same run was accepted (alone
-  it may name a per-job size or time limit, which never frees). The list
-  lives in `api/executors.SUBMIT_LIMIT_REASONS`. Nothing is cancelled: a held
-  part is a `pending` shard record carrying `result.held`, and the running
-  server's tick submits held parts, oldest run first and each run's parts in
-  order, at most once a minute while the scheduler keeps refusing. Each
-  attempt's job name (`slhd-<part>-<token>`) is recorded before sbatch runs,
-  so an attempt whose answer was lost is found by name, never submitted
-  twice. A scheduler that cannot be reached, or a maintenance window in the
-  way, keeps the part held; any other refusal cancels the run and fails it.
+  sentence does too once the same request was accepted for another part of
+  the run (alone it may name a per-job size or time limit, which never
+  frees). Any other limit code beside it (`QOSMaxWallDurationPerJobLimit`,
+  `QOSMaxGRESPerJob`, `PartitionTimeLimit`, …) never waits: at submission
+  the fan-out is refused, and for a held part the run is cancelled and failed
+  with the scheduler's words and a repair ("request a walltime within the
+  cluster's limit for one job"). The list lives in
+  `api/executors.SUBMIT_LIMIT_REASONS`. Nothing is cancelled for a job
+  limit: a held part is a `pending` shard record carrying `result.held`, and
+  the running server's tick submits held parts, oldest run first and each
+  run's parts in order, at most once a minute while the scheduler keeps
+  refusing. Each attempt's job name (`slhd-<part>-<token>`) is recorded
+  before sbatch runs, so an attempt whose answer was lost is found by name,
+  never submitted twice: the accounting search runs from the attempt's own
+  time (`sacct -S <attempt less an hour> -E now`, through the site's
+  configured sacct), because `sacct --name` alone starts at today's midnight;
+  a search the scheduler cannot answer keeps the part held. A scheduler that
+  cannot be reached keeps every run's held parts waiting; a maintenance
+  window in one run's way keeps that run's parts held and the runs behind it
+  are still submitted; any other refusal cancels the run and fails it, and
+  never holds up another run.
   Held parts are in the job store, so they survive a restart, and while no
   server runs they wait. Cancelling the parent withdraws them, a run that
   ends withdraws them, resubmit refuses one, and Resume on a cancelled run
