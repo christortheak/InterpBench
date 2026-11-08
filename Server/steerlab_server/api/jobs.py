@@ -1990,49 +1990,59 @@ class JobManager:
             return f"part {index + 1} of {count}"
         return f"part {part.id}"
 
-    def _find_held_attempt(self, held: dict) -> tuple[bool, str | None]:
+    @staticmethod
+    def _first_time(*candidates) -> float | None:
+        """The first candidate that is a real epoch time, else None."""
+        for value in candidates:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+        return None
+
+    def _search_submission_name(self, name: str, since: float | None
+                                ) -> tuple[bool, str | None, str]:
+        """``(known, slurm_id, why)`` for a submission token: ``(True, id,
+        "")`` the scheduler knows it, ``(True, None, "")`` the scheduler
+        answered and does not, ``(False, None, why)`` it cannot be said, and
+        nothing may be resubmitted on that answer.
+
+        The accounting search runs from ``since``, the earliest time the
+        submission could have happened, as the caller's record states it
+        (issue #12, review rounds 2 and 3): ``sacct --name`` alone searches
+        from today's midnight, so a submission made yesterday whose job also
+        ended before midnight would read as absent and run twice. With no
+        time to search from, a way to search that cannot take one, or no way
+        to search at all, the answer is "cannot say"."""
+        find = getattr(self._slurm(), "find_job_by_name", None)
+        if not callable(find):
+            return False, None, ("this executor cannot search the scheduler "
+                                 "by submission name")
+        if since is None:
+            return False, None, ("the record carries no time to search the "
+                                 "scheduler's accounting from")
+        try:
+            found = find(str(name), since=float(since))
+        except Exception as exc:  # noqa: BLE001 - "cannot say" is the answer
+            return False, None, f"{type(exc).__name__}: {exc}"
+        return True, (str(found) if found else None), ""
+
+    def _find_held_attempt(self, part: "Job",
+                           held: dict) -> tuple[bool, str | None]:
         """``(known, slurm_id)`` for the held part's last attempt that may
         have landed: ``(True, id)`` it did, ``(True, None)`` the scheduler
         says it did not (or there was none), ``(False, None)`` the scheduler
-        cannot say yet, and nothing is submitted.
-
-        The accounting search starts at the attempt's own time (review round
-        2): ``sacct --name`` alone searches from today's midnight, so an
-        attempt made yesterday whose job also ended before midnight would
-        read as absent, and the part would run twice."""
-        import inspect
+        cannot say yet, and nothing is submitted. The search runs from the
+        attempt's own time, else the hold's, else the part's creation."""
         attempt = held.get("attempt")
         name = attempt.get("submissionName") if isinstance(attempt, dict) else None
         if not name:
             return True, None
-        find = getattr(self._slurm(), "find_job_by_name", None)
-        if not callable(find):
-            # No way to search is not proof of absence.
-            return False, None
-        at = attempt.get("at")
-        kwargs = {}
-        try:
-            accepts_since = "since" in inspect.signature(find).parameters
-        except (TypeError, ValueError):
-            accepts_since = False
-        if isinstance(at, (int, float)) and not isinstance(at, bool):
-            if accepts_since:
-                kwargs["since"] = float(at)
-        elif accepts_since:
-            # An attempt with no recorded time: search from the part's own
-            # hold, which is never later than any attempt to submit it.
-            since = held.get("since")
-            if isinstance(since, (int, float)) and not isinstance(since, bool):
-                kwargs["since"] = float(since)
-            else:
-                return False, None
-        try:
-            found = find(str(name), **kwargs)
-        except Exception:  # noqa: BLE001 - "cannot say" is the answer
-            return False, None
-        return True, (str(found) if found else None)
+        known, found, _why = self._search_submission_name(
+            str(name), self._first_time(attempt.get("at"), held.get("since"),
+                                        part.created_at))
+        return known, found
 
-    def _submit_held_part(self, parent: "Job", part: "Job") -> str:
+    def _submit_held_part(self, parent: "Job", part: "Job", *,
+                          report_permanent: bool = False) -> str:
         """Hand one held part to the scheduler: ``"submitted"``,
         ``"waiting"`` (the job limit is reached, or the scheduler could not
         answer: it stays held, and so does every run behind it),
@@ -2043,6 +2053,11 @@ class JobManager:
         failed with the scheduler's words and a repair, as a fan-out refused
         at submission is).
 
+        With ``report_permanent`` (a person's Resume, which answers them
+        now), a refusal waiting would not fix returns ``"refused"`` instead,
+        with the scheduler's words in ``result.held.lastRefusal``, and the run
+        is left as it is for the caller to refuse.
+
         At most once: the attempt's job name is recorded BEFORE sbatch runs,
         and an attempt whose outcome was never learned (sbatch timed out, or
         this controller stopped mid-call) is searched for by that name
@@ -2051,7 +2066,7 @@ class JobManager:
         from .executors import JobBundle, SlurmResources, submit_refusal_kind
         held = dict((part.result or {}).get("held") or {})
         label = self._part_label(part)
-        known, found = self._find_held_attempt(held)
+        known, found = self._find_held_attempt(part, held)
         if not known:
             self._held_note(
                 part, "unconfirmed",
@@ -2066,8 +2081,13 @@ class JobManager:
         rr = part.requested_resources or {}
         script = rr.get("scriptPath")
         if not isinstance(script, str) or not os.path.isfile(script):
-            return self._fail_fanout_from_held_part(
-                parent, part, f"its sbatch script is not on disk ({script!r})")
+            why = f"its sbatch script is not on disk ({script!r})"
+            if report_permanent:
+                part.result = {**(part.result or {}),
+                               "held": {**held, "lastRefusal": why}}
+                self.store.update(part)
+                return "refused"
+            return self._fail_fanout_from_held_part(parent, part, why)
         token = f"slhd-{part.id}-{uuid.uuid4().hex[:8]}"
         now = time.time()
         held["attempt"] = {"submissionName": token, "at": now}
@@ -2147,6 +2167,8 @@ class JobManager:
             held.pop("attempt", None)
             part.result = {**(part.result or {}), "held": held}
             self.store.update(part)
+            if report_permanent:
+                return "refused"
             from .executors import refusal_repair
             return self._fail_fanout_from_held_part(
                 parent, part, f"the scheduler refused it: {message[:300]}",
@@ -2210,7 +2232,7 @@ class JobManager:
         the scheduler and the scheduler cannot yet say (the caller's cancel
         is then unconfirmed and retried, as a refused scancel is)."""
         held = dict((part.result or {}).get("held") or {})
-        known, found = self._find_held_attempt(held)
+        known, found = self._find_held_attempt(part, held)
         if not known:
             part.log("cancel of this held part waits: an earlier attempt to "
                      "submit it may have reached the scheduler, which has not "
@@ -2256,6 +2278,14 @@ class JobManager:
         if walltime:
             rr["walltime"] = walltime
             rr["walltimeOverride"] = walltime
+        elif rr.pop("walltimeOverride", None) is not None:
+            # A Resume without --walltime runs the script's own limit, as a
+            # resubmission does: an earlier Resume's override (perhaps the
+            # one the scheduler refused) is not carried on.
+            original = self.get(chain[0])
+            if original is not None and (original.requested_resources
+                                         or {}).get("walltime"):
+                rr["walltime"] = original.requested_resources["walltime"]
         was = (part.result or {}).get("heldWhenCancelled") or {}
         held = {"reason": was.get("reason") or "clusterJobLimit", "since": now}
         if was.get("schedulerMessage"):
@@ -2285,6 +2315,27 @@ class JobManager:
         return {"ok": True, "jobId": child.id, "resubmitOf": part.id,
                 "slurmJobID": None, "held": True, "manualResubmit": True,
                 **({"walltime": walltime} if walltime else {})}
+
+    def _first_held_part_now(self, parent: "Job",
+                             entries: list[dict]) -> str | None:
+        """Hand the first part a Resume held again to the scheduler now, in
+        the person's request, through the held pass's own at-most-once path.
+        Returns the scheduler's words when it refuses for a reason waiting
+        would not fix, else None: submitted, or still held for the
+        controller (the job limit, or the scheduler not answering). The
+        caller holds ``_held_lock``."""
+        first = self.get(str(entries[0].get("jobId") or ""))
+        if first is None or not self.is_held(first):
+            return None
+        outcome = self._submit_held_part(parent, first, report_permanent=True)
+        if outcome == "submitted":
+            entries[0] = {**entries[0], "held": False,
+                          "slurmJobID": first.executor_job_id}
+            return None
+        if outcome == "refused":
+            return str(((first.result or {}).get("held") or {})
+                       .get("lastRefusal") or "the scheduler refused it")
+        return None
 
     def _fail_fanout_from_held_part(self, parent: "Job", part: "Job",
                                     why: str, *,
@@ -3480,15 +3531,22 @@ class JobManager:
             return "adopted", {"jobId": existing.id}
         finder = getattr(self._slurm(), "find_job_by_name", None)
         if stale_token and finder is not None:
-            try:
-                found = finder(stale_token)
-            except Exception as exc:  # noqa: BLE001 - silence is not absence
+            # The search runs from the claim's own time (issue #12, review
+            # round 3): the claim is stale by definition, and a controller
+            # started on demand may resolve it days later, when a
+            # continuation that ran and ended before midnight is outside
+            # sacct's default window. Without a claim time, the record's own
+            # creation is never later than any claim on it.
+            known, found, why = self._search_submission_name(
+                stale_token, self._first_time(claim.get("at"),
+                                              job.created_at))
+            if not known:
                 message = (
                     "resume reconciliation required: a resubmission claim "
                     f"for job {job.id} went stale (claimant "
                     f"{claim.get('claimant')!r} died mid-resubmit) and the "
                     "scheduler could not be searched for its submission "
-                    f"token '{stale_token}' ({type(exc).__name__}: {exc}). "
+                    f"token '{stale_token}' ({why}). "
                     "Nothing was resubmitted automatically — a blind "
                     "resubmit could double-run the checkpointed run. "
                     f"Operator: run `squeue --name {stale_token}` or `sacct "
@@ -4655,34 +4713,82 @@ class JobManager:
                 f"run {parent.id} has no cancelled part left to resume — "
                 "its parts are finished or already running again; check the "
                 "job list")
+        from .executors import refusal_repair, submit_refusal_kind
         resumed: list[dict] = []
         not_resumed: list[str] = []
+        # The scheduler's own refusals of this Resume for a limit that never
+        # frees (a --walltime above the cluster's maximum for one job).
+        limit_refusals: list[str] = []
         for tail in after_cancel_tails + checkpointed_tails:
             try:
                 resumed.append(self.resubmit(tail.id, walltime=walltime,
                                              _from_parent=True))
             except Exception as exc:  # noqa: BLE001 - reported per part
                 not_resumed.append(f"{tail.id}: {exc}")
-        for tail in held_tails:
-            resumed.append(self._hold_cancelled_part_again(tail,
-                                                           walltime=walltime))
-        if not resumed:
-            raise ResubmitRefused(
-                f"no part of run {parent.id} could be resumed — "
-                + "; ".join(not_resumed))
-        # The parent follows its shards again. Its state is derived, so this
-        # is the same record going back to deriving; the cancel and the
-        # resume both stay on its log and in the stamp.
-        now = time.time()
-        parent._cancel.clear()
-        parent.status = "running"
-        parent.finished_at = None
-        parent.error = None
-        parent.result = {**(parent.result or {}), "resumedAfterCancel": {
-            "at": now,
-            "resumed": [{"job": entry.get("resubmitOf"),
-                         "continuation": entry.get("jobId")}
-                        for entry in resumed]}}
+                if submit_refusal_kind(str(exc)) == "otherLimit":
+                    limit_refusals.append(str(exc))
+        if held_tails and limit_refusals:
+            # Review round 3: the scheduler has just refused exactly what a
+            # held part would ask for (every part of a run asks for the same
+            # resources, and this Resume's walltime). Holding it again would
+            # only meet the same refusal on the next tick.
+            not_resumed.extend(
+                f"{tail.id}: not held again: the scheduler refused the same "
+                "request for another part of this run" for tail in held_tails)
+            held_tails = []
+        # Under the held lock until the parent follows its parts again, so
+        # the controller's held pass never sees these parts held under a
+        # parent that still reads cancelled.
+        with self._held_lock:
+            held_entries = [self._hold_cancelled_part_again(tail,
+                                                            walltime=walltime)
+                            for tail in held_tails]
+            if held_entries and walltime and not resumed:
+                # Nothing of this Resume has reached the scheduler, and its
+                # walltime is new to this run: the first held part is handed
+                # to the scheduler now, so a refusal answers the person here
+                # rather than failing the run on the next tick.
+                refusal = self._first_held_part_now(parent, held_entries)
+                if refusal is not None:
+                    limit_refusals.append(refusal)
+                    for entry in held_entries:
+                        child = self.get(str(entry.get("jobId") or ""))
+                        if child is not None and self.is_held(child):
+                            self._withdraw_held_part(
+                                child, "the Resume that held it again was "
+                                       "refused by the scheduler")
+                    not_resumed.extend(
+                        f"{entry.get('resubmitOf')}: the scheduler refused "
+                        "the request" for entry in held_entries)
+                    held_entries = []
+            resumed.extend(held_entries)
+            if not resumed and limit_refusals:
+                repair = refusal_repair(limit_refusals[0],
+                                        then="resume the run again")
+                raise ResubmitRefused(
+                    f"run {parent.id} was not resumed: the scheduler refuses "
+                    f"what it asks for ({limit_refusals[0][:300]}). "
+                    f"{repair[:1].upper()}{repair[1:]}. Nothing is running, "
+                    "the run stays cancelled, and the responses it completed "
+                    "are kept")
+            if not resumed:
+                raise ResubmitRefused(
+                    f"no part of run {parent.id} could be resumed — "
+                    + "; ".join(not_resumed))
+            # The parent follows its shards again. Its state is derived, so
+            # this is the same record going back to deriving; the cancel and
+            # the resume both stay on its log and in the stamp.
+            now = time.time()
+            parent._cancel.clear()
+            parent.status = "running"
+            parent.finished_at = None
+            parent.error = None
+            parent.result = {**(parent.result or {}), "resumedAfterCancel": {
+                "at": now,
+                "resumed": [{"job": entry.get("resubmitOf"),
+                             "continuation": entry.get("jobId")}
+                            for entry in resumed]}}
+            self.store.update(parent)
         parent.log(
             f"cancelled run resumed by a person: {len(resumed)} part(s) "
             "continue as "

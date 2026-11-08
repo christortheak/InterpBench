@@ -50,6 +50,19 @@ def verify(directory, pin):
     return data
 
 
+def _cell_created_at(directory, cell_id):
+    """When the cell's scheduler bundle was written at materialization, the
+    earliest time any submission of it could have happened. Absent, a name
+    search has no start, and its empty answer could not prove absence."""
+    from ..experiment import optvec_campaign as owner
+    path = Path(directory) / owner.CELLS_DIRNAME / cell_id / 'managed-job' / 'bundle.json'
+    try: created = json.loads(path.read_bytes()).get('createdAt')
+    except (OSError, ValueError): created = None
+    if not isinstance(created, (int, float)) or isinstance(created, bool):
+        raise archives.Refusal(f'Campaign cell {cell_id} has no recorded job ID and no recorded creation time to search the scheduler from; nothing was cancelled. Inspect status before another explicit action.')
+    return float(created)
+
+
 def operate(directory, pin, action, expected=None, *, runner=None):
     from ..experiment import optvec_campaign as owner
     directory = Path(directory)
@@ -74,7 +87,12 @@ def operate(directory, pin, action, expected=None, *, runner=None):
             for row in report['cells']:
                 identity = row['jobID']
                 if not identity:
-                    identity = executors.SlurmExecutor().find_job_by_name(owner.job_name_for(config, row['cellID'], str(directory)))
+                    # Searched from the cell's own creation, before any
+                    # submission of it: sacct's default window starts at
+                    # today's midnight (issue #12, review round 3).
+                    created = _cell_created_at(directory, row['cellID'])
+                    identity = executors.SlurmExecutor().find_job_by_name(
+                        owner.job_name_for(config, row['cellID'], str(directory)), since=created)
                 if identity: selected.add(identity)
             # Resolve every unknown identity before sending any cancellation;
             # query failure never means the whole campaign has stopped.

@@ -64,9 +64,12 @@ def test_cancel_checks_names_for_unrecorded_allocations_before_any_mutation(setu
     # The names are owner-generated; choose an actual cell without depending on
     # slug formatting in the test.
     cell=optvec_campaign.read_campaign(directory)['cells'][0]['cellID']
-    monkeypatch.setattr(owner.executors.SlurmExecutor,'find_job_by_name',lambda self,name:'88' if name.endswith(cell) else None)
+    starts=[]
+    monkeypatch.setattr(owner.executors.SlurmExecutor,'find_job_by_name',lambda self,name,since=None:starts.append(since) or ('88' if name.endswith(cell) else None))
     result=owner.operate(directory,pin,'cancel',review['planSHA256'],runner=runner)
     assert calls==['88'] and result['cancellationRequested']=={'88':True}
+    # Every name search starts at the cell's own creation (issue #12 review round 3).
+    assert starts and all(isinstance(start, float) for start in starts)
 
 
 def test_failed_submission_reports_its_persisted_state_change(setup):
@@ -85,7 +88,7 @@ def test_export_checks_unrecorded_job_names_and_requires_terminal_scheduler(setu
     monkeypatch.setattr(managed_campaign,'context',lambda *a:(directory,root,result['managedCampaign']))
     monkeypatch.setattr(managed_campaign,'action',lambda *a:{'status':{'cellCount':1,'totals':{'completed':1},'cells':[{'cellID':cell,'jobID':None}]}})
     names=[]
-    monkeypatch.setattr(owner.executors.SlurmExecutor,'find_job_by_name',lambda self,name:names.append(name) or '88')
+    monkeypatch.setattr(owner.executors.SlurmExecutor,'find_job_by_name',lambda self,name,since=None:names.append(name) or '88')
     monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_state_detailed',lambda *a:('RUNNING',True))
     with pytest.raises(archives.Refusal,match='still active'):managed_campaign.require_complete('job',None,profile)
     assert names and names[0].endswith(cell)

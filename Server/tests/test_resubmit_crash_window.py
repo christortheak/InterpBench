@@ -36,13 +36,15 @@ class SearchableFakeExecutor:
         self.known = {}            # token -> slurm id
         self.search_error = None   # exception to raise on search
         self.searches = []
+        self.search_starts = []    # the ``since`` each search was given
 
     def submit(self, bundle, *, job_name=None):
         self.submits.append((bundle.script_path, job_name))
         return str(8000 + len(self.submits))
 
-    def find_job_by_name(self, name):
+    def find_job_by_name(self, name, *, since=None):
         self.searches.append(name)
+        self.search_starts.append(since)
         if self.search_error is not None:
             raise self.search_error
         return self.known.get(name)
