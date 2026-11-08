@@ -161,6 +161,60 @@ struct StudyRemoteCoordinationTests {
         }
     }
 
+    /// Review round 6: the walltime check never refuses, so the batch and
+    /// template path shows its advice the way the Run button does: the
+    /// preflight summary on the status line, and each warning's own words.
+    @Test func batchSubmissionShowsTheWalltimeAdvice() async throws {
+        try await withWorkspace { manifest in
+            let jobs = StudyRemoteJobController()
+            var notes: [(String, PanelNotice.Severity)] = []
+            jobs.presentation.note = { text, severity in notes.append((text, severity)) }
+            let advice = "WALLTIME: this job is very likely to run out of time. It "
+                + "is estimated to need about 12.3 h, and 4.0 h (04:00:00) was "
+                + "requested. Ask for --walltime 13:00:00 or more, or split the "
+                + "study into smaller parts; a run that reaches its walltime keeps "
+                + "the records it finished, and can be resumed from them. The "
+                + "estimate: 1000 records ÷ 122/h × 1.5."
+            var io = bundleTransport()
+            io.submit = { _, _ in
+                var answer = response("warned")
+                answer.preflight = PreflightReport(
+                    checks: [
+                        PreflightCheck(id: "memoryFit", status: "ok", message: "fits"),
+                        PreflightCheck(
+                            id: "walltime", status: "warn", message: advice,
+                            data: ["walltimeAdvice": .string(advice)]),
+                    ], verdict: "warn")
+                return answer
+            }
+            let result = await StudyBundleSubmissionController(jobs: jobs).submit(
+                manifest, request: StudySubmissionOptions().snapshot,
+                capabilities: nil, substrate: nil, transport: io)
+            guard case .success("warned") = result else {
+                Issue.record("a warned submission still submits")
+                return
+            }
+            #expect(jobs.remoteStatus?.contains("preflight passed with 1 warning") == true)
+            let warnings = notes.filter { $0.1 == .warning }.map(\.0)
+            #expect(warnings == [advice])
+            // A clean preflight stays silent, as on the Run button.
+            notes = []
+            var clean = bundleTransport()
+            clean.submit = { _, _ in
+                var answer = response("clean")
+                answer.preflight = PreflightReport(
+                    checks: [PreflightCheck(id: "walltime", status: "ok", message: "fits")],
+                    verdict: "ok")
+                return answer
+            }
+            _ = await StudyBundleSubmissionController(jobs: jobs).submit(
+                manifest, request: StudySubmissionOptions().snapshot,
+                capabilities: nil, substrate: nil, transport: clean)
+            #expect(notes.allSatisfy { $0.1 != .warning })
+            #expect(jobs.remoteStatus?.contains("preflight") == false)
+        }
+    }
+
     @Test func acceptedJobRemainsReconnectableAfterContextChanges() async throws {
         try await withWorkspace { manifest in
             let jobs = StudyRemoteJobController()

@@ -59,10 +59,10 @@ alternative; past twice the request it says the job is very likely to run
 out of time. A past job can be slow or fast for reasons that are not this
 study's, so no history-based figure refuses a submission. What happens at
 the walltime depends on the step (`atWalltime`): a `run` keeps the records it
-finished and a `sweep` the cells it finished, and either can be resumed; a
-pipeline can be resumed only when the walltime finds it in its run stage;
-`extract`, `validate`, and `evaluate`, and a pipeline in any other stage, stop
-and must be submitted again. When no past job's items were near this length,
+finished and can be resumed; a pipeline can be resumed only when the walltime
+finds it in its run stage; `extract`, `validate`, `evaluate`, and a `sweep`,
+and a pipeline in any other stage, stop and must be submitted again (a sweep
+on the cluster is not checkpointed). When no past job's items were near this length,
 or the history does not record how long its items were and these are long,
 the estimate says so too (`promptLengthNotice`). Tell the researcher, and ask for more time than the
 estimate or split the study; a short pilot of a few items measures the real

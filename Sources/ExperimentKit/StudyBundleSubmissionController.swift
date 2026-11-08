@@ -221,6 +221,15 @@ public final class StudyBundleSubmissionController {
             {
                 submitted += " — \(stamp)"
             }
+            // The walltime check never refuses (issue #11, review round 6),
+            // so its advice, like every preflight warning, must be seen on
+            // this path too: the same summary UnifiedStudyRunner stamps on
+            // its status line, and the same check messages
+            // StudyRunControlsView lists.
+            let preflight = PreflightPresentation.from(submission.preflight)
+            if let summary = preflight?.inlineSummary {
+                submitted += " — \(summary)"
+            }
             // Issue #11: the server recognised this as a submission it had
             // already made, and answered with that job.
             if let already = submission.alreadySubmittedStatus {
@@ -228,6 +237,11 @@ public final class StudyBundleSubmissionController {
             }
             jobs.remoteStatus = submitted
             note(submitted, severity: .info)
+            if let preflight, preflight.verdict == .warn {
+                for line in preflight.attentionLines {
+                    note(line.message, severity: .warning)
+                }
+            }
             jobs.noteRecentServerJob(
                 id: submission.jobId, verb: "\(submissionVerb) (bundle)",
                 study: manifest.name, state: "submitted")

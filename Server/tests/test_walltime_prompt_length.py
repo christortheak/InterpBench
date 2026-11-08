@@ -649,9 +649,9 @@ def readout_site(tmp_path, monkeypatch):
     return {"tmp": tmp_path}
 
 
-def _submit(site, *, dry_run=True, walltime="04:00:00"):
+def _submit(site, *, dry_run=True, walltime="04:00:00", verb="run"):
     return sub.submit_study(
-        "readout-study", verb="run",
+        "readout-study", verb=verb,
         jobs=JobManager(DurableJobStore(str(site["tmp"] / "jobs.sqlite")),
                         sweep_orphans=False),
         executor="slurm", dry_run=dry_run,
@@ -724,12 +724,41 @@ def test_a_slow_past_pace_is_never_refused_before_the_queue(readout_site):
                                   force=False) is False
 
 
+def test_a_sweep_submission_is_told_it_stops_at_its_walltime(readout_site):
+    """Review round 6: a standalone sweep does not resume on the cluster
+    (``bundle execute`` gives it no checkpoint flag), so a sweep estimated
+    over its walltime is told it stops and must be submitted again, in the
+    advice both clients show, never that it keeps what it finished. A slow
+    family history of 2 records an hour: 4 records ÷ 2 = 2 h × 1.5 + 0.25 =
+    3.25 h, over twice 00:20:00."""
+    meta = readout_site["tmp"] / "meta"
+    (meta / "throughput.json").write_text(json.dumps({
+        "schemaVersion": 1, "foldedJobIds": [], "entries": [
+            _entry(2.0, fam.DETERMINISTIC_LOGPROB)]}), encoding="utf-8")
+    preview = _submit(readout_site, walltime="00:20:00", verb="sweep")
+    check = _walltime_check(preview)
+    assert check["status"] == "warn"
+    assert check["data"]["estimatedHours"] == 3.25
+    assert "very likely to run out of time" in check["data"]["walltimeAdvice"]
+    assert check["data"]["atWalltime"] == sub.AT_WALLTIME_STOPS
+    advice = check["data"]["walltimeAdvice"]
+    assert "a sweep job that reaches its walltime stops and must be " \
+        "submitted again" in advice
+    assert "keeps the" not in advice and "resumed" not in advice
+    # A run of the same study, by contrast, is told it resumes.
+    run = _walltime_check(_submit(readout_site, walltime="00:20:00"))
+    assert "a run that reaches its walltime keeps the records it finished" \
+        in run["data"]["walltimeAdvice"]
+
+
 # --- which jobs resume at their walltime ------------------------------------------
 
 
 @pytest.mark.parametrize("verb,stages,expected", [
     ("run", None, sub.AT_WALLTIME_RESUMES),
-    ("sweep", None, sub.AT_WALLTIME_RESUMES),
+    # A standalone sweep is given no checkpoint flag on the cluster (review
+    # round 6): the walltime warning ends it with no resume state.
+    ("sweep", None, sub.AT_WALLTIME_STOPS),
     ("extract", None, sub.AT_WALLTIME_STOPS),
     ("validate", None, sub.AT_WALLTIME_STOPS),
     ("evaluate", None, sub.AT_WALLTIME_STOPS),
@@ -748,9 +777,9 @@ def test_only_checkpointing_steps_are_said_to_resume(verb, stages, expected):
     (sub.AT_WALLTIME_RESUMES, "run",
      "a run that reaches its walltime keeps the records it finished, and can "
      "be resumed from them"),
-    (sub.AT_WALLTIME_RESUMES, "sweep",
-     "a sweep that reaches its walltime keeps the cells it finished, and can "
-     "be resumed from them"),
+    (sub.AT_WALLTIME_STOPS, "sweep",
+     "a sweep job that reaches its walltime stops and must be submitted "
+     "again"),
     (sub.AT_WALLTIME_RESUMES_IN_RUN_STAGE, "pipeline",
      "a pipeline that reaches its walltime in its run stage keeps the records "
      "it finished there, and can be resumed from them; in any other stage it "
@@ -795,6 +824,12 @@ def test_an_untyped_gpu_request_has_no_gpu_type():
     assert hk.parse_gpu_type("1") is None
     assert hk.parse_gpu_type("gpu") is None
     assert hk.parse_gpu_type("gpu:A100:1") == "A100"
+    assert hk.parse_gpu_type("gpu:2") is None
+    assert hk.parse_gpu_type("8") is None
+    # A type named by a number is a type (review round 6).
+    assert hk.parse_gpu_type("gpu:3090:1") == "3090"
+    assert hk.parse_gpu_type("3090") == "3090"
+    assert hk.throughput_gpu_bucket("gpu:3090:1") == "3090"
     assert hk.requests_gpu("gpu:1") is True
     assert hk.requests_gpu(None) is False
     assert hk.throughput_gpu_bucket("gpu:1") == hk.UNTYPED_GPU_BUCKET
@@ -831,3 +866,31 @@ def test_the_history_job_cap_is_defined_once():
              for target in node.targets if isinstance(target, ast.Name)]
     assert names.count("PROMPT_HISTORY_JOBS") == 1
     assert hk.PROMPT_HISTORY_JOBS == 64
+
+
+def test_legacy_untyped_keys_are_counts_and_gpu():
+    assert hk.is_legacy_untyped_key("1") is True
+    assert hk.is_legacy_untyped_key("2") is True
+    assert hk.is_legacy_untyped_key("gpu") is True
+    assert hk.is_legacy_untyped_key("3090") is False
+    assert hk.is_legacy_untyped_key("A100") is False
+    assert hk.is_legacy_untyped_key(None) is False
+    assert hk.is_legacy_untyped_key(hk.UNTYPED_GPU_BUCKET) is False
+
+
+def test_the_fold_adopts_legacy_untyped_history(meta, tmp_path):
+    """Review round 6: history filed under the pre-round-5 key ``1`` is
+    folded into, and renamed to, the untyped bucket, so a new untyped job
+    adds to it rather than starting a bucket that hides it. A job of 10
+    records in 360 s is 100 an hour: (10 × 3 + 100) ÷ 4 = 32.5."""
+    _seed(meta, [{"modelId": MODEL, "gpuType": "1", "recordsPerHour": 10.0,
+                  "samples": 3, "updatedAt": "2026-10-01T00:00:00+00:00"}])
+    store = DurableJobStore(str(tmp_path / "legacy.sqlite"))
+    store.insert(Job(id="u2", kind="study-submit-bundle", status="succeeded",
+                     result={"elapsedSeconds": 360, "recordCount": 10},
+                     requested_resources={"modelID": MODEL, "gres": "gpu:1"},
+                     executor="slurm", _store=store))
+    table = hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    assert [(e["gpuType"], e["samples"], e["recordsPerHour"])
+            for e in table["entries"]] == [(hk.UNTYPED_GPU_BUCKET, 4, 32.5)]
+    assert hk.throughput_lookup(MODEL, hk.UNTYPED_GPU_BUCKET)["samples"] == 4

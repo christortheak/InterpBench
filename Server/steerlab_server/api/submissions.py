@@ -2495,9 +2495,9 @@ def _check_memory_fit(manifest: Manifest | None,
                      f"{context:,} tokens ({_gb(kv):.1f})")
     if gpu_type is None:
         return _check(check_id, "warn",
-                      f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but no "
-                      "GPU type is requested (gres unset) — cannot compare "
-                      "against VRAM" + unmeasured_note, data)
+                      f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but "
+                      f"{housekeeping.no_gpu_type_words(resources.gres)} — "
+                      "cannot compare against VRAM" + unmeasured_note, data)
     if vram_gb is None:
         return _check(check_id, "warn",
                       f"needs ≈{_gb(estimate):.1f} GB ({certain_words}) but "
@@ -2731,7 +2731,7 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
     if family is not None and family.id == instrument_family.PARKED_JUDGMENT:
         return _check_parked_judgment_walltime(
             manifest, resources, planned_records, profile, gpu_bucket,
-            family, family_data)
+            family, family_data, gpu_type=gpu_type)
 
     entry = None
     rate_source = "global"
@@ -2841,8 +2841,8 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
         data["recordsPerShard"] = shard_records
         data["estimateIsPerShard"] = True
     # Whether a job of this verb that reaches its walltime keeps what it
-    # finished and resumes (review round 5): a run, a sweep, or a pipeline
-    # whose run or sweep stage is ahead.
+    # finished and resumes (review rounds 5 and 6): a run, or a pipeline
+    # when the walltime finds it in its run stage. A sweep does not.
     at_walltime = _at_walltime(verb, manifest)
     check = _walltime_verdict(estimated_hours, resources, basis, data,
                               at_walltime=at_walltime, verb=verb)
@@ -2993,16 +2993,22 @@ def _check_parked_judgment_walltime(manifest: Manifest | None,
                                     resources: SlurmResources,
                                     planned_records: int,
                                     profile: ServerProfile,
-                                    gpu_type: str | None,
-                                    family, family_data: dict) -> dict:
+                                    gpu_bucket: str | None,
+                                    family, family_data: dict, *,
+                                    gpu_type: str | None = None) -> dict:
     """Open issues §4: price packet RENDERING, not generation.
+
+    ``gpu_bucket`` is the history's key (:func:`housekeeping.
+    throughput_gpu_bucket`); ``gpu_type`` is the type reported in
+    ``data.gpuType``, None for a request of no named type, as on the main
+    path (review round 6).
 
     An observed ``parkedJudgment`` rate for this model+GPU wins over the
     declared constant as soon as one has been folded — the constant exists
     because the first such job has to be priced too.
     """
     entry = housekeeping.throughput_lookup(
-        manifest.model_id, gpu_type, profile,
+        manifest.model_id, gpu_bucket, profile,
         instrument_family=instrument_family.PARKED_JUDGMENT)
     observed = float(entry.get("recordsPerHour", 0)) if entry else 0.0
     if observed > 0:
@@ -3038,14 +3044,16 @@ def _hours_words(hours: float) -> str:
     return f"{whole:02d}:00:00"
 
 
-#: What a job does when it reaches its walltime (``data.atWalltime``). A
-#: ``run`` and a ``sweep`` are passed the checkpoint flag
-#: (``bundles.execute_run_bundle``): they park at the walltime warning and
-#: ``remote resubmit`` continues them from the records (or sweep cells) they
-#: finished. A pipeline passes the flag to its ``run`` stage only
-#: (``pipeline_workflow``): it resumes when the walltime finds it there, and
-#: its other stages, like the standalone extract, validate and evaluate, are
-#: stopped by the scheduler and must be submitted again.
+#: What a job does when it reaches its walltime (``data.atWalltime``).
+#: ``bundle execute`` installs the checkpoint flag for ``run`` and
+#: ``pipeline`` only (``cli.py``): a run parks at the walltime warning and
+#: ``remote resubmit`` continues it from the records it finished. A pipeline
+#: passes the flag to its ``run`` stage only (``pipeline_workflow``): it
+#: resumes when the walltime finds it there. Everything else is stopped by
+#: the scheduler and must be submitted again: extract, validate and
+#: evaluate, and a standalone ``sweep`` too (review round 6), which gets no
+#: flag on the cluster, so the walltime warning ends it with no resume
+#: state written (and a deferred-judging sweep never parks even with one).
 AT_WALLTIME_RESUMES = "resumes"
 AT_WALLTIME_RESUMES_IN_RUN_STAGE = "resumesInRunStage"
 AT_WALLTIME_STOPS = "stops"
@@ -3054,7 +3062,7 @@ AT_WALLTIME_STOPS = "stops"
 def _at_walltime(verb: str, manifest: Manifest | None) -> str:
     """What a job of ``verb`` does at its walltime: one of the
     ``AT_WALLTIME_*`` values."""
-    if verb in ("run", "sweep"):
+    if verb == "run":
         return AT_WALLTIME_RESUMES
     if verb == "pipeline" and "run" in (_pipeline_stages(manifest) or []):
         return AT_WALLTIME_RESUMES_IN_RUN_STAGE
@@ -3064,8 +3072,7 @@ def _at_walltime(verb: str, manifest: Manifest | None) -> str:
 def _walltime_end_words(at_walltime: str, verb: str) -> str:
     """What happens to a job of this verb at its walltime, said plainly."""
     if at_walltime == AT_WALLTIME_RESUMES:
-        finished = "cells" if verb == "sweep" else "records"
-        return (f"a {verb} that reaches its walltime keeps the {finished} it "
+        return ("a run that reaches its walltime keeps the records it "
                 "finished, and can be resumed from them")
     if at_walltime == AT_WALLTIME_RESUMES_IN_RUN_STAGE:
         return ("a pipeline that reaches its walltime in its run stage keeps "

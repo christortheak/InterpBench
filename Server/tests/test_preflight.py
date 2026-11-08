@@ -216,6 +216,26 @@ def test_memory_fit_warns_without_vram_table(study_site, tmp_path):
     assert "no VRAM entry for L4" in memory["message"]
 
 
+def test_memory_fit_names_a_gpu_request_of_no_type(study_site, tmp_path):
+    """Review round 6: ``gpu:1`` asks for a GPU, so the warning does not say
+    the gres is unset; it says the request names no GPU type. (A Slurm
+    server refuses the untyped gres before its preflight, so the check is
+    called directly.)"""
+    from steerlab_server.api.executors import SlurmResources
+    manifest = Manifest.from_dict(json.loads(
+        (study_site["root"] / "experiments" / "pf-study" / "experiment.json")
+        .read_text(encoding="utf-8")))
+
+    def memory(gres):
+        return sub._check_memory_fit(manifest, SlurmResources(
+            gres=gres, walltime="10:00:00", gpu_vram_gb={"L4": 24}))
+    untyped = memory("gpu:1")
+    assert untyped["status"] == "warn"
+    assert "the GPU request 'gpu:1' names no GPU type" in untyped["message"]
+    assert "gres unset" not in untyped["message"]
+    assert "no GPU type is requested (gres unset)" in memory(None)["message"]
+
+
 def test_memory_fit_warns_without_config_geometry(study_site, tmp_path):
     snap = (study_site["hf"] / "hub" / "models--acme--tiny" / "snapshots"
             / REVISION)
