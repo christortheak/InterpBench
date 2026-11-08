@@ -17,6 +17,9 @@ KNOWN_SEED_POLICIES = ("manifestSeeds", "derivedSHA256")
 
 KNOWN_PROMPT_MODES = ("chatAssistant", "rawCompletion")
 
+#: The largest seed the Mac engine can read (a Swift ``UInt64``).
+MAX_SEED = 2 ** 64 - 1
+
 PROTOCOL_FIELDS: tuple[str, ...] = (
     "experimentDescription", "taskDescription", "outcomeMeasures", "promptMode",
     # `reasoningEffort` (off | low | medium | xhigh) replaced the Qwen-specific
@@ -191,6 +194,33 @@ def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None) -> No
             raise ExperimentStoreError(
                 f"samplesPerItem must be ≥ 1 — got {value}",
                 repair="re-run with --set samplesPerItem=<n≥1>")
+    if fields.get("seeds") is not None:
+        # The fixed seed list, by the rules the app's seed row and the Mac's
+        # `set-sampling --seeds` keep (Swift `ManifestDraftEdits.setSeeds`,
+        # same sentences): whole numbers a Swift UInt64 can hold, order
+        # preserved, never empty, no duplicates. A value outside them used to
+        # land as written and brick the manifest (`Manifest.from_dict` reads
+        # each entry with int()), or, as a fraction, be truncated silently.
+        value = fields["seeds"]
+        if (not isinstance(value, list) or any(
+                isinstance(seed, bool) or not isinstance(seed, int)
+                or not 0 <= seed <= MAX_SEED for seed in value)):
+            raise ExperimentStoreError(
+                f"seeds must be a list of whole numbers from 0 to {MAX_SEED} "
+                f"— got {value!r}",
+                repair="re-run with --set seeds='[<n>]' (at temperature 0, "
+                       "one seed)")
+        if not value:
+            raise ExperimentStoreError(
+                "the seed list cannot be empty — the fixed-list seed policy "
+                "indexes into it",
+                repair="re-run with --set seeds='[<n>]'")
+        if len(set(value)) != len(value):
+            raise ExperimentStoreError(
+                "duplicate seeds — two identical seeds generate two identical "
+                "records that would masquerade as independent samples",
+                repair="re-run with --set seeds='[<n>, …]' listing each seed "
+                       "once")
     if fields.get("seedPolicy") is not None:
         value = fields["seedPolicy"]
         if not isinstance(value, str) or value not in KNOWN_SEED_POLICIES:

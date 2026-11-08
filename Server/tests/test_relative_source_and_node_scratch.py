@@ -395,6 +395,13 @@ def test_study_submit_resume_reaches_the_rendered_sbatch(tmp_path, monkeypatch):
     monkeypatch.setenv("STEERLAB_ROOT", root)
     monkeypatch.setenv("STEERLAB_RUN_ROOT", str(tmp_path / "scratch"))
     _study(root)
+    # An arm, so the study measures something: a run of a concept study with
+    # none is refused at submission (`_refuse_inert_conditions`).
+    raw = es.load_raw("submit-study", root)
+    raw["conditions"] = [{"name": "fair-on", "alphaInNormUnits": True,
+                          "slots": [{"concept": "fair", "layer": 1,
+                                     "alpha": 0.1}]}]
+    es.save_raw(raw, root)
     parked = os.path.join(root, "runs", "20260823T000000000-exp-x-run")
     os.makedirs(parked)
     jobs = JobManager(DurableJobStore(str(tmp_path / "jobs.sqlite")))

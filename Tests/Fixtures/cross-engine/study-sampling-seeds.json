@@ -42,6 +42,7 @@
           "seed": 315500303309602878
         }
       ],
+      "refusal": null,
       "sampleCount": 1,
       "seedPolicy": "derivedSHA256"
     },
@@ -83,6 +84,7 @@
           "seed": 315500303309602878
         }
       ],
+      "refusal": null,
       "sampleCount": 1,
       "seedPolicy": "derivedSHA256"
     },
@@ -172,6 +174,7 @@
           "seed": 4329227765912701248
         }
       ],
+      "refusal": null,
       "sampleCount": 3,
       "seedPolicy": "derivedSHA256"
     },
@@ -262,6 +265,7 @@
           "seed": 33
         }
       ],
+      "refusal": null,
       "sampleCount": 3,
       "seedPolicy": "manifestSeeds"
     },
@@ -351,6 +355,7 @@
           "seed": 33
         }
       ],
+      "refusal": null,
       "sampleCount": 3,
       "seedPolicy": "manifestSeeds"
     },
@@ -393,6 +398,7 @@
           "seed": 11
         }
       ],
+      "refusal": null,
       "sampleCount": 1,
       "seedPolicy": "manifestSeeds"
     },
@@ -432,7 +438,280 @@
           "seed": 11
         }
       ],
+      "refusal": null,
       "sampleCount": 1,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "label": "manifestSeeds, greedy, seed list",
+      "manifest": {
+        "seedPolicy": "manifestSeeds",
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
+      "sampleCount": 3,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "label": "derivedSHA256, greedy, seed list",
+      "manifest": {
+        "seedPolicy": "derivedSHA256",
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
+      "sampleCount": 3,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "label": "undeclared, greedy, seed list",
+      "manifest": {
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
+      "sampleCount": 3,
       "seedPolicy": "manifestSeeds"
     }
   ],
@@ -441,7 +720,7 @@
     "steered"
   ],
   "experimentHash": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
-  "note": "the seed rule of an ordinary study's sampled records: a declared derivedSHA256 above temperature 0 derives one seed per (condition, promptID, sampleIndex) for samplesPerItem samples, at any samplesPerItem; otherwise each item runs once per listed seed",
+  "note": "the seed rule of an ordinary study's sampled records: a declared derivedSHA256 above temperature 0 derives one seed per (condition, promptID, sampleIndex) for samplesPerItem samples, at any samplesPerItem; otherwise each item runs once per listed seed. At temperature 0 a study lists one seed, and one listing more is refused (refusal)",
   "prompts": [
     {
       "id": "respondent-001",

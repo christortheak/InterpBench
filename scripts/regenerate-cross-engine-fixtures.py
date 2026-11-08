@@ -1576,6 +1576,17 @@ STUDY_SAMPLING_CASES = [
     ("derivedSHA256, greedy",
      {"temperature": 0.0, "seedPolicy": "derivedSHA256", "seeds": [11]}),
     ("undeclared, greedy", {"temperature": 0.0, "seeds": [11]}),
+    # Temperature 0 with several seeds (public issue #9): the study is
+    # refused, and no advisory calls the list one with "no effect". The
+    # records are what the rule would enumerate, never what a run writes.
+    ("manifestSeeds, greedy, seed list",
+     {"temperature": 0.0, "seedPolicy": "manifestSeeds",
+      "seeds": [11, 22, 33]}),
+    ("derivedSHA256, greedy, seed list",
+     {"temperature": 0.0, "seedPolicy": "derivedSHA256",
+      "seeds": [11, 22, 33]}),
+    ("undeclared, greedy, seed list",
+     {"temperature": 0.0, "seeds": [11, 22, 33]}),
 ]
 
 
@@ -1606,6 +1617,8 @@ def study_sampling_case(label: str, fields: dict) -> dict:
         "sampleCount": sampling.sample_count(manifest),
         "records": records,
         "advisories": sampling.manifest_unused_seed_settings(manifest),
+        # The run-start, submission, and draft-verify refusal, or null.
+        "refusal": sampling.manifest_greedy_seed_list_problem(manifest),
     }
 
 
@@ -1623,7 +1636,8 @@ def study_sampling_seeds() -> None:
                 "declared derivedSHA256 above temperature 0 derives one seed "
                 "per (condition, promptID, sampleIndex) for samplesPerItem "
                 "samples, at any samplesPerItem; otherwise each item runs "
-                "once per listed seed",
+                "once per listed seed. At temperature 0 a study lists one "
+                "seed, and one listing more is refused (refusal)",
         "experimentHash": STUDY_SAMPLING_EXPERIMENT_HASH,
         "prompts": STUDY_SAMPLING_PROMPTS,
         "conditions": list(STUDY_SAMPLING_CONDITIONS),

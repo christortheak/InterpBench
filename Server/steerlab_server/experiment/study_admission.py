@@ -54,6 +54,63 @@ def verify_or_warn(manifest: Manifest, root: str | None) -> None:
 
 
 
+def settings_refusal(manifest: Manifest) -> lifecycle_gates.LifecycleError | None:
+    """The refusal an ordinary study's run gives on its SETTINGS alone, or
+    None: what nothing after submission (the queue, the node, the model, its
+    tokenizer) can change, so it is decidable before anything is queued.
+
+    One function for the three places that ask, so the sentence is the same
+    in each: the engine's submission preflight
+    (``api.submissions._refuse_settings``), run start before the model loads
+    (``run_workflow.run``), and ``_run_impl``'s backstop for a direct caller.
+    Each rule is also a ``verify`` violation, so a draft carrying one cannot
+    freeze; this is where a study frozen under an older release meets it.
+
+    * temperature 0 with several seeds (public issue #9;
+      ``sampling.greedy_seed_list_problem``);
+    * ``samplesPerItem > 1`` at temperature 0 (``sampling.
+      greedy_samples_problem``);
+    * ``ordinalScale`` without a known ``ordinalAggregation``
+      (``task_inputs.resolve_ordinal_aggregation``).
+
+    A panel (``multiAgent``) runs none of these rules' paths, so it is never
+    refused here."""
+    if manifest.study_kind == "multiAgent":
+        return None
+    from . import sampling, task_inputs
+    frozen = manifest.status != "draft"
+    problem = sampling.manifest_greedy_seed_list_problem(manifest)
+    if problem:
+        return lifecycle_gates.refusing(
+            lifecycle_gates.STUDY_DECLARATION, problem,
+            repair=sampling.greedy_seed_list_repair(manifest.name, frozen=frozen))
+    problem = sampling.greedy_samples_problem(manifest.temperature,
+                                              manifest.samples_per_item)
+    if problem:
+        return lifecycle_gates.refusing(
+            lifecycle_gates.STUDY_DECLARATION, problem,
+            repair=sampling.greedy_samples_repair(manifest.name, frozen=frozen))
+    try:
+        task_inputs.resolve_ordinal_aggregation(manifest)
+    except RuntimeError as exc:
+        duplicate = (vocabulary.authoring(
+            f"experiment duplicate {manifest.name} {manifest.name}-v2")
+            + ", then " if frozen else "")
+        return lifecycle_gates.refusing(
+            lifecycle_gates.STUDY_DECLARATION, str(exc),
+            repair=(f"{duplicate}declare ordinalAggregation 'expectedValue' "
+                    "or 'argmax' in the study's settings "
+                    f"{vocabulary.authoring_place()}, and run it again"))
+    return None
+
+
+def refuse_settings(manifest: Manifest) -> None:
+    """Raise :func:`settings_refusal`'s refusal, when there is one."""
+    refusal = settings_refusal(manifest)
+    if refusal is not None:
+        raise refusal
+
+
 def stamped_experiment_hash(run_directory: str) -> str | None:
     """The manifest-epoch stamp of a run directory. Delegates to the shared
     :mod:`run_epoch` reader so ``promote``'s epoch guard and this one cannot

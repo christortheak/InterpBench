@@ -81,6 +81,26 @@ def test_fixture_is_what_the_seed_rule_gives(case):
         == case["sampleCount"]
     assert sampling.manifest_unused_seed_settings(manifest) \
         == case["advisories"], REGENERATE
+    # The refusal (public issue #9): verify on a draft, the submission, and
+    # run start all say it.
+    assert sampling.manifest_greedy_seed_list_problem(manifest) \
+        == case["refusal"], REGENERATE
+    assert ((case["refusal"] in manifest.verify())
+            if case["refusal"] else True)
+
+
+def test_temperature_zero_with_several_seeds_is_refused_and_never_advised():
+    refused = [c for c in _fixture()["cases"] if c["refusal"]]
+    assert {c["label"] for c in refused} == {
+        "manifestSeeds, greedy, seed list", "derivedSHA256, greedy, seed list",
+        "undeclared, greedy, seed list"}
+    for case in refused:
+        assert case["advisories"] == []
+        assert case["refusal"].startswith(sampling.GREEDY_SEED_LIST_PREFIX)
+        assert "3 identical records per item" in case["refusal"]
+    # Every other case runs as before, unrefused.
+    assert all(c["refusal"] is None for c in _fixture()["cases"]
+               if c not in refused)
 
 
 def test_the_two_items_share_their_text_and_differ_by_id():

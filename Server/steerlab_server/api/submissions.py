@@ -241,6 +241,11 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
     _require_reread_verb(reread_choices, verb=verb)
+    # A study its settings alone make unrunnable refuses here, before anything
+    # is written or queued (public issue #9), as does one that would measure
+    # nothing.
+    _refuse_settings(manifest, verb, stages)
+    _refuse_inert_conditions(manifest, verb)
     # A malformed promptReading declaration refuses here, before anything is
     # written; the engine would otherwise refuse it after the queue wait.
     declared_plan = _declared_reading_plan(manifest, verb)
@@ -299,7 +304,6 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     # SHARD fan-out here, not the judge-worker continuation.
     _check_local_judge_deliverability(manifest, verb, fanout_capable=False,
                                       pipeline_stages=stages)
-    _refuse_inert_conditions(manifest, verb)
 
     if executor == "local":
         local_resources = {"executor": "local", "verb": verb}
@@ -501,6 +505,10 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
     _require_reread_verb(reread_choices, verb=verb)
+    # The bundle's settings, and whether it measures anything, refused here
+    # before a submission directory exists (public issue #9).
+    _refuse_settings(manifest, verb, _pipeline_stages(manifest))
+    _refuse_inert_conditions(manifest, verb)
     # The bundle's own declaration, refused here when malformed (issue #6).
     declared_plan = _declared_reading_plan(manifest, verb)
 
@@ -534,7 +542,6 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     fanout_note = _check_local_judge_deliverability(
         manifest, verb, fanout_capable=(executor == "slurm"),
         pipeline_stages=stages)
-    _refuse_inert_conditions(manifest, verb)
 
     parallel, parallel_note, _ = _resolve_parallel_jobs(
         parallel_jobs, verb=verb, executor=executor,
@@ -706,13 +713,46 @@ def _refuse_inert_conditions(manifest: Manifest | None, verb: str) -> None:
     declared-but-empty agent comparison carrying injection conditions would
     burn its whole allocation measuring baseline only — on a fan-out, K
     allocations. Refuse where the researcher is still watching; the shard
-    jobs would otherwise each refuse only after their queue wait."""
+    jobs would otherwise each refuse only after their queue wait.
+
+    Its sibling, a concept study that declares no arm at all, is refused here
+    too: run start refuses it (``run_workflow.run``), but it reached the queue
+    first. It is no ``verify`` violation, because a concept study legitimately
+    has no arm while it is extracted, validated, and swept."""
     if manifest is None or verb not in ("run", "pipeline"):
         return
-    from ..experiment.manifest import inert_conditions_problem
-    problem = inert_conditions_problem(manifest.raw)
+    from ..experiment.manifest import (inert_conditions_problem,
+                                       no_measured_conditions_problem)
+    problem = (inert_conditions_problem(manifest.raw)
+               or no_measured_conditions_problem(manifest.raw))
     if problem:
         raise ValueError(f"submission refused: {problem}")
+
+
+def _refuse_settings(manifest: Manifest | None, verb: str,
+                     stages: list[str] | None) -> None:
+    """Submission-preflight twin of run start's settings refusals
+    (``study_admission.settings_refusal``): temperature 0 with several seeds
+    (public issue #9), several samples per item at temperature 0, and an
+    ordinal scale with no declared aggregation. Each depends on the study's
+    settings alone, so nothing the queue, the node, or the model could change
+    would let the job run. A study frozen under an older release meets them
+    here, before anything is written or queued, rather than after the queue
+    wait and the model load. Asked for the steps that run the study: ``run``,
+    and a pipeline whose declared stages include it."""
+    if manifest is None:
+        return
+    if verb != "run" and not (verb == "pipeline" and stages
+                              and "run" in stages):
+        return
+    from ..experiment import study_admission
+    refusal = study_admission.settings_refusal(manifest)
+    if refusal is None:
+        return
+    raise SubmissionRefusal(
+        f"submission refused: {refusal}. Nothing was submitted. To repair: "
+        f"{refusal.repair_action}",
+        code=refusal.gate, repair_action=refusal.repair_action)
 
 
 def _pipeline_stages(manifest: Manifest | None) -> list[str] | None:

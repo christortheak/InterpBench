@@ -29,6 +29,7 @@ from __future__ import annotations
 from . import lifecycle_gates
 from .command_vocabulary import MAC_PROGRAM
 from .manifest_errors import ExperimentStoreError
+from .sampling import GREEDY_SEED_LIST_PREFIX
 
 #: ``verify()``'s sentence for a model-output study with no concept and no
 #: agent. Matched whole: it is the rule's entire text on both engines.
@@ -193,6 +194,19 @@ def paired_rubric_repair(name: str, program: str) -> str:
             "the study's judges. ")
 
 
+def greedy_seed_list_repair(name: str, program: str) -> str:
+    """How the answering client gives a temperature-0 draft one seed
+    (``sampling.greedy_seed_list_problem``). Said before the declaration
+    repair. Swift twin: ``VerificationRefusal.greedySeedListRepair``."""
+    if program == MAC_PROGRAM:
+        one_seed = f"{program} experiment set-sampling {name} --seeds <n>"
+    else:
+        one_seed = (f"{program} experiment set-protocol {name} --set "
+                    "seeds='[<n>]'")
+    return (f"Set one seed: {one_seed}, or raise the temperature above 0 to "
+            "sample. ")
+
+
 def declaration_repair(name: str, program: str) -> str:
     """The repair when no file changed and the declaration is the problem."""
     return ("Each listed problem names one setting or input of this study "
@@ -224,6 +238,8 @@ def repair(name: str, violations, *, program: str = "steerlab") -> str:
         specific += unpinned_prompts_repair(name, program)
     if any(v.startswith(BASELINE_ONLY_PAIRED_RUBRIC_PREFIX) for v in violations):
         specific += paired_rubric_repair(name, program)
+    if any(v.startswith(GREEDY_SEED_LIST_PREFIX) for v in violations):
+        specific += greedy_seed_list_repair(name, program)
     return specific + declaration_repair(name, program)
 
 

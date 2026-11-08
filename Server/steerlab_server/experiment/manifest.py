@@ -1567,14 +1567,28 @@ class Manifest:
         # Stochastic sampling policy: samplesPerItem > 1 requires temperature > 0
         # and a deterministic per-record seed derivation.
         if self.samples_per_item > 1:
-            if not self.temperature or self.temperature <= 0:
-                violations.append(
-                    "samplesPerItem > 1 requires temperature > 0 "
-                    "(greedy decoding makes every sample identical)")
+            from . import sampling as _sampling
+            greedy_samples = _sampling.greedy_samples_problem(
+                self.temperature, self.samples_per_item)
+            if greedy_samples:
+                violations.append(greedy_samples)
             if self.seed_policy != "derivedSHA256":
                 violations.append(
                     "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' "
                     "(per-record seeds derived from condition/prompt/sampleIndex)")
+        # …and at temperature 0 an ordinary study lists exactly one seed
+        # (public issue #9): every seed gives the same greedy response, so
+        # each extra seed writes an identical record per item. A DRAFT only,
+        # so freeze refuses it. A study frozen under an older release is
+        # refused where it would run (the submission preflight and both
+        # engines' run start), because verify also admits reads of runs that
+        # already exist, and those must keep opening. Swift twin:
+        # ExperimentStore.verify, same sentence.
+        if self.status == "draft":
+            from . import sampling as _sampling
+            greedy_seeds = _sampling.manifest_greedy_seed_list_problem(self)
+            if greedy_seeds:
+                violations.append(greedy_seeds)
 
         from . import experiment_store, multiconcept
 
