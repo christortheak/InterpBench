@@ -43,6 +43,9 @@ stochastic replication arm is `--set samplesPerItem=25 --set temperature=0.7
 run with scoped per-record seeds (`workspace guide engines`). The joint rules
 (`samplesPerItem > 1` needs `temperature > 0` and seedPolicy `derivedSHA256`)
 surface at `verify`, not here, so the fields can be declared one at a time.
+They apply where the run reads the count, a study that generates sampled text
+(or a panel): a study of answer-token readouts alone reads each item once, and
+is told its `samplesPerItem` is inert instead.
 Above temperature 0, `derivedSHA256` runs each item `samplesPerItem` times,
 including once, with a seed per record; the fixed list (`manifestSeeds`, the
 default) runs each item once per listed seed. `--set seeds='[<n>, …]'`
@@ -53,7 +56,8 @@ lists one seed: `verify` refuses a draft with more (so `freeze` does), with
 so its runs stay readable, and says so with a `refusedWhenRun` advisory; `run`
 refuses to send it, and a runner refuses it before anything is queued
 (duplicate it first). Answer-token readouts read each item once, so a
-readout-only study is never refused for its list. A `seedSettingNotUsed`
+readout-only study is never refused for its list. A readout-only study with several seeds or samples per item runs on an engine from this release; one from before it refused such a study after the model load, so the client refuses to send it to an engine whose capabilities do not list `remoteStudy.greedyRulesSampledTextOnly` (update the engine, or set one seed). A
+`seedSettingNotUsed`
 advisory, here and at `verify`, says when a declared seed setting will not be
 read: `derivedSHA256` at temperature 0 with one seed (greedy, no seed),
 `derivedSHA256` above temperature 0 beside a seed list of more than one entry,

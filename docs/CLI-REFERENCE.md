@@ -1353,7 +1353,11 @@ The **joint** stochastic rules — `samplesPerItem > 1` requires
 rather than write-time refusals, deliberately: the fields must be declarable
 one flag at a time, and a merge-style writer that refused a half-built
 protocol could never reach the finished one. Declaring the protocol is legal
-on either engine, and either engine runs it (§3.4).
+on either engine, and either engine runs it (§3.4). They apply where the run
+reads the count, a study that generates sampled text or a panel: a study of
+answer-token readouts alone reads each item once, so its `samplesPerItem` is
+inert (said at `verify`, `set-sampling`, and `set-instruments`), never
+refused.
 
 So is the greedy seed rule (public issue #9): at temperature 0 an ordinary
 study that generates sampled text lists exactly one seed, because every seed
@@ -1368,8 +1372,12 @@ submission preflight before anything is queued, at a chain's start when the
 chain runs the study, and at run start on either engine, before anything is
 read or loaded. Its repair duplicates it first. Only sampled text loops over
 the seeds: answer-token readouts read each item once, so a readout-only
-study is never refused for its list. A panel never reads the seed list and
-is never refused for it.
+study is never refused for its list. An engine from before this release
+refused such a study after its model load, so both clients refuse to send a
+study at temperature 0 with several seeds or samples per item to an engine
+whose capabilities do not list `remoteStudy.greedyRulesSampledTextOnly`
+(`greedyRulesUnsupported`; update the engine, or set one seed). A panel never
+reads the seed list and is never refused for it.
 
 A declared seed setting the run will not read carries a `seedSettingNotUsed`
 advisory here, at `set-instruments`, and at `verify`, never a refusal:
