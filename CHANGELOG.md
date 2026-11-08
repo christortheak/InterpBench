@@ -58,14 +58,15 @@ migration that rewrites frozen bytes.
   identical counts. The walltime check is advice and never refuses a
   submission, because a past job can be slow or fast for reasons that are
   not this study's. When its estimate, priced from past jobs of similar item
-  length on the same model and GPU and timed without the model load, is
+  length on the same model and GPU, and timed without the model load where
+  the history records it, is
   over the requested walltime, both clients print a plain warning. The
   warning gives the estimate, the walltime to ask for (rounded up to the
   hour), and splitting the study as the alternative; past twice the request
   it says the job is very likely to run out of time. It also says what
-  happens at the walltime: a run keeps its finished records and a sweep its
-  finished cells, and either can be resumed; a pipeline can be resumed only
-  from its run stage; other steps stop and must be submitted again. Both
+  happens at the walltime: a run keeps its finished records and can be
+  resumed; a pipeline can be resumed only from its run stage; other steps,
+  sweeps included, stop and must be submitted again. Both
   clients also wait up to an hour for a resume, and report one that goes
   unanswered as an unknown outcome to check.
 - **A split run that meets the cluster's job limit waits instead of
@@ -83,8 +84,10 @@ migration that rewrites frozen bytes.
   is refused at once. A refusal that gives no reason holds the parts, says
   so, and is retried less and less often (up to every 30 minutes); after a
   day of such refusals the run fails with the walltime repair and can still
-  be resumed. A Resume whose parts end up held says so and is reported as
-  pending (exit 12). A maintenance window delays only its own run. The searches that keep a part from being
+  be resumed, at a walltime within the cluster's limit. A Resume whose parts
+  end up held says so; one held after a refusal that gave no reason is
+  reported as pending (exit 12). A maintenance window delays only its own
+  run. The searches that keep a part from being
   submitted twice now reach back to their own record's time, across
   midnight, and an inconclusive search is never read as absence.
 
