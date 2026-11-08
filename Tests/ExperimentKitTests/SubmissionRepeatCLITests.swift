@@ -504,6 +504,26 @@ import Testing
         #expect(outcome.stderr.contains("warning: \(notice)"))
         #expect(outcome.envelope.result?["walltimeNotice"] == .string(notice))
     }
+
+    /// Review round 5: the walltime check never refuses on history, so its
+    /// over-the-walltime advice must be seen: it reaches stderr and the
+    /// envelope beside the length notice.
+    @Test func theWalltimeAdviceReachesStderrAndTheEnvelope() async throws {
+        let advice = "WALLTIME: this job is very likely to run out of time. It "
+            + "is estimated to need about 8.4 h, and 4.0 h (04:00:00) was requested."
+        let notice = "The nearest past job had items of 2,000 prompt tokens."
+        let preflight: [String: Any] = [
+            "verdict": "warn",
+            "checks": [["id": "walltime", "status": "warn", "message": "m",
+                        "data": ["walltimeAdvice": advice,
+                                 "promptLengthNotice": notice]]],
+        ]
+        let outcome = try await submit(behaviour: .answerAfter(
+            seconds: 0, extra: ["preflight": preflight]))
+        #expect(outcome.envelope.exitCode == 0)
+        #expect(outcome.stderr.contains("warning: \(advice) \(notice)"))
+        #expect(outcome.envelope.result?["walltimeNotice"] == .string("\(advice) \(notice)"))
+    }
 }
 
 private final class RepeatURLProtocol: URLProtocol, @unchecked Sendable {

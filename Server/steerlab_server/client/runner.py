@@ -510,17 +510,22 @@ def submission_key(body: dict, bundle: dict | str | None) -> str:
 
 
 def walltime_notice(submission: dict | None) -> str | None:
-    """The walltime check's plain-language notice (issue #11): the throughput
-    history it priced from came from much longer or much shorter items than
-    this submission's, or does not say how long its items were. None when
-    the check carries none, or the runner is older."""
+    """The walltime check's plain-language advice (issue #11): that the job
+    is estimated to need longer than the requested walltime, with the
+    walltime to ask for (``walltimeAdvice``), and that the history it priced
+    from came from items of a very different length, or does not say how
+    long its items were (``promptLengthNotice``). Both, when both are said.
+    None when the check says neither, or the runner is older."""
     preflight = (submission or {}).get("preflight")
     checks = preflight.get("checks") if isinstance(preflight, dict) else None
     for check in checks or []:
         if isinstance(check, dict) and check.get("id") == "walltime":
             data = check.get("data")
-            notice = data.get("promptLengthNotice") if isinstance(data, dict) else None
-            return notice if isinstance(notice, str) and notice else None
+            data = data if isinstance(data, dict) else {}
+            said = [text for text in (data.get("walltimeAdvice"),
+                                      data.get("promptLengthNotice"))
+                    if isinstance(text, str) and text]
+            return " ".join(said) or None
     return None
 
 
@@ -1207,6 +1212,16 @@ class RunnerClient:
             confirm_reread(submission, self.base_url)
         return submission
 
+    def _submit_wait(self) -> float | None:
+        """The read budget a submit or resume actually ran under: this
+        adapter's own, or, on an injected client, the budget that client
+        carries (review round 5)."""
+        if self._owns_client:
+            return self._submit_timeout
+        timeout = getattr(self._client, "timeout", None)
+        read = getattr(timeout, "read", None)
+        return float(read) if isinstance(read, (int, float)) else None
+
     @property
     def submit_timeout(self) -> float:
         """The read budget of a study submission (:data:`SUBMIT_TIMEOUT`
@@ -1245,7 +1260,7 @@ class RunnerClient:
             repair_action=repair,
             detail={"bundlePath": remote_path, "verb": verb,
                     "repeatIsSafe": safe,
-                    "submitTimeoutSeconds": self._submit_timeout})
+                    "submitTimeoutSeconds": self._submit_wait()})
 
     # -- jobs --------------------------------------------------------------
 
@@ -1384,7 +1399,7 @@ class RunnerClient:
                 "continues it). Resume again only if it still reads "
                 "checkpointed or cancelled with nothing continuing it"),
             detail={"jobID": job_id, "retried": False,
-                    "waitedSeconds": self._submit_timeout})
+                    "waitedSeconds": self._submit_wait()})
 
     def job_recovery(self, job_id: str) -> dict:
         return self._json("GET", f"/api/jobs/{quote(job_id, safe='')}/recovery")

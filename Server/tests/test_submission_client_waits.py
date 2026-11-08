@@ -293,3 +293,79 @@ def test_an_unanswered_resume_is_pending_with_the_repair_to_check(
     assert code == 12, document
     assert document["error"]["code"] == "resumeOutcomeUnknown"
     assert len(handler.bodies) == 2, "one attempt each, nothing retried"
+
+
+def test_runner_submit_prints_the_walltime_advice(slow_runner, monkeypatch,
+                                                 capsys, tmp_path):
+    """Review round 5: the walltime check never refuses on history, so its
+    advice must be seen: ``runner submit`` prints it on stderr and carries
+    it in the envelope, beside the length notice."""
+    from steerlab_server import client_cli
+
+    handler, url = slow_runner
+    monkeypatch.delenv(client_cli.RUNNER_TOKEN_ENV, raising=False)
+    advice = ("WALLTIME: this job is very likely to run out of time. It is "
+              "estimated to need about 8.4 h, and 4.0 h (04:00:00) was "
+              "requested.")
+    notice = "The nearest past job had items of 2,000 prompt tokens."
+    original = handler._answer
+
+    def answer(self, document):
+        if document.get("jobId") == "job-slow-1":
+            document = {**document, "preflight": {"verdict": "warn", "checks": [
+                {"id": "walltime", "status": "warn", "message": "m",
+                 "data": {"walltimeAdvice": advice,
+                          "promptLengthNotice": notice}}]}}
+        original(self, document)
+
+    monkeypatch.setattr(handler, "_answer", answer)
+    monkeypatch.setattr(runner_api.RunnerClient, "info", lambda self: {
+        "service": "steerlab-server", "engineVersion": "test", "root": "/srv",
+        "capabilities": {}})
+    workspace = str(tmp_path / "ws")
+    os.makedirs(workspace)
+    code = client_cli.main(
+        ["runner", "submit", "--runner", url, "--bundle-path",
+         "/runs/b.tar.gz", "--bundle-sha", "d" * 64, "--verb", "run",
+         "--executor", "slurm", "--root", workspace, "--json"])
+    captured = capsys.readouterr()
+    document = json.loads(captured.out)
+    assert code == 0, document
+    assert f"warning: {advice} {notice}" in captured.err
+    assert document["result"]["walltimeNotice"] == f"{advice} {notice}"
+
+
+def test_the_notice_carries_the_walltime_advice_and_the_length_notice():
+    submission = {"preflight": {"checks": [{"id": "walltime", "data": {
+        "walltimeAdvice": "WALLTIME: this job may run out of time.",
+        "promptLengthNotice": "The nearest past job had short items."}}]}}
+    assert runner_api.walltime_notice(submission) == (
+        "WALLTIME: this job may run out of time. The nearest past job had "
+        "short items.")
+    only = {"preflight": {"checks": [{"id": "walltime", "data": {
+        "walltimeAdvice": "WALLTIME: this job may run out of time."}}]}}
+    assert runner_api.walltime_notice(only) == \
+        "WALLTIME: this job may run out of time."
+    assert runner_api.walltime_notice({"preflight": {"checks": [
+        {"id": "walltime", "data": {}}]}}) is None
+
+
+def test_an_unanswered_resume_reports_the_wait_it_ran_under():
+    """An injected client carries its own budget: the unknown outcome
+    reports that one, not this adapter's hour."""
+    import httpx
+
+    def slow(request):
+        if request.method == "GET":
+            if request.url.path == "/api/capabilities":
+                return httpx.Response(200, json={"instrumentation": []})
+            return httpx.Response(200, json={"id": "job1"})
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    injected = httpx.Client(transport=httpx.MockTransport(slow),
+                            timeout=httpx.Timeout(5.0, read=42.0))
+    client = runner_api.RunnerClient(base_url="http://127.0.0.1:9",
+                                     http_client=injected)
+    with pytest.raises(runner_api.ResumeOutcomeUnknown) as raised:
+        client.resubmit_job("job1")
+    assert raised.value.detail["waitedSeconds"] == 42.0
