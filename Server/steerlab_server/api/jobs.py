@@ -115,6 +115,16 @@ def refused_walltime_choices(job_id: str, walltime: str | None = None) -> str:
         f"resubmit {job_id} --retry-refused-walltime --runner <url>)")
 
 
+def unreadable_walltime_repair(job_id: str) -> str:
+    """The way on when SteerLab cannot read a walltime it would ask for
+    (review round 10): name one explicitly, on either client."""
+    return (
+        "resume it with an explicit walltime within the cluster's limit for "
+        f"one job (steerlab-cli remote resubmit {job_id} --walltime "
+        f"HH:MM:SS, or steerlab runner resubmit {job_id} --walltime HH:MM:SS "
+        "--runner <url>)")
+
+
 def held_unexplained_delay(count: int) -> float:
     """The wait after the ``count``-th unexplained refusal in a row."""
     return min(HELD_UNEXPLAINED_FIRST_DELAY_SECONDS * 2 ** max(0, count - 1),
@@ -2199,6 +2209,26 @@ class JobManager:
                 return "unsubmittable"
             return self._fail_fanout_from_held_part(
                 parent, part, why, repair="submit the study again")
+        override = rr.get("walltimeOverride")
+        if override:
+            # Review round 10: read before anything is asked of the
+            # scheduler, in the form sbatch's override takes. A walltime
+            # SteerLab cannot read is its own to say, never reported as the
+            # scheduler's refusal.
+            from .executors import normalized_walltime
+            readable = normalized_walltime(str(override))
+            if readable is None:
+                why = (f"SteerLab could not read its walltime ({override!r}), "
+                       "so nothing was asked of the scheduler")
+                if report_permanent:
+                    part.result = {**(part.result or {}),
+                                   "held": {**held, "lastRefusal": why}}
+                    self.store.update(part)
+                    return "unreadableWalltime"
+                return self._fail_fanout_from_held_part(
+                    parent, part, why,
+                    repair=unreadable_walltime_repair(parent.id))
+            override = readable
         token = f"slhd-{part.id}-{uuid.uuid4().hex[:8]}"
         now = time.time()
         held["attempt"] = {"submissionName": token, "at": now}
@@ -2222,10 +2252,10 @@ class JobManager:
         submit_kwargs: dict = {}
         if "job_name" in parameters:
             submit_kwargs["job_name"] = token
-        if rr.get("walltimeOverride") and "walltime" in parameters:
+        if override and "walltime" in parameters:
             # A person resumed the run with a longer limit; it rides sbatch's
             # command line, as a resubmission's does.
-            submit_kwargs["walltime"] = str(rr["walltimeOverride"])
+            submit_kwargs["walltime"] = override
         try:
             slurm_id = executor.submit(bundle, **submit_kwargs)
         except Exception as exc:  # noqa: BLE001 - classified below
@@ -2562,9 +2592,10 @@ class JobManager:
             entries[0] = {**entries[0], "held": False,
                           "slurmJobID": first.executor_job_id}
             return {"refused": None, "why": "", "note": ""}
-        if outcome in ("refused", "unsubmittable"):
-            return {"refused": ("scheduler" if outcome == "refused"
-                                else "missingScript"),
+        if outcome in ("refused", "unsubmittable", "unreadableWalltime"):
+            return {"refused": {"refused": "scheduler",
+                                "unsubmittable": "missingScript"}.get(
+                                    outcome, outcome),
                     "why": str(held.get("lastRefusal")
                                or "the scheduler refused it"),
                     "note": ""}
@@ -4963,9 +4994,27 @@ class JobManager:
             refused = str(((parent.result or {}).get("heldGaveUp") or {})
                           .get("walltime") or "")
             if refused and not walltime:
-                walltime = refused
+                # Review round 10: the stamp is the parts' own spelling (a
+                # site default may be in days, 1-00:00:00) and was never
+                # validated as a request is. Asked for in the form sbatch's
+                # override takes, or refused plainly: a walltime SteerLab
+                # cannot read is SteerLab's to say, never the scheduler's.
+                from .executors import normalized_walltime
+                readable = normalized_walltime(refused)
+                if readable is None:
+                    raise ResubmitRefused(
+                        f"run {parent.id} was not resumed: SteerLab could "
+                        "not read the walltime its parts were refused at "
+                        f"({refused!r}), so it cannot ask the scheduler for "
+                        "it again. Nothing was submitted, and the responses "
+                        "it completed are kept. "
+                        + unreadable_walltime_repair(parent.id)[:1].upper()
+                        + unreadable_walltime_repair(parent.id)[1:],
+                        code="unreadableWalltime",
+                        repair=unreadable_walltime_repair(parent.id))
+                walltime = readable
             if refused and same_walltime(walltime, refused):
-                retried_walltime = walltime
+                retried_walltime = refused
         stays = "stopped" if was_given_up else "cancelled"
         children = [(str(cid), self.get(str(cid)))
                     for cid in rr.get("shardChildren") or []]
@@ -5100,6 +5149,18 @@ class JobManager:
                             f"submitted, because {first['why']}. Nothing is "
                             f"running and the run stays {stays}; submit the "
                             "study again")
+                    if first["refused"] == "unreadableWalltime":
+                        # Review round 10: SteerLab's own reading failed;
+                        # nothing was asked of the scheduler.
+                        raise ResubmitRefused(
+                            f"run {parent.id} was not resumed: "
+                            f"{self._part_label(held_tails[0])} cannot be "
+                            f"submitted, because {first['why']}. Nothing is "
+                            f"running and the run stays {stays}. "
+                            + unreadable_walltime_repair(parent.id)[:1].upper()
+                            + unreadable_walltime_repair(parent.id)[1:],
+                            code="unreadableWalltime",
+                            repair=unreadable_walltime_repair(parent.id))
                     limit_refusals.append(first["why"])
                     not_resumed.extend(
                         f"{entry.get('resubmitOf')}: the scheduler refused "

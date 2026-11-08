@@ -2005,6 +2005,21 @@ def _parse_walltime(value: str) -> timedelta:
     return timedelta(minutes=int(value))
 
 
+def normalized_walltime(value: str | None) -> str | None:
+    """A walltime in any spelling Slurm reads (``D-HH:MM:SS``, ``D-HH``,
+    ``HH:MM:SS``, ``MM:SS``, minutes) as ``HH:MM:SS``, hours above 24
+    allowed: the form ``validated_walltime`` accepts (review round 10: a
+    site default in days, recorded as a run's refused walltime, broke its
+    retry). None when it carries no positive length (``UNLIMITED``, a
+    typo, zero), which a caller must say SteerLab could not read."""
+    seconds = _parse_slurm_duration(value)
+    if seconds is None or seconds <= 0:
+        return None
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 def validated_walltime(value: str) -> str:
     """A caller-supplied walltime (e.g. a resubmission's override), validated
     to the vocabulary ``_parse_walltime`` accepts — minutes, ``mm:ss``, or

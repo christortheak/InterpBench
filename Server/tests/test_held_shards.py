@@ -1015,6 +1015,149 @@ def test_a_retry_refused_again_says_what_the_scheduler_did(
                 "another part of it is with the scheduler") in answer["message"]
 
 
+def _walltime_in_days(jobs, submission, walltime):
+    """A run whose parts' own walltime is a site default in days: its
+    gave-up stamp records it in that spelling, as ``_give_up_unexplained``
+    copies a part's walltime."""
+    parent = jobs.get(submission.job_id)
+    parent.result = {**parent.result, "heldGaveUp": {
+        **parent.result["heldGaveUp"], "walltime": walltime}}
+    jobs.store.update(parent)
+    for part in _parts(jobs, submission):
+        for record in {part.id: part,
+                       jobs._shard_chain_tail(part).id:
+                           jobs._shard_chain_tail(part)}.values():
+            rr = {**record.requested_resources, "walltime": walltime}
+            rr.pop("walltimeOverride", None)
+            record.requested_resources = rr
+            jobs.store.update(record)
+
+
+@pytest.mark.parametrize("days,hours", [("1-00:00:00", "24:00:00"),
+                                        ("2-12:30:00", "60:30:00")])
+def test_a_retry_of_a_walltime_in_days_runs(tmp_path, monkeypatch,
+                                            fake_slurm, days, hours):
+    """Review round 10 (the reviewer's probe): the stamp is the parts' own
+    spelling, which a site default may give in days. The retry asks for it
+    as sbatch's override takes it, never answers that the scheduler refuses
+    SteerLab's own validation, and the run continues."""
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch,
+                                    f"heldretrydays{hours[:2]}")
+    _walltime_in_days(jobs, submission, days)
+    _slot_frees(monkeypatch)
+    calls = len(fake_slurm.calls("sbatch"))
+    answer = jobs.resubmit(submission.job_id, retry_refused_walltime=True)
+    assert answer["ok"] is True
+    assert answer["retriedRefusedWalltime"] == days
+    assert f"retried at walltime {days}, 2 of its parts now continue" in \
+        answer["message"]
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 1 and f"--time={hours}" in sent[0]
+    _tick(jobs)
+    tails = [jobs._shard_chain_tail(p) for p in _parts(jobs, submission)]
+    assert [tail.status for tail in tails] == ["submitted", "submitted"]
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 2 and all(f"--time={hours}" in call for call in sent)
+    # Without the acknowledgement, the same walltime is still refused.
+    jobs2, submission2 = _gave_up_run(tmp_path / "again", monkeypatch,
+                                      f"heldrefusedays{hours[:2]}")
+    _walltime_in_days(jobs2, submission2, days)
+    with pytest.raises(ResubmitRefused, match=f"at walltime {days}"):
+        jobs2.resubmit(submission2.job_id)
+
+
+def test_a_retry_in_days_resubmits_a_checkpointed_part_at_it(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 10: a part that checkpointed is resubmitted by the retry
+    through the resubmission's own validation, which reads no days. The
+    walltime reaches it as sbatch's override takes it, so the part resumes
+    instead of being refused as an invalid walltime."""
+    _limited(monkeypatch, accepted=1)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldckptdays",
+                               parallel=2)
+    running, waiting = _parts(jobs, submission)
+    _override_held_walltime(jobs, submission, "48:00:00")
+    _slot_frees(monkeypatch)
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=48:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", POLICY)
+    checkpointed = jobs.get(running.id)
+    checkpointed.status = "checkpointed"
+    jobs.store.update(checkpointed)
+    fake_slurm.set_state(running.executor_job_id, "FAILED", "85:0")
+    _due(jobs, waiting)
+    _tick(jobs)
+    _give_up(jobs, waiting.id)
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "failed"
+    # The same 48 hours, in a site's spelling of it.
+    parent.result = {**parent.result, "heldGaveUp": {
+        **parent.result["heldGaveUp"], "walltime": "2-00:00:00"}}
+    jobs.store.update(parent)
+    monkeypatch.delenv("FAKE_SBATCH_FAIL_IF_ARG")
+    _slot_frees(monkeypatch)
+    calls = len(fake_slurm.calls("sbatch"))
+    answer = jobs.resubmit(submission.job_id, retry_refused_walltime=True)
+    assert "notResumed" not in answer, answer
+    assert answer["retriedRefusedWalltime"] == "2-00:00:00"
+    assert len(answer["resumedShards"]) == 2
+    _tick(jobs)
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 2 and all("--time=48:00:00" in call for call in sent)
+
+
+def test_a_walltime_steerlab_cannot_read_is_never_the_schedulers(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 10: a walltime SteerLab cannot read is refused in its
+    own words, with the repair, and nothing is asked of the scheduler."""
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch, "heldretryunread")
+    _walltime_in_days(jobs, submission, "UNLIMITED")
+    _slot_frees(monkeypatch)
+    calls = len(fake_slurm.calls("sbatch"))
+    with pytest.raises(ResubmitRefused) as refused:
+        jobs.resubmit(submission.job_id, retry_refused_walltime=True)
+    text = str(refused.value)
+    assert "SteerLab could not read the walltime its parts were refused at" \
+        in text
+    assert "scheduler refuses" not in text
+    assert refused.value.code == "unreadableWalltime"
+    assert refused.value.repair.startswith(
+        "resume it with an explicit walltime within the cluster's limit")
+    assert f"steerlab-cli remote resubmit {submission.job_id} --walltime " \
+        "HH:MM:SS" in refused.value.repair
+    assert fake_slurm.calls("sbatch")[calls:] == []
+    assert jobs.get(submission.job_id).status == "failed"
+
+
+@pytest.mark.parametrize("override,submitted", [("1-00:00:00", "24:00:00"),
+                                                ("UNLIMITED", None)])
+def test_the_held_pass_reads_a_stored_override_itself(
+        tmp_path, monkeypatch, fake_slurm, override, submitted):
+    """Review round 10, at the held pass too: a stored override in days is
+    asked for as sbatch takes it; one SteerLab cannot read fails the run in
+    SteerLab's words, with nothing sent, never "the scheduler refused it"."""
+    _limited(monkeypatch, accepted=1)
+    jobs, submission = _submit(tmp_path, monkeypatch,
+                               name=f"heldoverride{bool(submitted)}".lower(),
+                               parallel=2)
+    _override_held_walltime(jobs, submission, override)
+    _slot_frees(monkeypatch)
+    calls = len(fake_slurm.calls("sbatch"))
+    _tick(jobs)
+    waiting = _parts(jobs, submission)[1]
+    sent = fake_slurm.calls("sbatch")[calls:]
+    if submitted:
+        assert jobs.get(waiting.id).status == "submitted"
+        assert len(sent) == 1 and f"--time={submitted}" in sent[0]
+    else:
+        assert sent == []
+        parent = jobs.get(submission.job_id)
+        assert parent.status == "failed"
+        assert "SteerLab could not read its walltime ('UNLIMITED')" in \
+            parent.error
+        assert "the scheduler refused it" not in parent.error
+        assert "--walltime HH:MM:SS" in parent.error
+
+
 def test_a_retry_refused_for_a_limit_that_never_frees_is_refused(
         tmp_path, monkeypatch, fake_slurm):
     jobs, submission = _gave_up_run(tmp_path, monkeypatch, "heldretrymax")
