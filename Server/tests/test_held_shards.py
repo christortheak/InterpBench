@@ -125,6 +125,66 @@ def test_a_permanent_refusal_names_its_repair():
         "correct what the scheduler said, then submit the study again")
 
 
+#: Review round 4: the classification table. A count of jobs (submitted, or
+#: running at once) frees as jobs leave, so it waits; a size, time, or
+#: resource limit never frees, so it is permanent.
+_GENERAL = ("\nsbatch: error: Batch job submission failed: Job violates "
+            "accounting/QOS policy (job submit limit, user's size and/or time "
+            "limits)")
+
+
+@pytest.mark.parametrize("code", [
+    "QOSMaxSubmitJobPerUserLimit", "QOSMaxSubmitJobPerAccountLimit",
+    "QOSGrpSubmitJobsLimit", "AssocMaxSubmitJobLimit",
+    "AssocGrpSubmitJobsLimit",
+    "QOSMaxJobsPerUserLimit", "QOSMaxJobsPerAccountLimit",
+    "QOSMaxJobsPerAccount", "QOSGrpJobsLimit", "QOSJobLimit",
+    "AssocMaxJobsLimit", "AssocGrpJobsLimit", "AssocJobLimit",
+])
+def test_every_job_count_code_waits(code):
+    message = f"sbatch: error: {code}" + _GENERAL
+    assert executors.submit_refusal_kind(message) == "jobLimit", code
+    assert executors.other_limit_codes(message) == [], code
+    assert executors.is_job_limit_refusal(message,
+                                          same_request_accepted=False), code
+
+
+@pytest.mark.parametrize("code", [
+    "QOSMaxWallDurationPerJobLimit", "AssocMaxWallDurationPerJobLimit",
+    "PartitionTimeLimit", "QOSMaxGRESPerJob", "AssocGrpGRES",
+    "QOSMaxCpuPerJobLimit", "AssocGrpCPURunMinutesLimit", "QOSGrpCpuLimit",
+    "QOSMaxMemoryPerJob", "AssocGrpMemLimit", "QOSMaxNodePerJobLimit",
+    "PartitionNodeLimit", "QOSMaxTRESPerJob",
+])
+def test_every_size_time_or_resource_code_is_permanent(code):
+    message = f"sbatch: error: {code}" + _GENERAL
+    assert executors.submit_refusal_kind(message) == "otherLimit", code
+    assert not executors.is_job_limit_refusal(message,
+                                              same_request_accepted=True), code
+
+
+@pytest.mark.parametrize("code, repair", [
+    ("AssocGrpCPURunMinutesLimit", "resources"),
+    ("QOSMaxCpuPerJobLimit", "resources"),
+    ("QOSGrpCPULimit", "resources"),
+    ("QOSMaxMemoryPerJob", "resources"),
+    ("PartitionNodeLimit", "resources"),
+    ("QOSMaxTRESPerJob", "resources"),
+    ("QOSMaxWallDurationPerJobLimit", "walltime"),
+    ("PartitionTimeLimit", "walltime"),
+])
+def test_the_repair_reads_the_code_whatever_its_case(code, repair):
+    """``CPU`` and ``Cpu`` both name a CPU limit (review round 4)."""
+    expected = {
+        "resources": ("request resources within the cluster's limit for one "
+                      "job, then submit the study again"),
+        "walltime": ("request a walltime within the cluster's limit for one "
+                     "job (--walltime), then submit the study again"),
+    }[repair]
+    assert executors.refusal_repair(f"sbatch: error: {code}" + _GENERAL) == \
+        expected
+
+
 def test_a_refused_sbatch_raises_the_typed_error(tmp_path, monkeypatch,
                                                  fake_slurm):
     monkeypatch.setenv("FAKE_SBATCH_FAIL", "sbatch: error: QOSMaxSubmitJobPerUserLimit")
@@ -337,6 +397,21 @@ def test_a_held_part_refused_later_for_another_reason_cancels_and_fails(
     for part in parts[2:]:
         assert part.executor_job_id is None
         assert "heldWhenCancelled" in part.result
+
+
+def test_a_running_job_count_refusal_keeps_parts_held(tmp_path, monkeypatch,
+                                                      fake_slurm):
+    """Review round 4: a count of jobs running at once frees as they end;
+    the run waits, never fails."""
+    _limited(monkeypatch, accepted=2)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldrunning")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL",
+                       "sbatch: error: QOSMaxJobsPerUserLimit" + _GENERAL)
+    _tick(jobs)
+    assert jobs.get(submission.job_id).status == "submitted"
+    assert fake_slurm.calls("scancel") == []
+    assert [jobs.is_held(p) for p in _parts(jobs, submission)] == [
+        False, False, True, True]
 
 
 def test_a_scheduler_that_cannot_be_reached_keeps_parts_held(

@@ -136,20 +136,42 @@ class SchedulerSubmitError(RuntimeError):
         return self.returncode != SCHEDULER_TIMEOUT_EXIT
 
 
-#: sbatch's words when the cluster refuses a job because this user, or this
-#: account, already has as many jobs submitted (waiting or running) as the
-#: scheduler allows (issue #12). The limit frees as those jobs leave the
-#: queue, so a part of a split run refused for one of these is HELD by
-#: SteerLab and submitted when a slot frees, never cancelled. The names are
-#: Slurm's own reason codes; matched case-insensitively anywhere in the
-#: message. The one list both the fan-out and the controller read.
+#: sbatch's words when the cluster refuses a job because this user, this
+#: account, or this QOS already has as many jobs as the scheduler allows:
+#: submitted (waiting or running), or running at once (issue #12; the
+#: running-count codes since review round 4). A count frees as those jobs
+#: leave the queue, so a part of a split run refused for one of these is
+#: HELD by SteerLab and submitted when a slot frees, never cancelled. The
+#: names are Slurm's own reason codes, matched case-insensitively anywhere in
+#: the message and with or without a trailing ``Limit``. The one list both
+#: the fan-out and the controller read; every other limit code (a size, a
+#: time, a resource) never frees.
 SUBMIT_LIMIT_REASONS = (
+    # Jobs submitted, waiting or running.
     "QOSMaxSubmitJobPerUserLimit",
     "QOSMaxSubmitJobPerAccountLimit",
     "QOSGrpSubmitJobsLimit",
     "AssocMaxSubmitJobLimit",
     "AssocGrpSubmitJobsLimit",
+    # Jobs running at once.
+    "QOSMaxJobsPerUserLimit",
+    "QOSMaxJobsPerAccountLimit",
+    "QOSGrpJobsLimit",
+    "QOSJobLimit",
+    "AssocMaxJobsLimit",
+    "AssocGrpJobsLimit",
+    "AssocJobLimit",
 )
+
+
+def _code_key(code: str) -> str:
+    """A reason code compared with or without its trailing ``Limit``
+    (Slurm spells some codes both ways across versions)."""
+    key = code.lower()
+    return key[:-len("limit")] if key.endswith("limit") else key
+
+
+_JOB_COUNT_KEYS = frozenset(_code_key(reason) for reason in SUBMIT_LIMIT_REASONS)
 
 #: sbatch's general sentence for an accounting or QOS refusal. On its own it
 #: does not say WHICH limit was met: a job count, which frees as jobs leave
@@ -199,9 +221,15 @@ def sacct_time(epoch: float) -> str:
 def other_limit_codes(message: str | None) -> list[str]:
     """The Slurm limit reason codes in ``message`` that are NOT job-count
     limits: limits on the job itself, which waiting never frees."""
-    submit = {reason.lower() for reason in SUBMIT_LIMIT_REASONS}
     return [code for code in _SLURM_LIMIT_CODE.findall(message or "")
-            if code.lower() not in submit]
+            if _code_key(code) not in _JOB_COUNT_KEYS]
+
+
+def _names_job_count(message: str | None) -> bool:
+    text = (message or "").lower()
+    return (any(reason.lower() in text for reason in SUBMIT_LIMIT_REASONS)
+            or any(_code_key(code) in _JOB_COUNT_KEYS
+                   for code in _SLURM_LIMIT_CODE.findall(message or "")))
 
 
 def submit_refusal_kind(message: str | None) -> str | None:
@@ -220,7 +248,7 @@ def submit_refusal_kind(message: str | None) -> str | None:
     text = (message or "").lower()
     if other_limit_codes(message):
         return "otherLimit"
-    if any(reason.lower() in text for reason in SUBMIT_LIMIT_REASONS):
+    if _names_job_count(message):
         return "jobLimit"
     if SUBMIT_POLICY_REFUSAL.lower() in text:
         return "policy"
@@ -236,11 +264,13 @@ def refusal_repair(message: str | None, *,
     """The repair for a refusal waiting would not fix, in a person's words,
     from the limit the scheduler named; ``then`` is what the person does
     after (a refused Resume is resumed again)."""
-    codes = " ".join(other_limit_codes(message))
-    if "Wall" in codes or "Time" in codes:
+    # Case-insensitive: Slurm writes ``Cpu`` in some codes and ``CPU`` in
+    # others (``AssocGrpCPURunMinutesLimit``; review round 4).
+    codes = " ".join(other_limit_codes(message)).lower()
+    if "wall" in codes or "time" in codes:
         return ("request a walltime within the cluster's limit for one job "
                 f"(--walltime), then {then}")
-    if any(word in codes for word in ("GRES", "TRES", "Cpu", "Mem", "Node")):
+    if any(word in codes for word in ("gres", "tres", "cpu", "mem", "node")):
         return ("request resources within the cluster's limit for one job, "
                 f"then {then}")
     return f"correct what the scheduler said, then {then}"
