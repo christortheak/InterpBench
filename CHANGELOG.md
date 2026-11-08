@@ -55,10 +55,11 @@ migration that rewrites frozen bytes.
   the job it already made, however often the study is repackaged, and
   reports the job as it is now. A repeat from the other client is not
   recognised. Prompts are counted once per submission, and faster, with
-  identical counts. The walltime estimate for answer-token readouts now
-  scales with prompt length, pooled across the whole history. When the
-  items are far longer or shorter than anything the history read, it warns
-  in plain words rather than refusing on the estimate alone.
+  identical counts. The walltime estimate prices an answer-token study from
+  past jobs whose items were of similar length, taking the slowest of them.
+  When none is near, it says which way the estimate errs. It still refuses,
+  before the queue, a walltime shorter than an estimate that can only be
+  too low, and only warns about one that can only be too high.
 - **A split run that meets the cluster's job limit waits instead of
   cancelling itself** (public issue #12). When the scheduler refuses a part
   of a `--parallel` run because your job limit is reached (submitted jobs,
