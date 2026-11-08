@@ -3788,6 +3788,12 @@ def build_router(state: ServiceState) -> APIRouter:
                 job_id, walltime=walltime,
                 retry_refused_walltime=retry_refused)
         except ResubmitRefused as exc:
+            if exc.repair:
+                # Review round 9: the way on, typed, beside the plain
+                # sentence. ``detail`` stays the string every client reads.
+                return JSONResponse(status_code=409, content={
+                    "detail": str(exc), "code": exc.code or "resubmitRefused",
+                    "repairAction": exc.repair})
             raise HTTPException(status_code=409, detail=str(exc))
         except Exception as exc:  # noqa: BLE001 - sbatch and kin; run stays parked
             raise HTTPException(

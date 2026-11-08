@@ -100,15 +100,17 @@ def same_walltime(a: str | None, b: str | None) -> bool:
     return left is not None and left == right
 
 
-def refused_walltime_choices(job_id: str) -> str:
+def refused_walltime_choices(job_id: str, walltime: str | None = None) -> str:
     """The two ways on from a run that gave up after a day of refusals that
-    gave no reason, on both clients (review round 8)."""
+    gave no reason, on both clients (review round 8). The retry asks for
+    ``walltime``, the one refused, again (review round 9)."""
+    same = f"walltime {walltime}" if walltime else "the same walltime"
     return (
         "Choose one: resume it with a walltime within the cluster's limit "
         f"for one job (steerlab-cli remote resubmit {job_id} --walltime "
         f"HH:MM:SS, or steerlab runner resubmit {job_id} --walltime "
         "HH:MM:SS --runner <url>), or, if the cause was the job limit and "
-        "slots have freed, retry the same walltime (steerlab-cli remote "
+        f"slots have freed, retry {same} (steerlab-cli remote "
         f"resubmit {job_id} --retry-refused-walltime, or steerlab runner "
         f"resubmit {job_id} --retry-refused-walltime --runner <url>)")
 
@@ -213,9 +215,15 @@ class ResubmitRefused(Exception):
     the scheduler has not yet confirmed as ended. A sharded parent uses it
     to tell "try again in a moment" from "submit the study again"."""
 
-    def __init__(self, message: str, *, wait: bool = False):
+    def __init__(self, message: str, *, wait: bool = False,
+                 code: str | None = None, repair: str | None = None):
         super().__init__(message)
         self.wait = wait
+        # Review round 9: a refusal whose way on is known names it, typed,
+        # so a client's repairAction is the server's and not a guess (the
+        # route sends both beside the plain ``detail``).
+        self.code = code
+        self.repair = repair
 
 
 # --- resume after a cancel (2026-10-04) ------------------------------------------
@@ -279,7 +287,8 @@ def cancel_resume_hint(job: "Job") -> dict | None:
                     + ", without a reason, for a day. The cause may have been "
                     "the cluster's job limit, which frees as jobs end, or a "
                     "limit on that walltime, which does not. "
-                    + refused_walltime_choices(job.id)
+                    + refused_walltime_choices(
+                        job.id, str(refused) if refused else None)
                     + ". The responses it completed are kept.")}
     if not cancel_on_record:
         return None
@@ -2518,9 +2527,10 @@ class JobManager:
             "Resume would ask for that walltime again. The cause may have "
             "been the cluster's job limit, which frees as jobs end, or a "
             "limit on that walltime, which does not. "
-            + refused_walltime_choices(parent.id)
+            + refused_walltime_choices(parent.id, refused)
             + ". Nothing was submitted, and the responses it completed are "
-            "kept")
+            "kept", code="refusedWalltime",
+            repair=refused_walltime_choices(parent.id, refused))
 
     def _cancelled_while_held(self, tail: "Job") -> bool:
         """Whether ``tail`` is a part cancelled while SteerLab held it, never
@@ -2576,18 +2586,18 @@ class JobManager:
                f"only: {message[:300]})")
         # Both ways on (review round 8): the cause may have been the job
         # limit, and then the same walltime runs once slots free.
+        rr = part.requested_resources or {}
+        # The walltime the scheduler kept refusing (review round 7): a Resume
+        # that would ask for it again is refused unless it says so, and one
+        # that says so asks for exactly it (review round 9).
+        refused = str(rr.get("walltimeOverride") or rr.get("walltime") or "")
         outcome = self._fail_fanout_from_held_part(
             parent, part, why,
-            repair=(refused_walltime_choices(parent.id)
+            repair=(refused_walltime_choices(parent.id, refused or None)
                     + "; the responses it completed are kept"))
-        rr = part.requested_resources or {}
         parent.result = {**(parent.result or {}), "heldGaveUp": {
             "at": now, "part": part.id, "refusals": count, "since": first,
-            "schedulerMessage": message[:300],
-            # The walltime the scheduler kept refusing (review round 7): a
-            # Resume that would ask for it again is refused at once.
-            "walltime": str(rr.get("walltimeOverride") or rr.get("walltime")
-                            or "")}}
+            "schedulerMessage": message[:300], "walltime": refused}}
         self.store.update(parent)
         return outcome
 
@@ -4940,6 +4950,23 @@ class JobManager:
                 "then try again", wait=True)
         self._refuse_the_refused_walltime(
             parent, walltime, acknowledged=retry_refused_walltime)
+        # Review round 9: a Resume that acknowledges the refused walltime
+        # retries THAT walltime. It is the one the person was shown (the
+        # app's "Retry at <walltime>", the status line), and it may be an
+        # earlier Resume's --walltime, which a Resume without one would
+        # otherwise drop for the script's own. As an explicit --walltime, it
+        # hands the first part to the scheduler in this request, so the
+        # answer says what the scheduler did with it.
+        was_given_up = self._held_gave_up(parent)
+        retried_walltime: str | None = None
+        if retry_refused_walltime and was_given_up:
+            refused = str(((parent.result or {}).get("heldGaveUp") or {})
+                          .get("walltime") or "")
+            if refused and not walltime:
+                walltime = refused
+            if refused and same_walltime(walltime, refused):
+                retried_walltime = walltime
+        stays = "stopped" if was_given_up else "cancelled"
         children = [(str(cid), self.get(str(cid)))
                     for cid in rr.get("shardChildren") or []]
         missing = [cid for cid, child in children if child is None]
@@ -5071,7 +5098,7 @@ class JobManager:
                             f"run {parent.id} was not resumed: "
                             f"{self._part_label(held_tails[0])} cannot be "
                             f"submitted, because {first['why']}. Nothing is "
-                            "running and the run stays cancelled; submit the "
+                            f"running and the run stays {stays}; submit the "
                             "study again")
                     limit_refusals.append(first["why"])
                     not_resumed.extend(
@@ -5086,8 +5113,8 @@ class JobManager:
                     f"run {parent.id} was not resumed: the scheduler refuses "
                     f"what it asks for ({limit_refusals[0][:300]}). "
                     f"{repair[:1].upper()}{repair[1:]}. Nothing is running, "
-                    "the run stays cancelled, and the responses it completed "
-                    "are kept")
+                    f"the run stays {stays}, and the responses it completed "
+                    "are kept", code="schedulerRefused", repair=repair)
             if not resumed:
                 raise ResubmitRefused(
                     f"no part of run {parent.id} could be resumed — "
@@ -5129,6 +5156,11 @@ class JobManager:
         # place and continues from its completed response records.
         from_records = any(entry.get("resumedFromRecords")
                            for entry in resumed)
+        # Review round 9: a retry of the refused walltime says which it asked
+        # for, typed and in words, whatever the scheduler did with it.
+        retried = ({"retriedRefusedWalltime": retried_walltime}
+                   if retried_walltime else {})
+        at = f" at walltime {retried_walltime}" if retried_walltime else ""
         if unexplained is not None:
             # Review round 6: nothing of this Resume is running. The answer
             # says so, and why, with a typed field a client can act on.
@@ -5138,10 +5170,10 @@ class JobManager:
             return {"ok": True, "resubmitOf": parent.id,
                     "resumedShards": resumed, "manualResubmit": True,
                     "resumedAfterCancel": True, "heldUnexplained": True,
-                    "schedulerMessage": unexplained[:300],
+                    "schedulerMessage": unexplained[:300], **retried,
                     **({"notResumed": not_resumed} if not_resumed else {}),
                     "message": (
-                        f"Run {parent.id} was resumed, but its "
+                        f"Run {parent.id} was resumed{at}, but its "
                         f"{len(resumed)} part{'' if len(resumed) == 1 else 's'} "
                         f"{'is' if len(resumed) == 1 else 'are'} held, not "
                         "running: the scheduler refused the first without "
@@ -5152,7 +5184,8 @@ class JobManager:
                         "SteerLab asks again, waiting longer each time, and "
                         "stops the run after "
                         f"{round(HELD_UNEXPLAINED_BOUND_SECONDS / 3600)} hours "
-                        "of such refusals. Check the run's status; if its "
+                        "of such refusals, unless another part of it is with "
+                        "the scheduler. Check the run's status; if its "
                         "parts stay held, check the walltime against the "
                         "cluster's limit for one job. Responses already "
                         "completed are kept.")}
@@ -5176,10 +5209,10 @@ class JobManager:
                     "resumedShards": resumed, "manualResubmit": True,
                     "resumedAfterCancel": True, "heldReason": held_reason,
                     **({"schedulerMessage": held_why[:300]} if held_why
-                       else {}),
+                       else {}), **retried,
                     **({"notResumed": not_resumed} if not_resumed else {}),
                     "message": (
-                        f"Run {parent.id} was resumed; its {len(resumed)} "
+                        f"Run {parent.id} was resumed{at}; its {len(resumed)} "
                         f"part{'' if len(resumed) == 1 else 's'} "
                         f"{'is' if len(resumed) == 1 else 'are'} held {until}. "
                         "Responses already completed are kept.")}
@@ -5190,11 +5223,13 @@ class JobManager:
                    if gave_up else "was cancelled")
         return {"ok": True, "resubmitOf": parent.id,
                 "resumedShards": resumed, "manualResubmit": True,
-                "resumedAfterCancel": True,
+                "resumedAfterCancel": True, **retried,
                 **({"resumedFromRecords": True} if from_records else {}),
                 **({"notResumed": not_resumed} if not_resumed else {}),
                 "message": (
-                    f"Run {parent.id} {stopped}; {len(resumed)} of its "
+                    f"Run {parent.id} {stopped}; "
+                    + (f"retried{at}, " if retried_walltime else "")
+                    + f"{len(resumed)} of its "
                     f"part{'' if len(resumed) == 1 else 's'} now "
                     f"continue{'s' if len(resumed) == 1 else ''}"
                     + (f" ({waiting} held by SteerLab until the controller "

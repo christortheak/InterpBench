@@ -921,14 +921,116 @@ def test_a_gave_up_run_retries_the_same_walltime_when_asked_to(
     _slot_frees(monkeypatch)
     with pytest.raises(ResubmitRefused):
         jobs.resubmit(submission.job_id)
+    calls = len(fake_slurm.calls("sbatch"))
     answer = jobs.resubmit(submission.job_id, retry_refused_walltime=True)
     assert answer["ok"] is True
     assert jobs.get(submission.job_id).status == "running"
+    # Review round 9: the walltime that was refused is asked for, and the
+    # first part is handed to the scheduler in the request, as for an
+    # explicit --walltime, so the answer says what the scheduler did.
+    assert answer["retriedRefusedWalltime"] == "00:30:00"
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 1 and "--time=00:30:00" in sent[0]
+    assert [entry["held"] for entry in answer["resumedShards"]] == [False, True]
+    assert ("stopped after a day of refusals that gave no reason; retried "
+            "at walltime 00:30:00, 2 of its parts now continue (1 held")  \
+        in answer["message"]
     _tick(jobs)
     tails = [jobs._shard_chain_tail(p) for p in _parts(jobs, submission)]
     assert [tail.status for tail in tails] == ["submitted", "submitted"]
-    # At the same walltime: no override rides sbatch's command line.
-    assert all("--time=" not in call for call in fake_slurm.calls("sbatch")[-2:])
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 2 and all("--time=00:30:00" in call for call in sent)
+
+
+def _give_up(jobs, part_id):
+    """A day of ``part_id``'s refusals without a reason, then its next
+    attempt: its run gives up (no other part of it is live)."""
+    part = jobs.get(part_id)
+    held = dict(part.result["held"])
+    held["unexplainedSince"] = held["lastAttemptAt"] - 24 * 3600 - 1
+    held["nextAttemptAt"] = 0.0
+    part.result = {**part.result, "held": held}
+    jobs.store.update(part)
+    jobs._held_deferred_until.clear()
+    _tick(jobs)
+
+
+def test_a_retry_asks_for_the_walltime_refused_not_the_scripts(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 9: the run gave up at W1, was resumed at W2, and gave up
+    at W2. "Retry at W2" asks for W2. Before, a retry without --walltime
+    dropped the earlier Resume's override, and the parts went back at W1."""
+    from steerlab_server.api.jobs import cancel_resume_hint
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch, "heldretryw2")
+    # The scheduler refuses W2 without a reason too.
+    answer = jobs.resubmit(submission.job_id, walltime="02:00:00")
+    assert answer["heldUnexplained"] is True
+    assert "retriedRefusedWalltime" not in answer
+    first = answer["resumedShards"][0]["jobId"]
+    assert jobs.get(first).requested_resources["walltimeOverride"] == "02:00:00"
+    _give_up(jobs, first)
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "failed"
+    assert parent.result["heldGaveUp"]["walltime"] == "02:00:00"
+    assert cancel_resume_hint(parent)["refusedWalltime"] == "02:00:00"
+    assert "retry walltime 02:00:00 (" in parent.error
+
+    _slot_frees(monkeypatch)
+    calls = len(fake_slurm.calls("sbatch"))
+    answer = jobs.resubmit(submission.job_id, retry_refused_walltime=True)
+    assert answer["retriedRefusedWalltime"] == "02:00:00"
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 1 and "--time=02:00:00" in sent[0]
+    waiting = [jobs.get(entry["jobId"]) for entry in answer["resumedShards"][1:]]
+    assert waiting and all(
+        part.requested_resources["walltimeOverride"] == "02:00:00"
+        for part in waiting)
+    _tick(jobs)
+    sent = fake_slurm.calls("sbatch")[calls:]
+    assert len(sent) == 2 and all("--time=02:00:00" in call for call in sent)
+    assert not any("--time=00:30:00" in call for call in sent)
+
+
+@pytest.mark.parametrize("message,field,words", [
+    (LIMIT, "heldReason",
+     "was resumed at walltime 00:30:00; its 2 parts are held until the "
+     "cluster's job limit frees a slot"),
+    (POLICY, "heldUnexplained",
+     "was resumed at walltime 00:30:00, but its 2 parts are held, not "
+     "running"),
+])
+def test_a_retry_refused_again_says_what_the_scheduler_did(
+        tmp_path, monkeypatch, fake_slurm, message, field, words):
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch,
+                                    f"heldretryagain{field.lower()}")
+    _limited(monkeypatch, accepted=0, message=message)
+    answer = jobs.resubmit(submission.job_id, retry_refused_walltime=True)
+    assert answer["ok"] is True and field in answer
+    assert answer["retriedRefusedWalltime"] == "00:30:00"
+    assert words in answer["message"]
+    assert "now continue" not in answer["message"]
+    if field == "heldUnexplained":
+        # Review round 9: never "stops the run" without the exception.
+        assert ("stops the run after 24 hours of such refusals, unless "
+                "another part of it is with the scheduler") in answer["message"]
+
+
+def test_a_retry_refused_for_a_limit_that_never_frees_is_refused(
+        tmp_path, monkeypatch, fake_slurm):
+    jobs, submission = _gave_up_run(tmp_path, monkeypatch, "heldretrymax")
+    _limited(monkeypatch, accepted=0, message=MAX_WALL)
+    with pytest.raises(ResubmitRefused) as refused:
+        jobs.resubmit(submission.job_id, retry_refused_walltime=True)
+    assert "QOSMaxWallDurationPerJobLimit" in str(refused.value)
+    # A run that gave up stays stopped, not "cancelled", and the refusal
+    # carries its repair, typed, for the clients' repairAction.
+    assert "the run stays stopped" in str(refused.value)
+    assert "stays cancelled" not in str(refused.value)
+    assert refused.value.code == "schedulerRefused"
+    assert refused.value.repair == (
+        "request a walltime within the cluster's limit for one job "
+        "(--walltime), then resume the run again")
+    assert jobs.get(submission.job_id).status == "failed"
 
 
 def test_the_route_reads_the_acknowledgement(tmp_path, monkeypatch,
@@ -947,7 +1049,17 @@ def test_the_route_reads_the_acknowledgement(tmp_path, monkeypatch,
     client = TestClient(app)
     refused = client.post(f"/api/jobs/{submission.job_id}/resubmit", json={})
     assert refused.status_code == 409
-    assert "--retry-refused-walltime" in refused.json()["detail"]
+    body = refused.json()
+    # ``detail`` stays the plain string every client reads; the way on rides
+    # beside it, typed (review round 9).
+    assert isinstance(body["detail"], str)
+    assert "--retry-refused-walltime" in body["detail"]
+    assert body["code"] == "refusedWalltime"
+    assert body["repairAction"].startswith("Choose one: resume it with a "
+                                           "walltime within the cluster's")
+    assert (f"steerlab-cli remote resubmit {submission.job_id} "
+            "--retry-refused-walltime") in body["repairAction"]
+    assert "retry walltime 00:30:00 (" in body["repairAction"]
     accepted = client.post(f"/api/jobs/{submission.job_id}/resubmit",
                            json={"retryRefusedWalltime": True})
     assert accepted.status_code == 200, accepted.text
