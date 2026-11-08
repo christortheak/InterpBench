@@ -170,7 +170,7 @@ performed by the running runner service, not by the submitting process. A
 run that stopped after a day of refusals without a reason resumes with
 `steerlab runner resubmit <job-id> --walltime HH:MM:SS --runner <url>` within
 the cluster's limit for one job, or, if the cause was the job limit, at the
-same walltime with `--retry-refused-walltime`.
+walltime that was refused with `--retry-refused-walltime`.
 
 ### Resuming a checkpointed job
 
