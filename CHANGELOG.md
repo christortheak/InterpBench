@@ -44,8 +44,8 @@ migration that rewrites frozen bytes.
     it lists one seed.
   - **The token check** now measures a scripted transcript whole, under
     every arm, not by its final question.
-- **A submission never lands twice, and a long one no longer looks like a
-  failure** (public issue #11). Both clients wait up to an hour for a
+- **A repeated submission is recognised, and a long one no longer looks
+  like a failure** (public issue #11). Both clients wait up to an hour for a
   submission, which the server answers only after measuring every task
   prompt. A submission that was sent but not answered is reported as
   `submitOutcomeUnknown` (pending, exit 12), with advice to list the jobs
@@ -61,8 +61,8 @@ migration that rewrites frozen bytes.
   in plain words rather than refusing on the estimate alone.
 - **A split run that meets the cluster's job limit waits instead of
   cancelling itself** (public issue #12). When the scheduler refuses a part
-  of a `--parallel` run because your job limit is reached, the parts already
-  accepted keep their place. SteerLab holds the rest and submits them, in
+  of a `--parallel` run because your job limit is reached (submitted jobs,
+  or jobs running at once), the parts already accepted keep their place. SteerLab holds the rest and submits them, in
   order, as slots free. `remote status` and `runner status` show each held
   part. Held parts survive a controller restart, cancelling the run
   withdraws them, and Resume on a cancelled run holds them again. A part
@@ -71,7 +71,8 @@ migration that rewrites frozen bytes.
   a limit that never frees, such as a walltime above the cluster's maximum
   for one job, fails its run with the scheduler's words and a repair. It
   never holds up another run's parts, and a Resume that asks for such a
-  walltime is refused at once. The searches that keep a part from being
+  walltime is refused at once. A maintenance window delays only its own
+  run. The searches that keep a part from being
   submitted twice now reach back to their own record's time, across
   midnight, and an inconclusive search is never read as absence.
 
