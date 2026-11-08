@@ -13,6 +13,9 @@ Environment protocol:
 - FAKE_SBATCH_FAIL_MESSAGE: what a FAKE_SBATCH_FAIL_AFTER failure prints on
   stderr (default ``sbatch: error: fake quota exceeded``); ``\\n`` in it is a
   line break, as sbatch prints its reason and its sentence on two lines.
+- FAKE_SBATCH_FAIL_IF_ARG: a call any of whose arguments contains this text
+  fails with FAKE_SBATCH_FAIL_MESSAGE (a limit on one request, such as a
+  walltime above the cluster's maximum); other calls are unaffected.
 """
 import os
 import sys
@@ -34,8 +37,10 @@ def main() -> int:
     if failure:
         sys.stderr.write(failure + "\n")
         return 1
+    fail_if = os.environ.get("FAKE_SBATCH_FAIL_IF_ARG")
     fail_after = os.environ.get("FAKE_SBATCH_FAIL_AFTER")
-    if fail_after and call_number > int(fail_after):
+    if ((fail_if and any(fail_if in arg for arg in sys.argv[1:]))
+            or (fail_after and call_number > int(fail_after))):
         message = os.environ.get("FAKE_SBATCH_FAIL_MESSAGE",
                                  "sbatch: error: fake quota exceeded")
         sys.stderr.write(message.replace("\\n", "\n") + "\n")

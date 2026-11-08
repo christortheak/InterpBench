@@ -15,11 +15,19 @@ not carry prints empty. Without ``-o`` it prints ``State|ExitCode`` (plus
 scheduler-local). A missing/empty state prints nothing (the caller then falls
 back to squeue). ``FAKE_SACCT_SLEEP`` delays every answer by that many
 seconds; ``FAKE_SACCT_FAIL`` makes the command itself fail.
+
+``--name <name>`` (without ``-j``) prints the id of every entry whose
+``name`` matches and that was in the window, as real sacct does: from ``-S``
+(``YYYY-MM-DDTHH:MM:SS``, scheduler-local) or, without it, from today's
+local midnight, which is real sacct's default start for a name search. An
+entry whose ``end`` is before the start is outside the window; one with no
+``end`` is still in the queue, and inside it.
 """
 import json
 import os
 import sys
 import time
+from datetime import datetime
 
 COLUMNS = {"state": "state", "exitcode": "exit", "end": "end",
            "start": "start", "nodelist": "node", "elapsed": "elapsed",
@@ -49,6 +57,28 @@ def main() -> int:
         print(os.environ["FAKE_SACCT_FAIL"], file=sys.stderr)
         return 1
     state_file = os.environ.get("FAKE_SLURM_STATE_FILE")
+    name = None
+    start = None
+    for index, arg in enumerate(args):
+        # ("-n" is --noheader to sacct, never the name.)
+        if arg == "--name" and index + 1 < len(args) and job_id is None:
+            name = args[index + 1]
+        if arg == "-S" and index + 1 < len(args):
+            start = datetime.strptime(args[index + 1], "%Y-%m-%dT%H:%M:%S")
+    if name is not None and state_file and os.path.exists(state_file):
+        with open(state_file, encoding="utf-8") as fh:
+            table = json.load(fh)
+        if start is None:
+            start = datetime.now().replace(hour=0, minute=0, second=0,
+                                           microsecond=0)
+        for found_id, entry in table.items():
+            if entry.get("name") != name:
+                continue
+            end = entry.get("end")
+            if end and datetime.strptime(end, "%Y-%m-%dT%H:%M:%S") < start:
+                continue
+            print(found_id)
+        return 0
     if not state_file or not os.path.exists(state_file) or job_id is None:
         return 0
     with open(state_file, encoding="utf-8") as fh:

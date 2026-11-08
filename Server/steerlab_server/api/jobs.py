@@ -916,6 +916,10 @@ class JobManager:
         #: When the held pass may next ask the scheduler, after it last said
         #: "not now". In-memory on purpose: a fresh controller asks at once.
         self._held_retry_after = 0.0
+        #: Per-run pause, for a "not now" that is one run's own (its
+        #: walltime meets a maintenance window): that run waits, and the
+        #: runs behind it are still asked about.
+        self._held_deferred_until: dict[str, float] = {}
         #: Per-part note dedup, as ``_resubmit_notes``: a part that waits for
         #: days logs each distinct situation once, not once a minute.
         self._held_notes: dict[str, tuple[str, str]] = {}
@@ -1929,6 +1933,7 @@ class JobManager:
         try:
             changed = 0
             waiting = False
+            now = time.time()
             # "pending" parents are still attaching their parts (the fan-out
             # loop owns them), and a restart sweeps an orphaned one.
             parents = sorted(
@@ -1939,6 +1944,7 @@ class JobManager:
             for parent in parents:
                 parts = self._held_parts_of(parent)
                 if not parts:
+                    self._held_deferred_until.pop(parent.id, None)
                     continue
                 if parent.status in TERMINAL or parent.cancelled:
                     for part in parts:
@@ -1947,7 +1953,7 @@ class JobManager:
                                       f"({parent.status}) first"):
                             changed += 1
                     continue
-                if waiting:
+                if waiting or now < self._held_deferred_until.get(parent.id, 0.0):
                     continue
                 for part in parts:
                     outcome = self._submit_held_part(parent, part)
@@ -1955,10 +1961,19 @@ class JobManager:
                         changed += 1
                         continue
                     if outcome == "failed":
+                        # Refused for good: this run is failed, and the
+                        # next run's held parts are asked about now.
                         changed += 1
+                    elif outcome == "deferred":
+                        # Not now, for a reason of this run's own (its
+                        # walltime meets a maintenance window): later runs
+                        # are not kept waiting behind it.
+                        self._held_deferred_until[parent.id] = (
+                            time.time() + self.HELD_RETRY_SECONDS)
                     else:
-                        # The scheduler's queue is full for this user: a
-                        # later part, or a later run, never jumps the queue.
+                        # The scheduler's queue is full for this user, or
+                        # the scheduler could not answer: a later part, or a
+                        # later run, never jumps the queue.
                         waiting = True
                     break
             if waiting:
@@ -1979,25 +1994,54 @@ class JobManager:
         """``(known, slurm_id)`` for the held part's last attempt that may
         have landed: ``(True, id)`` it did, ``(True, None)`` the scheduler
         says it did not (or there was none), ``(False, None)`` the scheduler
-        cannot say yet."""
+        cannot say yet, and nothing is submitted.
+
+        The accounting search starts at the attempt's own time (review round
+        2): ``sacct --name`` alone searches from today's midnight, so an
+        attempt made yesterday whose job also ended before midnight would
+        read as absent, and the part would run twice."""
+        import inspect
         attempt = held.get("attempt")
         name = attempt.get("submissionName") if isinstance(attempt, dict) else None
         if not name:
             return True, None
         find = getattr(self._slurm(), "find_job_by_name", None)
         if not callable(find):
-            return True, None
+            # No way to search is not proof of absence.
+            return False, None
+        at = attempt.get("at")
+        kwargs = {}
         try:
-            found = find(str(name))
+            accepts_since = "since" in inspect.signature(find).parameters
+        except (TypeError, ValueError):
+            accepts_since = False
+        if isinstance(at, (int, float)) and not isinstance(at, bool):
+            if accepts_since:
+                kwargs["since"] = float(at)
+        elif accepts_since:
+            # An attempt with no recorded time: search from the part's own
+            # hold, which is never later than any attempt to submit it.
+            since = held.get("since")
+            if isinstance(since, (int, float)) and not isinstance(since, bool):
+                kwargs["since"] = float(since)
+            else:
+                return False, None
+        try:
+            found = find(str(name), **kwargs)
         except Exception:  # noqa: BLE001 - "cannot say" is the answer
             return False, None
         return True, (str(found) if found else None)
 
     def _submit_held_part(self, parent: "Job", part: "Job") -> str:
         """Hand one held part to the scheduler: ``"submitted"``,
-        ``"waiting"`` (the scheduler said not now; it stays held), or
-        ``"failed"`` (refused for a reason waiting would not fix: the run is
-        cancelled and failed, as a fan-out refused at submission is).
+        ``"waiting"`` (the job limit is reached, or the scheduler could not
+        answer: it stays held, and so does every run behind it),
+        ``"deferred"`` (not now for this run's own reason, a maintenance
+        window: it stays held, and later runs are still asked about), or
+        ``"failed"`` (refused for a reason waiting would not fix, such as a
+        walltime above the cluster's maximum: the run is cancelled and
+        failed with the scheduler's words and a repair, as a fan-out refused
+        at submission is).
 
         At most once: the attempt's job name is recorded BEFORE sbatch runs,
         and an attempt whose outcome was never learned (sbatch timed out, or
@@ -2059,7 +2103,14 @@ class JobManager:
             answered = getattr(exc, "answered", True)
             held["lastAttemptAt"] = now
             held["lastRefusal"] = message[:300]
-            if answered and kind in ("jobLimit", "policy"):
+            # Only a job-count limit means "wait": its reason code, or the
+            # general accounting/QOS sentence once this very request was
+            # accepted for another part of the run. Any other limit (a
+            # walltime above the cluster's maximum, say) never frees, and is
+            # failed below with its repair (review round 2).
+            if answered and (kind == "jobLimit" or (
+                    kind == "policy"
+                    and self._same_request_accepted(parent, part))):
                 # The scheduler refused it outright: nothing landed.
                 held.pop("attempt", None)
                 part.result = {**(part.result or {}), "held": held}
@@ -2070,6 +2121,18 @@ class JobManager:
                     f"(the scheduler said: {message[:200]}); SteerLab asks "
                     "again when a slot may have freed")
                 return "waiting"
+            if answered and kind == "maintenanceWindow":
+                # SteerLab's own check, before sbatch: nothing landed, and
+                # the window is this run's walltime's business alone.
+                held.pop("attempt", None)
+                part.result = {**(part.result or {}), "held": held}
+                self.store.update(part)
+                self._held_note(
+                    part, "maintenance",
+                    f"still held: {label}'s walltime would cross a "
+                    "maintenance window; SteerLab submits it once the window "
+                    "no longer stands in the way")
+                return "deferred"
             if not answered or kind == "retryLater":
                 # Not now, rather than never. The attempt stays on record:
                 # the next one first asks whether this one landed.
@@ -2084,11 +2147,40 @@ class JobManager:
             held.pop("attempt", None)
             part.result = {**(part.result or {}), "held": held}
             self.store.update(part)
+            from .executors import refusal_repair
             return self._fail_fanout_from_held_part(
-                parent, part, f"the scheduler refused it: {message[:300]}")
+                parent, part, f"the scheduler refused it: {message[:300]}",
+                repair=refusal_repair(message))
         part.requested_resources = {**rr, "submissionToken": token}
         self._mark_held_part_submitted(parent, part, str(slurm_id))
         return "submitted"
+
+    @staticmethod
+    def _request_signature(job: "Job") -> tuple:
+        """What a part asks the scheduler for, as far as a limit can see it:
+        its walltime (a person's override first) and its resources."""
+        rr = job.requested_resources or {}
+        return (str(rr.get("walltimeOverride") or rr.get("walltime") or ""),
+                *(str(rr.get(key) or "") for key in (
+                    "gres", "scratch_gres", "gpus", "memory", "cpus_per_task",
+                    "partition", "account")))
+
+    def _same_request_accepted(self, parent: "Job", part: "Job") -> bool:
+        """Whether the scheduler has accepted, for another part of this run,
+        exactly what ``part`` asks for. Only a job count can then refuse
+        ``part`` with the general accounting/QOS sentence."""
+        wanted = self._request_signature(part)
+        for cid in (parent.requested_resources or {}).get("shardChildren") or []:
+            link = self.get(str(cid))
+            seen: set[str] = set()
+            while link is not None and link.id not in seen:
+                seen.add(link.id)
+                if (link.id != part.id and link.executor_job_id
+                        and self._request_signature(link) == wanted):
+                    return True
+                next_id = (link.result or {}).get("resubmittedAs")
+                link = self.get(str(next_id)) if next_id else None
+        return False
 
     def _mark_held_part_submitted(self, parent: "Job", part: "Job",
                                   slurm_id: str, *,
@@ -2195,11 +2287,15 @@ class JobManager:
                 **({"walltime": walltime} if walltime else {})}
 
     def _fail_fanout_from_held_part(self, parent: "Job", part: "Job",
-                                    why: str) -> str:
+                                    why: str, *,
+                                    repair: str = ("correct what the "
+                                                   "scheduler said, then "
+                                                   "submit the study again")
+                                    ) -> str:
         """A held part that cannot be submitted for a reason waiting would
         not fix: the run cannot complete, so its parts are cancelled and the
-        parent fails with a plain account, exactly as a fan-out refused at
-        submission does."""
+        parent fails with a plain account and ``repair``, exactly as a
+        fan-out refused at submission does."""
         live = []
         for cid in (parent.requested_resources or {}).get("shardChildren") or []:
             child = self.get(str(cid))
@@ -2210,8 +2306,8 @@ class JobManager:
         parent.status = "failed"
         parent.error = (
             f"{self._part_label(part)} ({part.id}) was held for the cluster's "
-            f"job limit and could not be submitted: {why} — {note}. Correct "
-            "what the scheduler said, then submit the study again")
+            f"job limit and could not be submitted: {why} — {note}. "
+            f"{repair[:1].upper()}{repair[1:]}")
         parent.finished_at = time.time()
         parent.log(parent.error)
         self.store.update(parent)

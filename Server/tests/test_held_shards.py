@@ -72,12 +72,57 @@ def test_other_refusals_are_not_job_limits(message):
 @pytest.mark.parametrize("message", [
     "sbatch: error: Batch job submission failed: Unable to contact slurm controller (connect failure)",
     "sbatch: error: Batch job submission failed: Socket timed out on send/recv operation",
-    "requested walltime crosses a configured maintenance window",
 ])
 def test_not_now_refusals_say_retry_later(message):
     assert executors.submit_refusal_kind(message) == "retryLater"
     assert not executors.is_job_limit_refusal(message,
                                               same_request_accepted=True)
+
+
+def test_a_maintenance_window_is_its_own_kind():
+    message = "requested walltime crosses a configured maintenance window"
+    assert executors.submit_refusal_kind(message) == "maintenanceWindow"
+    assert not executors.is_job_limit_refusal(message,
+                                              same_request_accepted=True)
+
+
+#: What sbatch prints for a walltime above the QOS maximum: a reason code
+#: that is not a job count, then the general sentence.
+MAX_WALL = ("sbatch: error: QOSMaxWallDurationPerJobLimit\\n"
+            "sbatch: error: Batch job submission failed: Job violates "
+            "accounting/QOS policy (job submit limit, user's size and/or time "
+            "limits)")
+
+
+@pytest.mark.parametrize("code", [
+    "QOSMaxWallDurationPerJobLimit", "AssocMaxWallDurationPerJobLimit",
+    "PartitionTimeLimit", "QOSMaxGRESPerJob", "AssocGrpGRES",
+    "QOSMaxCpuPerJobLimit",
+])
+def test_any_other_limit_code_never_waits(code):
+    """Review round 2: the general sentence beside a limit code that is not
+    a job count names a limit on the job itself, which never frees."""
+    message = (f"sbatch: error: {code}\nsbatch: error: Batch job submission "
+               "failed: Job violates accounting/QOS policy (job submit "
+               "limit, user's size and/or time limits)")
+    assert executors.submit_refusal_kind(message) == "otherLimit"
+    assert executors.other_limit_codes(message) == [code]
+    assert not executors.is_job_limit_refusal(message,
+                                              same_request_accepted=True)
+    # A submit-limit code beside it does not make it wait either.
+    assert executors.submit_refusal_kind(
+        message + "\nsbatch: error: QOSMaxSubmitJobPerUserLimit") == "otherLimit"
+
+
+def test_a_permanent_refusal_names_its_repair():
+    assert executors.refusal_repair(MAX_WALL.replace("\\n", "\n")) == (
+        "request a walltime within the cluster's limit for one job "
+        "(--walltime), then submit the study again")
+    assert executors.refusal_repair("sbatch: error: QOSMaxGRESPerJob") == (
+        "request resources within the cluster's limit for one job, then "
+        "submit the study again")
+    assert executors.refusal_repair("sbatch: error: Invalid account") == (
+        "correct what the scheduler said, then submit the study again")
 
 
 def test_a_refused_sbatch_raises_the_typed_error(tmp_path, monkeypatch,
@@ -123,6 +168,17 @@ def _submit(tmp_path, monkeypatch, *, name, parallel=4):
         resources={"gres": "A100", "walltime": "00:30:00"},
         parallel_jobs=parallel)
     return jobs, submission
+
+
+def _submit_into(jobs, tmp_path, *, name, parallel=2):
+    """A second split run on the same manager (``_submit`` sets the env)."""
+    from steerlab_server.api.submissions import submit_run_bundle
+    bundle_path = _staged_bundle(tmp_path / name, name=name)
+    return submit_run_bundle(
+        bundle_path, verb="run", jobs=jobs, executor="slurm",
+        target_root=str(tmp_path / "target"),
+        resources={"gres": "A100", "walltime": "00:30:00"},
+        parallel_jobs=parallel)
 
 
 def _parts(jobs, submission):
@@ -300,6 +356,253 @@ def test_a_scheduler_that_cannot_be_reached_keeps_parts_held(
     # The attempt stays on record: the next one asks whether it landed.
     assert held[0].result["held"]["attempt"]["submissionName"].startswith(
         f"slhd-{held[0].id}-")
+
+
+# --- review round 2: refusals that never free ---------------------------------
+
+def _scheduler_entry(job_id: str, **entry) -> None:
+    path = os.environ["FAKE_SLURM_STATE_FILE"]
+    table = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as handle:
+            table = json.load(handle)
+    table[job_id] = entry
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(table, handle)
+
+
+def _override_held_walltime(jobs, submission, walltime):
+    for part in _parts(jobs, submission):
+        if jobs.is_held(part):
+            part.requested_resources = {**part.requested_resources,
+                                        "walltimeOverride": walltime}
+            jobs.store.update(part)
+
+
+def test_a_fanout_refused_for_another_limit_is_not_held(tmp_path, monkeypatch,
+                                                        fake_slurm):
+    from steerlab_server.api.submissions import ShardFanoutFailed
+    _limited(monkeypatch, accepted=1, message=MAX_WALL)
+    with pytest.raises(ShardFanoutFailed) as raised:
+        _submit(tmp_path, monkeypatch, name="heldmaxwallfan", parallel=3)
+    assert "QOSMaxWallDurationPerJobLimit" in str(raised.value)
+
+
+def test_a_walltime_above_the_maximum_fails_its_run_and_never_stalls_the_next(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 2: the general sentence beside a per-job limit code was
+    read as "not now", so the part waited for ever and every later run's
+    held parts waited behind it."""
+    _limited(monkeypatch, accepted=1)
+    jobs, first = _submit(tmp_path, monkeypatch, name="heldwalla", parallel=2)
+    second = _submit_into(jobs, tmp_path, name="heldwallb", parallel=2)
+    assert [p.status for p in _parts(jobs, first)] == ["submitted", "pending"]
+    assert [p.status for p in _parts(jobs, second)] == ["pending", "pending"]
+    _override_held_walltime(jobs, first, "48:00:00")
+
+    _slot_frees(monkeypatch)
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=48:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", MAX_WALL)
+    _tick(jobs)
+
+    parent = jobs.get(first.job_id)
+    assert parent.status == "failed"
+    assert "QOSMaxWallDurationPerJobLimit" in parent.error
+    assert parent.error.endswith(
+        "Request a walltime within the cluster's limit for one job "
+        "(--walltime), then submit the study again")
+    assert [p.status for p in _parts(jobs, first)] == ["cancelled",
+                                                       "cancelled"]
+    # The next run was asked about on the same tick, and went.
+    assert [p.status for p in _parts(jobs, second)] == ["submitted",
+                                                        "submitted"]
+    assert jobs.get(second.job_id).status == "submitted"
+
+
+def test_resuming_with_a_walltime_above_the_maximum_fails_rather_than_waits(
+        tmp_path, monkeypatch, fake_slurm):
+    """The case review round 2 found: Resume of a cancelled run with a
+    --walltime above the QOS maximum. The parts that ran had finished, so
+    only the never-submitted parts continue, held again; the scheduler
+    refuses them on the next tick, and the run fails with the scheduler's
+    words and a repair, rather than waiting for ever."""
+    _limited(monkeypatch, accepted=2)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldresumewall")
+    for part in _parts(jobs, submission)[:2]:
+        part.status = "succeeded"
+        part.finished_at = 1.0
+        part.result = {**part.result, "runDirectory": str(tmp_path / part.id)}
+        jobs.store.update(part)
+    assert jobs.cancel(submission.job_id) is True
+    assert jobs.get(submission.job_id).status == "cancelled"
+    _slot_frees(monkeypatch)
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=48:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", MAX_WALL)
+    answer = jobs.resubmit(submission.job_id, walltime="48:00:00")
+    assert answer["ok"] is True
+    held = [entry["jobId"] for entry in answer["resumedShards"]
+            if entry.get("held")]
+    assert len(held) == 2
+    for job_id in held:
+        assert jobs.get(job_id).requested_resources["walltimeOverride"] == \
+            "48:00:00"
+
+    _tick(jobs)
+    assert any("--time=48:00:00" in call
+               for call in fake_slurm.calls("sbatch"))
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "failed"
+    assert "QOSMaxWallDurationPerJobLimit" in parent.error
+    assert "request a walltime within the cluster's limit" in \
+        parent.error.lower()
+    assert not any(jobs.is_held(jobs.get(job_id)) for job_id in held)
+    # Nothing waits behind it.
+    assert jobs._held_retry_after == 0.0
+
+
+def test_the_general_sentence_waits_when_the_same_request_was_accepted(
+        tmp_path, monkeypatch, fake_slurm):
+    _limited(monkeypatch, accepted=1)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldsentence",
+                               parallel=2)
+    _limited(monkeypatch, accepted=0, message=POLICY)
+    _tick(jobs)
+    assert jobs.get(submission.job_id).status == "submitted"
+    assert jobs.is_held(_parts(jobs, submission)[1])
+
+
+def test_the_general_sentence_fails_a_run_none_of_whose_parts_was_accepted(
+        tmp_path, monkeypatch, fake_slurm):
+    """Every part held at the first, by its reason code; later the sentence
+    alone, which may name a limit that never frees: the run fails with the
+    scheduler's words instead of waiting for ever."""
+    _limited(monkeypatch, accepted=0)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldsentence0",
+                               parallel=2)
+    _limited(monkeypatch, accepted=0, message=POLICY)
+    _tick(jobs)
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "failed"
+    assert "Job violates accounting/QOS policy" in parent.error
+    assert parent.error.endswith(
+        "Correct what the scheduler said, then submit the study again")
+    assert [p.status for p in _parts(jobs, submission)] == ["cancelled",
+                                                            "cancelled"]
+
+
+def test_a_maintenance_window_defers_one_run_and_not_the_next(
+        tmp_path, monkeypatch, fake_slurm):
+    _limited(monkeypatch, accepted=1)
+    jobs, first = _submit(tmp_path, monkeypatch, name="heldwindowa",
+                          parallel=2)
+    second = _submit_into(jobs, tmp_path, name="heldwindowb", parallel=2)
+    _slot_frees(monkeypatch)
+    waiting = _parts(jobs, first)[1]
+    script = waiting.requested_resources["scriptPath"]
+    real_submit = executors.SlurmExecutor.submit
+    refused = []
+
+    def windowed(self, bundle, **kwargs):
+        if bundle.script_path == script:
+            refused.append(script)
+            raise RuntimeError(
+                "requested walltime crosses a configured maintenance window")
+        return real_submit(self, bundle, **kwargs)
+
+    monkeypatch.setattr(executors.SlurmExecutor, "submit", windowed)
+    _tick(jobs)
+    assert jobs.is_held(jobs.get(waiting.id))
+    assert jobs.get(first.job_id).status == "submitted"
+    assert [p.status for p in _parts(jobs, second)] == ["submitted",
+                                                        "submitted"]
+    # The deferred run is not asked again within its pause.
+    _tick(jobs)
+    assert len(refused) == 1
+    # The window passes: it goes.
+    monkeypatch.setattr(executors.SlurmExecutor, "submit", real_submit)
+    jobs._held_deferred_until.clear()
+    _tick(jobs)
+    assert jobs.get(waiting.id).status == "submitted"
+
+
+# --- review round 2: the name search reaches back to the attempt ---------------
+
+def test_the_name_search_reaches_back_past_midnight(tmp_path, monkeypatch,
+                                                    fake_slurm):
+    """An attempt made yesterday whose job ran and ended before midnight.
+    sacct --name searches from today's midnight unless told otherwise, so
+    the old search read it as absent and the part ran twice."""
+    import datetime as dt
+    _limited(monkeypatch, accepted=2)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldmidnight")
+    part = _parts(jobs, submission)[2]
+    midnight = dt.datetime.now().replace(hour=0, minute=0, second=0,
+                                         microsecond=0)
+    attempted = (midnight - dt.timedelta(hours=2)).timestamp()
+    ended = (midnight - dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    token = f"slhd-{part.id}-yesterday"
+    part.result = {**part.result, "held": {**part.result["held"],
+                                           "attempt": {"submissionName": token,
+                                                       "at": attempted}}}
+    jobs.store.update(part)
+    _scheduler_entry("9900", state="COMPLETED", exit="0:0", name=token,
+                     end=ended)
+    _slot_frees(monkeypatch)
+    calls = len(fake_slurm.calls("sbatch"))
+    _tick(jobs)
+
+    adopted = jobs.get(part.id)
+    assert adopted.executor_job_id == "9900"
+    assert not any("slurm-shard-2/" in call
+                   for call in fake_slurm.calls("sbatch")[calls:])
+    search = [call for call in fake_slurm.calls("sacct") if token in call]
+    start = executors.sacct_time(attempted
+                                 - executors.NAME_SEARCH_MARGIN_SECONDS)
+    assert search and f"-S {start} -E now" in search[0]
+
+
+def test_no_way_to_search_is_not_proof_that_an_attempt_never_landed(
+        tmp_path, monkeypatch, fake_slurm):
+    _limited(monkeypatch, accepted=2)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldnosearch")
+    part = _parts(jobs, submission)[2]
+    part.result = {**part.result, "held": {**part.result["held"],
+                                           "attempt": {"submissionName":
+                                                       f"slhd-{part.id}-0",
+                                                       "at": 1.0}}}
+    jobs.store.update(part)
+    submitted = []
+
+    class NoSearch:
+        def submit(self, bundle, **kwargs):
+            submitted.append(bundle.script_path)
+            return "9999"
+
+    jobs._slurm_executor = NoSearch()
+    _slot_frees(monkeypatch)
+    _tick(jobs)
+    assert submitted == []
+    assert jobs.is_held(jobs.get(part.id))
+
+
+def test_the_name_search_uses_the_sites_sacct_and_never_guesses(
+        tmp_path, monkeypatch, fake_slurm):
+    import shutil
+    import time
+    bindir = tmp_path / "bin"
+    shutil.copy(bindir / "sacct", bindir / "site-sacct")
+    (bindir / "sacct").write_text("#!/bin/sh\necho 'not the site one' >&2\n"
+                                  "exit 1\n", encoding="utf-8")
+    monkeypatch.setenv("STEERLAB_SLURM_SACCT", "site-sacct")
+    _scheduler_entry("9911", state="RUNNING", name="slhd-x-1")
+    executor = executors.SlurmExecutor()
+    assert executor.find_job_by_name("slhd-x-1",
+                                     since=time.time() - 60) == "9911"
+    assert executor.find_job_by_name("slhd-x-2",
+                                     since=time.time() - 60) is None
+    monkeypatch.setenv("FAKE_SACCT_FAIL", "accounting is down")
+    with pytest.raises(RuntimeError, match="absence cannot be proven"):
+        executor.find_job_by_name("slhd-x-2", since=time.time() - 60)
 
 
 # --- lifecycle ----------------------------------------------------------------

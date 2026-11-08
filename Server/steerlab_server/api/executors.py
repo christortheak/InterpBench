@@ -159,33 +159,89 @@ SUBMIT_LIMIT_REASONS = (
 #: resources): only a count can then refuse it.
 SUBMIT_POLICY_REFUSAL = "Job violates accounting/QOS policy"
 
+#: The shape of a Slurm limit reason code in sbatch's message
+#: (``QOSMaxWallDurationPerJobLimit``, ``AssocGrpGRES``,
+#: ``PartitionTimeLimit``, …). Case-sensitive on purpose: the codes are
+#: CamelCase, and "accounting/QOS policy" in the general sentence is not one.
+#: A code that is not in ``SUBMIT_LIMIT_REASONS`` names a limit on the job
+#: itself (its size, its time, or what one job may hold of a group's share),
+#: which waiting never frees (review round 2).
+_SLURM_LIMIT_CODE = re.compile(r"\b(?:QOS|Assoc|Partition)[A-Z][A-Za-z]+\b")
+
 #: Refusals that say "not now" rather than "never": the scheduler could not
-#: be reached, or the submission would cross a maintenance window. Read only
-#: by the controller's retry of a part it already holds, where cancelling
-#: accepted parts that have run for hours would throw away work that waiting
-#: keeps. A submission a person is waiting on answers them at once instead.
+#: be reached. Read only by the controller's retry of a part it already
+#: holds, where cancelling accepted parts that have run for hours would throw
+#: away work that waiting keeps. A submission a person is waiting on answers
+#: them at once instead.
 SUBMIT_RETRY_LATER_MARKERS = (
     "Unable to contact slurm controller",
     "Socket timed out",
     "temporarily unable to accept job",
-    "crosses a configured maintenance window",
 )
+
+#: SteerLab's own refusal before sbatch runs, when the walltime would cross
+#: a maintenance window. It frees when the window passes, and it belongs to
+#: one run's walltime, so it never makes another run wait.
+SUBMIT_MAINTENANCE_MARKER = "crosses a configured maintenance window"
+
+#: How far before a submission attempt the name search starts, for clock
+#: skew between this host and the scheduler. Names are unique tokens, so a
+#: wider window costs only a slightly longer accounting query.
+NAME_SEARCH_MARGIN_SECONDS = 3600.0
+
+
+def sacct_time(epoch: float) -> str:
+    """An instant in the form ``sacct -S``/``-E`` take: local time, to the
+    second (the controller runs on the cluster, in the scheduler's zone)."""
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(epoch))
+
+
+def other_limit_codes(message: str | None) -> list[str]:
+    """The Slurm limit reason codes in ``message`` that are NOT job-count
+    limits: limits on the job itself, which waiting never frees."""
+    submit = {reason.lower() for reason in SUBMIT_LIMIT_REASONS}
+    return [code for code in _SLURM_LIMIT_CODE.findall(message or "")
+            if code.lower() not in submit]
 
 
 def submit_refusal_kind(message: str | None) -> str | None:
-    """What an sbatch refusal says about waiting: ``"jobLimit"`` (a job-count
-    limit, by its reason code), ``"policy"`` (the general accounting/QOS
-    sentence, with no reason code), ``"retryLater"`` (the scheduler could not
-    be reached, or a maintenance window is in the way), or None (anything
-    else: waiting would not help)."""
+    """What an sbatch refusal says about waiting:
+
+    - ``"otherLimit"``: a Slurm limit code that is not a job count (a
+      walltime above the cluster's maximum, more GPUs than one job may
+      have). Waiting never frees it, whatever else the message says.
+    - ``"jobLimit"``: a job-count limit, by its reason code. It frees as
+      jobs leave the queue.
+    - ``"policy"``: the general accounting/QOS sentence with no reason code.
+    - ``"maintenanceWindow"``: SteerLab's own refusal before sbatch; it frees
+      when the window passes.
+    - ``"retryLater"``: the scheduler could not be reached.
+    - None: anything else; waiting would not help."""
     text = (message or "").lower()
+    if other_limit_codes(message):
+        return "otherLimit"
     if any(reason.lower() in text for reason in SUBMIT_LIMIT_REASONS):
         return "jobLimit"
     if SUBMIT_POLICY_REFUSAL.lower() in text:
         return "policy"
+    if SUBMIT_MAINTENANCE_MARKER.lower() in text:
+        return "maintenanceWindow"
     if any(marker.lower() in text for marker in SUBMIT_RETRY_LATER_MARKERS):
         return "retryLater"
     return None
+
+
+def refusal_repair(message: str | None) -> str:
+    """The repair for a refusal waiting would not fix, in a person's words,
+    from the limit the scheduler named."""
+    codes = " ".join(other_limit_codes(message))
+    if "Wall" in codes or "Time" in codes:
+        return ("request a walltime within the cluster's limit for one job "
+                "(--walltime), then submit the study again")
+    if any(word in codes for word in ("GRES", "TRES", "Cpu", "Mem", "Node")):
+        return ("request resources within the cluster's limit for one job, "
+                "then submit the study again")
+    return "correct what the scheduler said, then submit the study again"
 
 
 def is_job_limit_refusal(message: str | None, *,
@@ -977,7 +1033,8 @@ class SlurmExecutor:
                 returncode=proc.returncode)
         return proc.stdout.strip().split()[-1]
 
-    def find_job_by_name(self, name: str) -> str | None:
+    def find_job_by_name(self, name: str, *,
+                         since: float | None = None) -> str | None:
         """The Slurm job id submitted under ``--job-name <name>``, or None as
         POSITIVE absence (the scheduler answered and knows no such job).
 
@@ -987,13 +1044,25 @@ class SlurmExecutor:
         completion. When absence cannot be proven, this RAISES rather than
         guessing: the caller treats scheduler silence as "reconciliation
         required", never as permission to resubmit (at-most-once beats
-        liveness — resume crash-safety, 2026-07-23)."""
+        liveness — resume crash-safety, 2026-07-23).
+
+        ``since`` (epoch seconds) is when the submission may first have
+        happened. Without it, ``sacct --name`` searches from today's
+        midnight only, so a job submitted yesterday that also ENDED before
+        midnight reads as absent. With it, the search runs from
+        ``since`` (less ``NAME_SEARCH_MARGIN_SECONDS``, for clock skew
+        between this host and the scheduler) to now (issue #12, review
+        round 2)."""
         sacct, squeue = scheduler_poll_commands()
         q = scheduler_run([squeue, "--noheader", "-o", "%i", "--name", name],
                           text=True, capture_output=True, check=False)
         if q.returncode == 0 and q.stdout.strip():
             return q.stdout.strip().splitlines()[0].strip()
-        s = scheduler_run([sacct, "-n", "-X", "-P", "--name", name,
+        window: list[str] = []
+        if since is not None:
+            window = ["-S", sacct_time(since - NAME_SEARCH_MARGIN_SECONDS),
+                      "-E", "now"]
+        s = scheduler_run([sacct, "-n", "-X", "-P", "--name", name, *window,
                            "-o", "JobID"],
                           text=True, capture_output=True, check=False)
         if s.returncode == 0:
