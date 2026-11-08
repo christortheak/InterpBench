@@ -231,10 +231,11 @@ unique.
 any item whose `options` is non-empty; `target` is not consulted at dispatch
 on either engine. The field only ever *subtracts*: an option-bearing item
 that explicitly declares `"responseFormat": "json"` or `"freeText"` is
-refused at run start under the `responseFormat` gate, and when the manifest
-declares an `outcomeInstrumentScope` only rows whose declared format the
-scope lists are measured — so in a mixed file `"label"` becomes required on
-the rows you want scored, and only then. Do not add `"responseFormat":
+refused under the `responseFormat` gate (when the Python engine takes the
+submission, before anything is queued, and at run start), and when the
+manifest declares an `outcomeInstrumentScope` only rows whose declared format
+the scope lists are measured — so in a mixed file `"label"` becomes required
+on the rows you want scored, and only then. Do not add `"responseFormat":
 "label"` to a file that already runs; nothing asks for it.
 
 **How a written answer becomes `parsedChoice`.** When an item has `options`
