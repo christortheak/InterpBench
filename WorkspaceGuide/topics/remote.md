@@ -70,17 +70,27 @@ stderr. Sharding is execution logistics and never enters the manifest or its
 content hash, so a sharded run and a single-job run of the same frozen study
 are the same measurement.
 
-Two rules that are not optional. **Verify the shard jobs actually landed:** a
-fan-out can PARTIALLY FAIL while the submit still exits **0**, because the
-abort is reported through the parent job record rather than the process's exit
-status — so check `steerlab-cli remote jobs` (or the scheduler queue at the
-site) and count them, and never report a sharded submit as successful on the
-exit code alone. **And stagger submissions where the site caps queued jobs per
-user:** K shards are K independent scheduler submissions, so a fan-out that
-crosses the cap has its later shards refused while the earlier ones run. The
-site profile's `maxParallelGPUJobs` records that limit when the researcher has
-declared one; ask rather than guess. The merge is performed by a **running**
-`steerlab-server serve`, not by the submitting process.
+Two rules that are not optional. **Read what the submit says about its
+parts.** When the cluster's job limit is reached part-way through a fan-out,
+the parts already accepted keep running and the rest are **held by
+SteerLab**. The submit still succeeds, and says so: `shardsHeld` in the
+response, and a `note:` on stderr. The running controller submits each held
+part, in order, when a slot frees; while the controller is not running, held
+parts wait. `remote status` shows each one as `pending`, "held by SteerLab:
+the cluster's job limit is reached; it is submitted when a slot frees". Tell
+the researcher how many parts are held; that is not a failure. The merge
+waits for every part, cancelling the run withdraws its held parts, and Resume
+on a cancelled run holds them again. A part refused for any other reason
+cancels the parts already submitted, fails the run, and the submit exits
+nonzero with the scheduler's own words. An engine older than this answers that
+case as a success, so on one, check `steerlab-cli remote jobs` and count the
+parts. **And stagger submissions where the site caps queued jobs per user:**
+K shards are K independent scheduler submissions, so a fan-out that crosses
+the cap has its later shards held while the earlier ones run, waiting for
+slots other work also needs. The site profile's `maxParallelGPUJobs` records
+that limit when the researcher has declared one; ask rather than guess. The
+merge is performed by a **running** `steerlab-server serve`, not by the
+submitting process.
 
 **A shard that hits its walltime checkpoints — resume it with the managed
 verb, never a hand-rolled scheduler command.** The checkpoint trap flushes
@@ -187,13 +197,16 @@ measured run out across sibling jobs whose partial results the runner merges
 back into one ordinary run directory. Sharding is execution logistics and
 never enters the manifest or its content hash, so a sharded run and a
 single-job run of the same frozen study are the same measurement. Two rules
-are not optional. **Verify the shard jobs actually landed:** a fan-out can
-partially fail while the submit still succeeds, so count the jobs with
-`steerlab runner jobs --runner <url>` and never report a sharded submit as
-successful on the exit code alone. **And stagger submissions where the site
-caps queued jobs per user**; ask the researcher for the limit rather than
-guess. The merge is performed by the running runner service, not by the
-submitting process.
+are not optional. **Read what the submit says about its parts:** when the
+cluster's job limit is reached part-way through a fan-out, the runner holds
+the remaining parts and submits them, in order, as slots free. The submit
+succeeds, carries `shardsHeld`, and prints a note; `steerlab runner status
+<job-id> --runner <url>` shows each held part. A part refused for any other
+reason fails the submit with a nonzero exit. An older runner answers that
+case as a success, so on one, count the jobs with `steerlab runner jobs
+--runner <url>`. **And stagger submissions where the site caps queued jobs
+per user**; ask the researcher for the limit rather than guess. The merge is
+performed by the running runner service, not by the submitting process.
 
 ### Resuming a checkpointed job
 
@@ -378,6 +391,11 @@ configured scheduler commands, in fixed fields under `result.response`:
   The read answers within about 30 seconds: a part whose scheduler did not
   answer in time says so (`scheduler.timedOut`), so ask again rather than
   concluding anything from it.
+- `held` and `heldNote`: set on a part SteerLab holds because the cluster's
+  job limit is reached (`held.reason` is `clusterJobLimit`, `held.since` when
+  it began to wait). Its status is `pending`, and it has no scheduler view
+  until the controller submits it. Report it as held by SteerLab, not as
+  waiting in the scheduler's queue.
 
 A job's `startedAt` is the scheduler's start time, and stays empty while it
 waits; `createdAt` is when it was submitted. This holds for study runs,
