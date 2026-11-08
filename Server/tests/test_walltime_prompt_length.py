@@ -113,7 +113,7 @@ def _history(*rows):
 
 
 def _walltime(manifest, records, mean_tokens, walltime="04:00:00",
-              model=None, shard_count=1):
+              model=None, shard_count=1, verb="run"):
     measured = ({"measured": True, "meanPromptTokens": mean_tokens,
                  "longestPromptTokens": mean_tokens}
                 if mean_tokens is not None else
@@ -123,7 +123,7 @@ def _walltime(manifest, records, mean_tokens, walltime="04:00:00",
     return sub._check_walltime(
         manifest, SlurmResources(gres="gpu:A100:1", walltime=walltime,
                                  gpu_vram_gb={"A100": 80}),
-        records, ServerProfile.from_env(), "run", measured=measured,
+        records, ServerProfile.from_env(), verb, measured=measured,
         shard_count=shard_count)
 
 
@@ -149,9 +149,15 @@ def test_the_reviews_first_probe_warns_rather_than_refusing(meta):
                         prompt=_history(_row(150_000, 50, 4.0, compute=280.0)))])
     paced = _walltime(_readout(), 400, 30_000, walltime="08:00:00")
     assert paced["status"] == "warn" and "minimumHours" not in paced["data"]
-    assert "request --walltime 10:00:00 or more" in check["message"]
-    assert "keeps the records it finished, and can be resumed" in \
+    assert "Ask for --walltime 10:00:00 or more, or split the study" in \
         check["message"]
+    assert "a run that reaches its walltime keeps the records it finished, " \
+        "and can be resumed from them" in check["message"]
+    assert check["data"]["atWalltime"] == sub.AT_WALLTIME_RESUMES
+    # 9.85 h is not twice 8 h: it may run out of time.
+    assert check["data"]["walltimeAdvice"].startswith(
+        "WALLTIME: this job may run out of time. It is estimated to need "
+        "about 9.9 h, and 8.0 h (08:00:00) was requested.")
     assert "about 5 times shorter" in check["data"]["promptLengthNotice"]
     assert check["data"]["farFromHistory"] == "shorter"
 
@@ -178,74 +184,71 @@ def test_the_issues_part_warns_with_the_walltime_it_needs(meta):
     219,000), a history of 2,000-token items at 692 an hour (5.2023 s a
     record of compute), a 4 h wall. Estimate, scaled up in proportion:
     50 × (1 ÷ 692) × 75 = 5.41908 h × 1.5 = 8.12862 + 0.25 = 8.37862 h ≈
-    8.38 h: warn, ask for at least 9 h. Minimum, at the short job's own pace
-    (longer items never read faster): 50 × 5.2023 s = 260.1 s ≈ 0.07 h,
-    which fits, so it is not refused."""
+    8.38 h, more than twice the 4 h asked: very likely to run out of time;
+    ask for at least 9 h."""
     _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
         _row(2000, 100, 100 / 692, compute=3600 / 692, job="short1")))])
     check = _walltime(_readout(), 50, 150_000)
     assert check["data"]["estimatedHours"] == 8.38
     assert check["status"] == "warn"
-    assert check["data"]["minimumHours"] == 0.07
-    assert "request --walltime 09:00:00 or more" in check["message"]
+    assert "minimumHours" not in check["data"]
+    assert check["data"]["walltimeAdvice"] == (
+        "WALLTIME: this job is very likely to run out of time. It is "
+        "estimated to need about 8.4 h, and 4.0 h (04:00:00) was requested. "
+        "Ask for --walltime 09:00:00 or more, or split the study into smaller "
+        "parts; a run that reaches its walltime keeps the records it "
+        "finished, and can be resumed from them.")
     assert "job short1 (items of 2,000 prompt tokens, 5.2 s a record)" in \
         check["message"]
 
 
-# --- the certain part: only it refuses ------------------------------------------
+# --- history never refuses (review round 5) --------------------------------------
 
 
-def test_a_certain_shortfall_is_refused_with_its_minimum(meta):
-    """A past job of 2,000-token items ran at 30 s a record of compute (job
-    past1, 36 s a record with its model load). 1,000 records of 3,000-token
-    items cannot read faster: 1,000 × 30 s = 30,000 s = 8.3333 h, over the
-    4 h wall: refused, as certain. The estimate (the safer figure):
-    30 s = 0.0083333 h × 3,000 ÷ 2,000 = 0.0125 h; 1,000 × 0.0125 = 12.5 h
-    × 1.5 = 18.75 + 0.25 = 19.0 h."""
+def test_a_slow_past_pace_never_refuses(meta):
+    """The round-4 "certain" case: a past job of 2,000-token items at 30 s a
+    record of compute, and 1,000 records of 3,000-token items on a 4 h wall.
+    A past job can be slow for reasons that are not this study's, so it is
+    advice: 30 s = 0.0083333 h × 3,000 ÷ 2,000 = 0.0125 h; 1,000 × 0.0125
+    = 12.5 h × 1.5 = 18.75 + 0.25 = 19.0 h, over twice 4 h: a prominent
+    warning, never a refusal."""
     _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
         _row(2000, 100, 1.0, compute=30.0, job="past1")))])
     check = _walltime(_readout(), 1000, 3000)
-    assert check["status"] == "fail"
-    assert check["data"]["minimumHours"] == 8.33
+    assert check["status"] == "warn"
     assert check["data"]["estimatedHours"] == 19.0
-    assert check["data"]["minimumBasis"] == {
-        "records": 1000, "secondsPerRecord": 30.0, "perRecord": 2000,
-        "jobId": "past1"}
-    assert check["message"].startswith(
-        "even at the pace of job past1's shorter items")
-    assert "these 1,000 records need at least 8.3 h; the requested walltime " \
-        "is 4.0 h (04:00:00). Request --walltime 09:00:00 or more" in \
+    assert "minimumHours" not in check["data"]
+    assert "very likely to run out of time" in check["data"]["walltimeAdvice"]
+    assert "Ask for --walltime 19:00:00 or more" in check["message"]
+    assert "job past1 (items of 2,000 prompt tokens, 30.0 s a record)" in \
+        check["message"]
+    assert "It is an estimate, so the submission is not refused" in \
         check["message"]
 
 
-def test_the_same_length_with_a_known_pace_is_certain(meta):
-    """The round-3 probe, 3,000 items of 300 tokens on a 4 h wall, now that
-    the 300-token job's compute pace is known (3600 ÷ 692 = 5.2023 s a
-    record): 3,000 × 5.2023 s = 15,607 s = 4.3353 h, over 4 h: refused.
-    Without the pace (an older history) it is only the estimate, 6.75 h: a
-    warning."""
+def test_the_same_length_with_a_known_pace_warns(meta):
+    """The round-3 probe, 3,000 items of 300 tokens on a 4 h wall, with the
+    300-token job's compute pace known (3600 ÷ 692 = 5.2023 s a record): the
+    estimate, 3,000 × 5.2023 s = 4.33526 h × 1.5 = 6.50289 + 0.25 = 6.75289 h
+    ≈ 6.75 h, warns."""
     _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
         _row(300, 100, 100 / 692, compute=3600 / 692),
         (150_000, 8, 2.0)))])
     check = _walltime(_readout(), 3000, 300)
-    assert check["status"] == "fail"
-    assert check["data"]["minimumHours"] == 4.34
-    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
-        (300, 100, 100 / 692), (150_000, 8, 2.0)))])
-    older = _walltime(_readout(), 3000, 300)
-    assert older["status"] == "warn"
-    assert older["data"]["estimatedHours"] == 6.75
-    assert "minimumHours" not in older["data"]
+    assert check["status"] == "warn"
+    assert check["data"]["estimatedHours"] == 6.75
 
 
-def test_a_minimum_is_per_part_for_a_split_run(meta):
+def test_a_split_run_is_advised_per_part(meta):
     """The walltime is each part's: 1,000 records over 4 parts is 250 a
-    part, 250 × 30 s = 7,500 s = 2.0833 h, under 4 h: not refused."""
+    part; 250 × 0.0125 h = 3.125 h × 1.5 = 4.6875 + 0.25 = 4.9375 h ≈
+    4.94 h, over 4 h but not twice it: it may run out of time."""
     _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
         _row(2000, 100, 1.0, compute=30.0, job="past1")))])
     check = _walltime(_readout(), 1000, 3000, shard_count=4)
-    assert check["data"]["minimumHours"] == 2.08
-    assert check["status"] != "fail"
+    assert check["data"]["estimatedHours"] == 4.94
+    assert check["status"] == "warn"
+    assert "this job may run out of time" in check["data"]["walltimeAdvice"]
 
 
 def test_another_models_history_never_refuses(meta):
@@ -324,28 +327,16 @@ def test_the_notice_names_the_nearest_job(meta):
 # --- generating families --------------------------------------------------------
 
 
-def test_a_generating_study_is_refused_only_on_a_comparable_pace(meta):
-    """Long-form text, 512 generated tokens. A past job of 1,000-token
-    prompts generating up to 512 tokens ran at 20 s a record: 2,000 records
-    of the same prompts and budget need at least 2,000 × 20 s = 40,000 s =
-    11.1111 h, over 4 h: refused. Estimate: 2,000 ÷ 200 × 1.5 + 0.25 =
-    15.25 h."""
+def test_a_generating_study_is_never_refused_on_history(meta):
+    """Long-form text, 512 generated tokens, against a past job of the same
+    prompts and budget at 20 s a record: a budget is not the tokens actually
+    generated, so the history advises only. Estimate: 2,000 ÷ 200 × 1.5
+    + 0.25 = 15.25 h over 4 h: a warning."""
     _seed(meta, [_entry(200.0, fam.LONG_FORM_TEXT, prompt=_history(
         _row(1000, 100, 0.6, compute=20.0, max_tokens=512, job="gen1")))])
     check = _walltime(_long_form(), 2000, 1000)
-    assert check["status"] == "fail"
-    assert check["data"]["minimumHours"] == 11.11
-    assert check["data"]["estimatedHours"] == 15.25
-
-
-def test_a_generating_job_that_generated_more_is_no_pace(meta):
-    """The same job generating up to 1,024 tokens a record is not a pace for
-    512: its records may be slower for that alone. Only the estimate:
-    15.25 h, a warning."""
-    _seed(meta, [_entry(200.0, fam.LONG_FORM_TEXT, prompt=_history(
-        _row(1000, 100, 0.6, compute=20.0, max_tokens=1024)))])
-    check = _walltime(_long_form(), 2000, 1000)
     assert check["status"] == "warn"
+    assert check["data"]["estimatedHours"] == 15.25
     assert "minimumHours" not in check["data"]
 
 
@@ -710,19 +701,133 @@ def test_the_estimate_never_sets_the_time_limit(readout_site):
     assert "#SBATCH --time=00:20:00" in script
 
 
-def test_a_certain_shortfall_is_refused_before_the_queue(readout_site):
+def test_a_slow_past_pace_is_never_refused_before_the_queue(readout_site):
     """With a past job of shorter items (100,000 tokens) whose records ran at
-    900 s each, these 4 records of 149,814 tokens need at least 4 × 900 s
-    = 3,600 s = 1.0 h, over 00:20:00: the submission is refused, and nothing
-    is queued under it."""
+    900 s each, these 4 records of 149,814 tokens are estimated at 0.25 h ×
+    149,814 ÷ 100,000 = 0.374535 h a record; 4 × that = 1.49814 h × 1.5
+    = 2.24721 + 0.25 = 2.49721 h ≈ 2.5 h, over twice 00:20:00. Round 4
+    refused it; now the preflight's verdict is a warning, and the gate lets
+    a real submission through."""
     meta = readout_site["tmp"] / "meta"
     (meta / "throughput.json").write_text(json.dumps({
         "schemaVersion": 1, "foldedJobIds": [], "entries": [
             _entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
                 _row(100_000, 8, 2.5, compute=900.0, job="past9")))]}),
         encoding="utf-8")
-    check = _walltime_check(_submit(readout_site, walltime="00:20:00"))
-    assert check["status"] == "fail"
-    assert check["data"]["minimumHours"] == 1.0
-    with pytest.raises(sub.PreflightRejection):
-        _submit(readout_site, dry_run=False, walltime="00:20:00")
+    preview = _submit(readout_site, walltime="00:20:00")
+    check = _walltime_check(preview)
+    assert check["status"] == "warn"
+    assert check["data"]["estimatedHours"] == 2.5
+    assert "very likely to run out of time" in check["data"]["walltimeAdvice"]
+    assert preview.preflight["verdict"] != "fail"
+    assert sub._gate_on_preflight(preview.preflight, dry_run=False,
+                                  force=False) is False
+
+
+# --- which jobs resume at their walltime ------------------------------------------
+
+
+@pytest.mark.parametrize("verb,stages,expected", [
+    ("run", None, sub.AT_WALLTIME_RESUMES),
+    ("sweep", None, sub.AT_WALLTIME_RESUMES),
+    ("extract", None, sub.AT_WALLTIME_STOPS),
+    ("validate", None, sub.AT_WALLTIME_STOPS),
+    ("evaluate", None, sub.AT_WALLTIME_STOPS),
+    ("pipeline", ["run", "evaluate"], sub.AT_WALLTIME_RESUMES_IN_RUN_STAGE),
+    # A pipeline passes the checkpoint flag to its run stage only: its sweep
+    # stage starts again rather than resuming.
+    ("pipeline", ["extract", "validate", "sweep"], sub.AT_WALLTIME_STOPS),
+    ("pipeline", ["extract", "validate"], sub.AT_WALLTIME_STOPS),
+])
+def test_only_checkpointing_steps_are_said_to_resume(verb, stages, expected):
+    manifest = _readout(**({"pipeline": {"stages": stages}} if stages else {}))
+    assert sub._at_walltime(verb, manifest) == expected
+
+
+@pytest.mark.parametrize("at_walltime,verb,words", [
+    (sub.AT_WALLTIME_RESUMES, "run",
+     "a run that reaches its walltime keeps the records it finished, and can "
+     "be resumed from them"),
+    (sub.AT_WALLTIME_RESUMES, "sweep",
+     "a sweep that reaches its walltime keeps the cells it finished, and can "
+     "be resumed from them"),
+    (sub.AT_WALLTIME_RESUMES_IN_RUN_STAGE, "pipeline",
+     "a pipeline that reaches its walltime in its run stage keeps the records "
+     "it finished there, and can be resumed from them; in any other stage it "
+     "stops and must be submitted again"),
+    (sub.AT_WALLTIME_STOPS, "extract",
+     "an extract job that reaches its walltime stops and must be submitted "
+     "again"),
+    (sub.AT_WALLTIME_STOPS, "pipeline",
+     "a pipeline job that reaches its walltime stops and must be submitted "
+     "again"),
+])
+def test_the_advice_says_what_happens_at_the_walltime(at_walltime, verb, words):
+    check = sub._walltime_verdict(
+        5.0, SlurmResources(walltime="04:00:00"), "basis", {},
+        at_walltime=at_walltime, verb=verb)
+    assert check["status"] == "warn"
+    assert check["data"]["atWalltime"] == at_walltime
+    assert words in check["data"]["walltimeAdvice"]
+    if at_walltime == sub.AT_WALLTIME_STOPS:
+        assert "keeps the" not in check["message"]
+        assert "resumed" not in check["message"]
+
+
+def test_a_pipeline_with_only_a_sweep_is_told_it_stops(meta):
+    """End to end through the check: a pipeline whose stages checkpoint
+    nowhere is not told it resumes."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(2000, 100, 1.0, compute=30.0, job="past1")))])
+    manifest = _readout(pipeline={"stages": ["extract", "validate", "sweep"]})
+    check = _walltime(manifest, 1000, 3000, verb="pipeline")
+    assert check["status"] == "warn"
+    assert check["data"]["atWalltime"] == sub.AT_WALLTIME_STOPS
+    assert "a pipeline job that reaches its walltime stops and must be " \
+        "submitted again" in check["message"]
+
+
+# --- an untyped GPU request (review round 5) ---------------------------------------
+
+
+def test_an_untyped_gpu_request_has_no_gpu_type():
+    assert hk.parse_gpu_type("gpu:1") is None
+    assert hk.parse_gpu_type("1") is None
+    assert hk.parse_gpu_type("gpu") is None
+    assert hk.parse_gpu_type("gpu:A100:1") == "A100"
+    assert hk.requests_gpu("gpu:1") is True
+    assert hk.requests_gpu(None) is False
+    assert hk.throughput_gpu_bucket("gpu:1") == hk.UNTYPED_GPU_BUCKET
+    assert hk.throughput_gpu_bucket("gpu:A100:1") == "A100"
+    assert hk.throughput_gpu_bucket(None) is None
+    # Still a GPU for the job's prompt reading: unchanged.
+    assert sub._reading_device(SlurmResources(gres="gpu:1"), None) == "cuda"
+
+
+def test_untyped_gpu_history_keeps_its_own_bucket(meta, tmp_path):
+    """A job that asked for "gpu:1" folds under the untyped bucket, never a
+    type named "1" and never the no-GPU bucket of a local job."""
+    store = DurableJobStore(str(tmp_path / "untyped.sqlite"))
+    for job_id, gres in (("u1", "gpu:1"), ("l1", None)):
+        job = Job(id=job_id, kind="study-submit-bundle", status="succeeded",
+                  result={"elapsedSeconds": 360, "recordCount": 10},
+                  requested_resources={"modelID": MODEL,
+                                       **({"gres": gres} if gres else {})},
+                  executor="slurm", _store=store)
+        store.insert(job)
+    table = hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    buckets = sorted(str(e.get("gpuType")) for e in table["entries"])
+    assert buckets == ["None", hk.UNTYPED_GPU_BUCKET]
+
+
+def test_the_history_job_cap_is_defined_once():
+    """Review round 5: the cap on the per-job length history was assigned
+    twice at module level; one definition, so the two cannot drift."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(hk))
+    names = [target.id for node in tree.body if isinstance(node, ast.Assign)
+             for target in node.targets if isinstance(target, ast.Name)]
+    assert names.count("PROMPT_HISTORY_JOBS") == 1
+    assert hk.PROMPT_HISTORY_JOBS == 64

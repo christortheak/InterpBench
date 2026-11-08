@@ -2256,7 +2256,8 @@ def _reading_device(resources: SlurmResources | None, device: str | None) -> str
         return "mps"
     if lowered and lowered != "auto":
         return "cpu"
-    gpu = housekeeping.parse_gpu_type(resources.gres) if resources else None
+    # Presence, typed or not: an untyped GPU request is still a GPU.
+    gpu = housekeeping.requests_gpu(resources.gres) if resources else False
     return "cuda" if gpu else "cpu"
 
 
@@ -2682,20 +2683,17 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
     is stamped as ``promptTokensPerRecord`` so the throughput fold can keep
     each job's prompt length and pace (``promptTokens`` on a family entry).
 
-    Since review round 4 this check refuses only on what is CERTAIN, and the
-    estimate above is advice:
-
-    - ``estimate`` (``data.estimatedHours``): a deterministic-logprob study is
-      priced from the history jobs nearest its length, scaled in proportion
-      to tokens both ways (:func:`_prompt_length_pricing`); a generating
-      family by the tokens it generates. Over the requested walltime it is a
-      ``warn`` with the exact repair, never a ``fail``: it is an estimate.
-    - ``minimum`` (``data.minimumHours``, :func:`_walltime_minimum`): a
-      longer prompt never reads faster, so the compute pace of a past job of
-      this family on this model and GPU, whose items were no longer (and, for
-      a generating family, generated no more tokens a record), is a pace this
-      job cannot beat. records × the slowest such pace, with no margin and no
-      startup. Only this ``fail``s, when it alone exceeds the walltime.
+    Since review round 5 this check never refuses on history: a past job can
+    be slow or fast for reasons that are not this study's (its options, the
+    tokens it really generated, an adapter load between conditions), so no
+    figure built from it can promise that this job will not fit. Its verdicts
+    are ``ok`` and ``warn``. The estimate (``data.estimatedHours``) prices a
+    deterministic-logprob study from the history jobs nearest its length,
+    scaled in proportion to tokens both ways (:func:`_prompt_length_pricing`),
+    each job's pace its own records' (``recordPace``, without the model load)
+    where known; a generating family by the tokens it generates. Over the
+    requested walltime it is a prominent ``warn`` (``data.walltimeAdvice``)
+    with the walltime to ask for and the alternative of a split study.
     """
     check_id = "walltime"
     if manifest is None:
@@ -2727,23 +2725,25 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                       "cannot count planned records (no readable task-prompt "
                       "set) — walltime cannot be estimated", family_data or None)
     gpu_type = housekeeping.parse_gpu_type(resources.gres)
+    # The history's key: an untyped GPU request has its own bucket.
+    gpu_bucket = housekeeping.throughput_gpu_bucket(resources.gres)
 
     if family is not None and family.id == instrument_family.PARKED_JUDGMENT:
         return _check_parked_judgment_walltime(
-            manifest, resources, planned_records, profile, gpu_type,
+            manifest, resources, planned_records, profile, gpu_bucket,
             family, family_data)
 
     entry = None
     rate_source = "global"
     if family is not None:
         entry = housekeeping.throughput_lookup(
-            manifest.model_id, gpu_type, profile, instrument_family=family.id)
+            manifest.model_id, gpu_bucket, profile, instrument_family=family.id)
         if entry and float(entry.get("recordsPerHour", 0)) > 0:
             rate_source = "family"
         else:
             entry = None
     if entry is None:
-        entry = housekeeping.throughput_lookup(manifest.model_id, gpu_type,
+        entry = housekeeping.throughput_lookup(manifest.model_id, gpu_bucket,
                                                profile)
     rate = float(entry.get("recordsPerHour", 0)) if entry else 0.0
     prompt_tokens = (measured.get("meanPromptTokens")
@@ -2840,12 +2840,12 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
         data["shardCount"] = shard_count
         data["recordsPerShard"] = shard_records
         data["estimateIsPerShard"] = True
-    minimum = _walltime_minimum(
-        family, entry if rate_source == "family" else None, prompt_tokens,
-        planned_tokens, shard_records, model_id=manifest.model_id,
-        gpu_type=gpu_type, shard_count=shard_count)
+    # Whether a job of this verb that reaches its walltime keeps what it
+    # finished and resumes (review round 5): a run, a sweep, or a pipeline
+    # whose run or sweep stage is ahead.
+    at_walltime = _at_walltime(verb, manifest)
     check = _walltime_verdict(estimated_hours, resources, basis, data,
-                              minimum=minimum)
+                              at_walltime=at_walltime, verb=verb)
     notice = prompt["notice"]
     if notice:
         # Said in the check's own data (where both clients read it into the
@@ -2873,48 +2873,6 @@ def _job_words(job: dict) -> str:
     name = f"job {job['jobId']}" if job.get("jobId") else "a past job"
     return (f"{name} (items of {job['perRecord']:,.0f} prompt tokens, "
             f"{job['hoursPerRecord'] * 3600:,.1f} s a record)")
-
-
-def _walltime_minimum(family, entry: dict | None, prompt_tokens: int | None,
-                      planned_tokens: int | None, shard_records: int, *,
-                      model_id: str, gpu_type: str | None,
-                      shard_count: int) -> dict | None:
-    """The time this job needs at the very least, or None (review round 4).
-
-    A longer prompt never reads faster, and more generated tokens never take
-    less time. So a past job of this family, on this model and GPU (the
-    history's entry is keyed by all three, and nothing else is consulted),
-    whose items were no longer than these and, for a generating family, whose
-    records generated no more tokens, ran each record at a pace this job's
-    records cannot beat. Its pace is its own records' compute time ((last
-    record − first record) ÷ (records − 1), ``computeSecondsPerRecord``),
-    which leaves out its model load; a job without that stamp does not count.
-    The minimum is this job's records (the largest part's, for a split run:
-    the walltime is each part's) × the slowest such pace: no margin, and no
-    startup. None when no past job qualifies."""
-    if family is None or prompt_tokens is None or entry is None:
-        return None
-    if (entry.get("modelId") != model_id or entry.get("gpuType") != gpu_type
-            or entry.get("instrumentFamily") != family.id):
-        return None
-    generating = family.id in instrument_family.TOKEN_BOUNDED_FAMILIES
-    if not generating and family.id not in instrument_family.PROMPT_BOUNDED_FAMILIES:
-        return None
-    if generating and not planned_tokens:
-        return None
-    qualifying = [
-        job for job in (housekeeping.prompt_history(entry) or [])
-        if job.get("computeSecondsPerRecord")
-        and job["perRecord"] <= prompt_tokens
-        and (not generating or (job.get("maxTokens") is not None
-                                and job["maxTokens"] <= planned_tokens))]
-    if not qualifying:
-        return None
-    slowest = max(qualifying, key=lambda job: job["computeSecondsPerRecord"])
-    seconds = slowest["computeSecondsPerRecord"]
-    return {"hours": shard_records * seconds / 3600.0,
-            "records": shard_records, "shardCount": shard_count,
-            "secondsPerRecord": seconds, "job": slowest}
 
 
 def _rate_words(rate: float) -> str:
@@ -2949,8 +2907,8 @@ def _prompt_length_pricing(family, entry: dict | None, rate_source: str,
     (``pricedFrom``, words), the clause the estimate's basis gains, the data
     it records, and the plain notice when no past job's items were near this
     length (or the history does not record its items' length and these are
-    long). Advice only: this estimate never refuses (``_walltime_minimum``
-    does that). Never raises: prompt length is pricing metadata.
+    long). Advice only: the walltime check never refuses on history.
+    Never raises: prompt length is pricing metadata.
 
     A deterministic-logprob record is one forward pass over its prompt: it
     is priced from the past jobs nearest this length, each one's time per
@@ -3070,7 +3028,7 @@ def _check_parked_judgment_walltime(manifest: Manifest | None,
          "throughputSamples": entry.get("samples") if entry else None,
          "rateSource": rate_source,
          "gpuType": gpu_type,
-         **family_data})
+         **family_data}, at_walltime=AT_WALLTIME_STOPS, verb="evaluate")
 
 
 def _hours_words(hours: float) -> str:
@@ -3080,24 +3038,61 @@ def _hours_words(hours: float) -> str:
     return f"{whole:02d}:00:00"
 
 
-#: What a run that reaches its walltime keeps, said with every walltime
-#: warning: the finished records, and a resume.
-_WALLTIME_KEEPS = ("a run that reaches its walltime keeps the records it "
-                   "finished, and can be resumed from them")
+#: What a job does when it reaches its walltime (``data.atWalltime``). A
+#: ``run`` and a ``sweep`` are passed the checkpoint flag
+#: (``bundles.execute_run_bundle``): they park at the walltime warning and
+#: ``remote resubmit`` continues them from the records (or sweep cells) they
+#: finished. A pipeline passes the flag to its ``run`` stage only
+#: (``pipeline_workflow``): it resumes when the walltime finds it there, and
+#: its other stages, like the standalone extract, validate and evaluate, are
+#: stopped by the scheduler and must be submitted again.
+AT_WALLTIME_RESUMES = "resumes"
+AT_WALLTIME_RESUMES_IN_RUN_STAGE = "resumesInRunStage"
+AT_WALLTIME_STOPS = "stops"
+
+
+def _at_walltime(verb: str, manifest: Manifest | None) -> str:
+    """What a job of ``verb`` does at its walltime: one of the
+    ``AT_WALLTIME_*`` values."""
+    if verb in ("run", "sweep"):
+        return AT_WALLTIME_RESUMES
+    if verb == "pipeline" and "run" in (_pipeline_stages(manifest) or []):
+        return AT_WALLTIME_RESUMES_IN_RUN_STAGE
+    return AT_WALLTIME_STOPS
+
+
+def _walltime_end_words(at_walltime: str, verb: str) -> str:
+    """What happens to a job of this verb at its walltime, said plainly."""
+    if at_walltime == AT_WALLTIME_RESUMES:
+        finished = "cells" if verb == "sweep" else "records"
+        return (f"a {verb} that reaches its walltime keeps the {finished} it "
+                "finished, and can be resumed from them")
+    if at_walltime == AT_WALLTIME_RESUMES_IN_RUN_STAGE:
+        return ("a pipeline that reaches its walltime in its run stage keeps "
+                "the records it finished there, and can be resumed from them; "
+                "in any other stage it stops and must be submitted again")
+    article = "an" if verb[:1].lower() in "aeiou" else "a"
+    return (f"{article} {verb} job that reaches its walltime stops and must "
+            "be submitted again")
 
 
 def _walltime_verdict(estimated_hours: float, resources: SlurmResources,
                       basis: str, data: dict, *,
-                      minimum: dict | None = None) -> dict:
-    """The ok/warn/fail comparison shared by every pricing path, so the
-    verdict rules cannot drift between them. ``basis`` is the parenthetical
-    that says how the estimate was reached and WHICH rate reached it.
+                      at_walltime: str = AT_WALLTIME_STOPS,
+                      verb: str | None = None) -> dict:
+    """The ok/warn comparison shared by every pricing path, so the verdict
+    rules cannot drift between them. ``basis`` is the parenthetical that says
+    how the estimate was reached and WHICH rate reached it.
 
-    Review round 4: the estimate is advice, so over the requested walltime it
-    is a ``warn`` with the repair (a walltime of at least the estimate,
-    rounded up, or a split study). Only ``minimum`` (:func:`_walltime_minimum`,
-    the certain part) ``fail``s, when it alone exceeds the walltime."""
+    Review round 5: never ``fail``. The estimate is advice; over the
+    requested walltime it is a prominent ``warn`` (``data.walltimeAdvice``,
+    which both clients print and put in the submission envelope) with the
+    walltime to ask for (the estimate, rounded up to the hour) and the
+    alternative of a split study, and says "very likely" past twice the
+    request. ``at_walltime`` says what a job of this verb does at its
+    walltime (``data.atWalltime``)."""
     check_id = "walltime"
+    what = verb or data.get("verb") or "study"
     try:
         requested_hours = _parse_walltime(resources.walltime).total_seconds() / 3600.0
     except (ValueError, TypeError):
@@ -3107,51 +3102,34 @@ def _walltime_verdict(estimated_hours: float, resources: SlurmResources,
                       f"≈{estimated_hours:.1f} h estimate", data)
     data = {**data,
             "estimatedHours": round(estimated_hours, 2),
-            "requestedHours": round(requested_hours, 2)}
-    if minimum is not None:
-        job = minimum["job"]
-        data["minimumHours"] = round(minimum["hours"], 2)
-        data["minimumBasis"] = {
-            "records": minimum["records"],
-            "secondsPerRecord": round(minimum["secondsPerRecord"], 3),
-            "perRecord": job["perRecord"],
-            **({"jobId": job["jobId"]} if job.get("jobId") else {}),
-            **({"maxTokens": job["maxTokens"]} if job.get("maxTokens") else {})}
+            "requestedHours": round(requested_hours, 2),
+            "atWalltime": at_walltime}
     if requested_hours <= 0:
         return _check(check_id, "warn",
                       f"requested walltime {resources.walltime!r} is zero — "
                       "cannot compare", data)
-    if minimum is not None and minimum["hours"] > requested_hours:
-        job = minimum["job"]
-        whose = f"job {job['jobId']}" if job.get("jobId") else "a past job"
-        part = ("each part's " if minimum["shardCount"] > 1 else "these ")
-        return _check(check_id, "fail",
-                      f"even at the pace of {whose}'s shorter items (a past "
-                      f"job of this kind on this model and GPU, "
-                      f"{job['perRecord']:,.0f} prompt tokens a record, "
-                      f"{minimum['secondsPerRecord']:,.1f} s a record of its "
-                      f"own compute), {part}{minimum['records']:,} records need "
-                      f"at least {minimum['hours']:.1f} h; the requested "
-                      f"walltime is {requested_hours:.1f} h "
-                      f"({resources.walltime}). Request --walltime "
-                      f"{_hours_words(minimum['hours'])} or more (the estimate, "
-                      f"≈{estimated_hours:.1f} h, is the safer figure), or "
-                      "split the study into smaller parts", data)
+    end = _walltime_end_words(at_walltime, what)
     if estimated_hours > requested_hours:
+        likely = ("is very likely to run out of time"
+                  if estimated_hours > 2 * requested_hours
+                  else "may run out of time")
+        advice = (f"WALLTIME: this job {likely}. It is estimated to need "
+                  f"about {estimated_hours:.1f} h, and "
+                  f"{requested_hours:.1f} h ({resources.walltime}) was "
+                  f"requested. Ask for --walltime "
+                  f"{_hours_words(estimated_hours)} or more, or split the "
+                  f"study into smaller parts; {end}.")
+        data["walltimeAdvice"] = advice
         return _check(check_id, "warn",
-                      f"estimated ≈{estimated_hours:.1f} h ({basis}) "
-                      f"exceeds the requested walltime {resources.walltime}. "
-                      "This is an estimate, so the submission is not refused: "
-                      f"to be safe, request --walltime "
-                      f"{_hours_words(estimated_hours)} or more, or split the "
-                      f"study into smaller parts; {_WALLTIME_KEEPS} "
-                      f"({_WALLTIME_BOTH_DIRECTIONS})", data)
+                      f"{advice} The estimate: {basis} "
+                      f"({_WALLTIME_BOTH_DIRECTIONS}). It is an estimate, "
+                      "so the submission is not refused", data)
     if estimated_hours > PREFLIGHT_WALLTIME_WARN_FRACTION * requested_hours:
         return _check(check_id, "warn",
                       f"estimated ≈{estimated_hours:.1f} h ({basis}) is "
                       f"{estimated_hours / requested_hours:.0%} of the "
                       f"requested walltime {resources.walltime} — tight; "
-                      f"consider more headroom; {_WALLTIME_KEEPS} "
+                      f"consider more headroom; {end} "
                       f"({_WALLTIME_BOTH_DIRECTIONS})", data)
     return _check(check_id, "ok",
                   f"estimated ≈{estimated_hours:.1f} h of "

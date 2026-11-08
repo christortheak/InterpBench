@@ -143,7 +143,10 @@ def test_a_local_judge_evaluate_keeps_generation_pricing(meta):
     # 1664 ÷ 220/h × 1.5 = 11.35 h of generating, + the 15 min every job
     # pays to reach its first record.
     assert check["data"]["estimatedHours"] == pytest.approx(11.60, abs=0.05)
-    assert "request --walltime 12:00:00 or more" in check["message"]
+    assert "Ask for --walltime 12:00:00 or more" in check["message"]
+    # An evaluate does not checkpoint: it is told it stops.
+    assert "an evaluate job that reaches its walltime stops and must be " \
+        "submitted again" in check["message"]
 
 
 def test_a_credentialed_external_panel_judges_inline_and_is_priced(
@@ -204,7 +207,7 @@ def test_a_family_rate_is_used_when_history_exists(meta):
 
 
 def test_the_fallback_to_the_global_rate_is_labelled(meta):
-    """A number that refuses a researcher must say which number it was."""
+    """A number that warns a researcher must say which number it was."""
     _seed(meta, [_entry(220.0)])
     check = _walltime(_manifest(outcomeInstruments=["answerTokenLogprob"]),
                       1664)
@@ -382,15 +385,15 @@ def test_the_sharded_estimate_line_says_it_is_per_shard(meta):
     assert "PER-SHARD estimate" in check["message"]
 
 
-def test_the_refusal_threshold_follows_the_per_shard_estimate(meta):
+def test_the_warning_threshold_follows_the_per_shard_estimate(meta):
     """The field case (2026-08-28): a matrix whose per-shard need fits the
     requested walltime was refused because the estimate priced the WHOLE
     matrix against one shard's wall — demanding hours no single job would
     ever use, the exact over-ask the check itself warns against."""
     _seed(meta, [_entry(291.0)])
-    refused = _walltime(_manifest(), 7488, walltime="13:00:00")
-    assert refused["status"] == "warn"          # ≈38.6 h against 13 h
-    assert "request --walltime 39:00:00 or more" in refused["message"]
+    whole = _walltime(_manifest(), 7488, walltime="13:00:00")
+    assert whole["status"] == "warn"          # ≈38.6 h against 13 h
+    assert "Ask for --walltime 39:00:00 or more" in whole["message"]
     sharded = _walltime(_manifest(), 7488, walltime="13:00:00", shard_count=4)
     assert sharded["status"] == "ok"            # ≈9.9 h per shard
     assert sharded["data"]["estimatedHours"] == pytest.approx(9.90, abs=0.05)
