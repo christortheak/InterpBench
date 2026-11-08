@@ -1356,7 +1356,8 @@ class RunnerClient:
     def reconcile_jobs(self) -> dict:
         return self._json("POST", "/api/jobs/reconcile", json_body={})
 
-    def resubmit_job(self, job_id: str, walltime: str | None = None) -> dict:
+    def resubmit_job(self, job_id: str, walltime: str | None = None, *,
+                     retry_refused_walltime: bool = False) -> dict:
         from ..experiment import instrumentation_contract
         required = instrumentation_contract.requirements(self.job(job_id))
         if required:
@@ -1367,9 +1368,16 @@ class RunnerClient:
         # gets the submit's long wait, and a request that was sent and never
         # answered is an unknown outcome, never a failure.
         try:
+            body: dict = {"walltime": walltime} if walltime else {}
+            if retry_refused_walltime:
+                # Issue #12, review round 8: resume a run that gave up after
+                # a day of unexplained refusals at that same walltime, on
+                # purpose. Sent only when asked, so an older runner sees the
+                # request it always saw.
+                body["retryRefusedWalltime"] = True
             return self._json(
                 "POST", f"/api/jobs/{quote(job_id, safe='')}/resubmit",
-                json_body={"walltime": walltime} if walltime else {},
+                json_body=body,
                 timeout=self._submit_timeout if self._owns_client else None)
         except RunnerUnreachable as exc:
             if not exc.request_sent:

@@ -178,6 +178,68 @@ def test_a_resume_whose_sbatch_went_unanswered_is_worded_as_held(
     assert "now continue" not in envelope["message"]
 
 
+POLICY = ("sbatch: error: Batch job submission failed: Job violates "
+          "accounting/QOS policy (job submit limit, user's size and/or time "
+          "limits)")
+
+
+def test_a_gave_up_run_retries_the_same_walltime_only_when_asked(
+        wired_cli, fake_slurm, tmp_path, monkeypatch, capsys):
+    """Review round 8: a run that gave up after a day of refusals without a
+    reason is refused at the same walltime (65) with both ways on named,
+    and resumes at it with --retry-refused-walltime."""
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_AFTER", "0")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", LIMIT)
+    code, document, _ = _submit_split_run(wired_cli, tmp_path, monkeypatch,
+                                          capsys, name="clientgaveup")
+    assert code == 0, document
+    parent_id = document["result"]["jobId"]
+    first_id = document["result"]["shardJobIDs"][0]
+    jobs = wired_cli["state"].jobs
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", POLICY)
+    for backdate in (False, True):
+        first = jobs.get(first_id)
+        held = dict(first.result["held"])
+        held["nextAttemptAt"] = 0.0
+        if backdate:
+            held["unexplainedSince"] = held["lastAttemptAt"] - 24 * 3600 - 1
+        first.result = {**first.result, "held": held}
+        jobs.store.update(first)
+        jobs._held_deferred_until.clear()
+        jobs._held_retry_after = 0.0
+        jobs.poll_slurm()
+    assert jobs.get(parent_id).status == "failed"
+    assert "heldGaveUp" in jobs.get(parent_id).result
+    # The slots free.
+    monkeypatch.delenv("FAKE_SBATCH_FAIL_AFTER")
+    monkeypatch.delenv("FAKE_SBATCH_FAIL_MESSAGE")
+    calls = len(fake_slurm.calls("sbatch"))
+
+    code = client_cli.main(["runner", "resubmit", parent_id, *RUNNER,
+                            "--json"])
+    envelope = _documents(capsys.readouterr().out)[-1]
+    assert code == 65, envelope
+    walltime = jobs.get(parent_id).result["heldGaveUp"]["walltime"]
+    assert (f"refused its parts at walltime {walltime}, without a reason, "
+            "for a day") in envelope["error"]["reason"]
+    assert (f"steerlab runner resubmit {parent_id} --retry-refused-walltime "
+            "--runner <url>") in envelope["error"]["reason"]
+    assert len(fake_slurm.calls("sbatch")) == calls
+
+    code = client_cli.main(["runner", "resubmit", parent_id,
+                            "--retry-refused-walltime", *RUNNER, "--json"])
+    envelope = _documents(capsys.readouterr().out)[-1]
+    assert code == 0, envelope
+    resumed = envelope["result"]["response"]["resumedShards"]
+    assert [entry["held"] for entry in resumed] == [True, True, True]
+    # At the parts' own walltime, the controller submits them, in order.
+    jobs._held_retry_after = 0.0
+    jobs.poll_slurm()
+    assert len(fake_slurm.calls("sbatch")) == calls + 3
+    assert all(jobs.get(entry["jobId"]).status == "submitted"
+               for entry in resumed)
+
+
 def _documents(text: str) -> list:
     """Every JSON document printed, in order (the verb prints the runner's
     answer, then the envelope)."""

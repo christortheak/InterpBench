@@ -23,7 +23,9 @@ def run(client, invocation, common):
     elif verb == 'reconcile':
         document = client.reconcile_jobs()
     elif verb == 'resubmit':
-        document = client.resubmit_job(value, invocation.one('--walltime'))
+        document = client.resubmit_job(
+            value, invocation.one('--walltime'),
+            retry_refused_walltime=invocation.has('--retry-refused-walltime'))
     elif verb == 'recovery':
         document = client.job_recovery(value)
     else:
