@@ -32,12 +32,27 @@ import Testing
         case answerAfter(seconds: TimeInterval, extra: [String: Any] = [:])
         case fail(URLError.Code)
         case status(Int)
+        /// A success answer this client cannot decode: the job may well have
+        /// landed.
+        case undecodable
+    }
+
+    /// The server's inspection of a staged bundle: a study's files by path
+    /// and digest, packaged at `createdAt` into an archive `archive`.
+    static func inspection(createdAt: Double, archive: String, promptsDigest: String = "2") -> String {
+        let one = String(repeating: "1", count: 64)
+        let two = String(repeating: promptsDigest, count: 64)
+        return #"{"kind":"runBundle","experiment":"demo","experimentContentHash":"cafe","createdAt":"#
+            + "\(createdAt)" + #","bundleSha256":""# + archive + #"","entries":["#
+            + #"{"path":"prompts/tasks/t.jsonl","sha256":""# + two + #"","bytes":9},"#
+            + #"{"path":"experiments/demo/experiment.json","sha256":""# + one + #"","bytes":5}]}"#
     }
 
     func submit(
         _ args: [String] = ["--verb", "run", "--executor", "slurm"],
         behaviour: SubmitBehaviour = .answerAfter(seconds: 0),
-        advertisesKey: Bool = true
+        advertisesKey: Bool = true,
+        inspected: String? = nil
     ) async throws -> Outcome {
         let bodies = WiringLocked<[[String: JSONValue]]>([])
         let timeouts = WiringLocked<[TimeInterval]>([])
@@ -55,6 +70,7 @@ import Testing
                 ]
                 return (try JSONSerialization.data(withJSONObject: body), 200)
             case "/api/bundles/inspect":
+                if let inspected { return (Data(inspected.utf8), 200) }
                 return (Data(#"{"kind":"runBundle","experiment":"demo","bundleSha256":"\#(String(repeating: "d", count: 64))"}"#.utf8), 200)
             case "/api/studies/submit-bundle":
                 let data = SubmitBundleExecutorWiringTests.bodyData(from: request) ?? Data()
@@ -66,6 +82,8 @@ import Testing
                 case .fail(let code): throw URLError(code)
                 case .status(let status):
                     return (Data(#"{"detail":"gateway"}"#.utf8), status)
+                case .undecodable:
+                    return (Data(#"{"jobId":5,"experiment":"demo"}"#.utf8), 200)
                 case .answerAfter(let seconds, let extra):
                     if seconds > request.timeoutInterval { throw URLError(.timedOut) }
                     var reply: [String: Any] = [
@@ -144,7 +162,8 @@ import Testing
         #expect(outcome.envelope.error?.code == "submitOutcomeUnknown")
         let repair = outcome.envelope.error?.repairAction ?? ""
         #expect(repair.hasPrefix("steerlab-cli remote jobs --url http://127.0.0.1:1 --json"))
-        #expect(repair.contains("Sending the same submission again is safe"))
+        #expect(repair.contains("run the same command again with the same flags"))
+        #expect(repair.contains("A command with any flag changed is a new submission"))
         #expect(!repair.contains("stub"), "the token never reaches a repair")
         #expect(outcome.envelope.error?.reason.contains("not a failure") == true)
         #expect(outcome.envelope.result?["repeatIsSafe"] == .bool(true))
@@ -167,6 +186,15 @@ import Testing
             #expect(outcome.envelope.exitCode == 12)
             #expect(outcome.envelope.error?.code == "submitOutcomeUnknown")
         }
+    }
+
+    /// A success answer this client could not read: the job may have landed,
+    /// so it is unknown (12), never a failure (70).
+    @Test func anUndecodableSuccessAnswerIsUnknownToo() async throws {
+        let outcome = try await submit(behaviour: .undecodable)
+        #expect(outcome.envelope.exitCode == 12)
+        #expect(outcome.envelope.error?.code == "submitOutcomeUnknown")
+        #expect(outcome.envelope.error?.reason.contains("could not be read") == true)
     }
 
     /// A request that cannot have reached the server stays what it is.
@@ -215,9 +243,99 @@ import Testing
         }
         let key = try SubmissionKey.derive(
             body: Body(bundlePath: "/x.tar.gz", verb: "run", dryRun: false),
-            pathKey: "bundlePath", identityKey: "bundleSha256",
+            pathKey: "bundlePath", identityKey: "bundleContent",
             identity: String(repeating: "f", count: 64))
-        #expect(key == "7d123640164d76866a737e457c97322da19275130de077cab5230977acfec7f2")
+        #expect(key == "e5a4afb57cef35974fb494d3a5ababbeb528e81a8082c0f0a682a27b5cc195e1")
+    }
+
+    /// What a bundle contains, by hand (`printf … | shasum -a 256`): the
+    /// files in path order, never the packaging time or the archive digest.
+    /// The Python client is pinned to the same digest.
+    @Test func theContentDigestMatchesItsHandWrittenDerivation() throws {
+        let first = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(Self.inspection(createdAt: 1, archive: String(repeating: "f", count: 64)).utf8))
+        let repackaged = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(Self.inspection(createdAt: 2, archive: String(repeating: "e", count: 64)).utf8))
+        let expected = "06d989f81b0723e471b1241772721085cbf85a14a628ae82fcbba5393b78cb1f"
+        #expect(SubmissionKey.bundleContentDigest(first) == expected)
+        #expect(SubmissionKey.bundleContentDigest(repackaged) == expected)
+        #expect(SubmissionKey.bundleContentDigest(.object(["experiment": .string("demo")])) == nil)
+    }
+
+    /// THE review's probe on this client: the same command, `--parallel 4`,
+    /// against a study packaged twice (a new `createdAt`, a new archive
+    /// digest, the same files) carries one key; a different study does not.
+    @Test func aRepackagedStudyCarriesTheSameKey() async throws {
+        let args = ["--verb", "run", "--executor", "slurm", "--parallel", "4"]
+        let first = try await submit(
+            args, inspected: Self.inspection(createdAt: 1, archive: String(repeating: "a", count: 64)))
+        let again = try await submit(
+            args, inspected: Self.inspection(createdAt: 2, archive: String(repeating: "b", count: 64)))
+        let other = try await submit(
+            args, inspected: Self.inspection(
+                createdAt: 3, archive: String(repeating: "c", count: 64), promptsDigest: "3"))
+        let fewer = try await submit(
+            ["--verb", "run", "--executor", "slurm", "--parallel", "2"],
+            inspected: Self.inspection(createdAt: 4, archive: String(repeating: "d", count: 64)))
+        guard case .string(let key)? = first.submitBodies.first?["submissionKey"] else {
+            Issue.record("no submissionKey sent")
+            return
+        }
+        #expect(first.submitBodies.first?["parallelJobs"] == .number(4))
+        #expect(again.submitBodies.first?["submissionKey"] == .string(key))
+        #expect(other.submitBodies.first?["submissionKey"] != .string(key))
+        #expect(fewer.submitBodies.first?["submissionKey"] != .string(key))
+    }
+
+    /// The app repackages on every submit: two packagings of one unchanged
+    /// study differ in their time and archive, and agree in their content.
+    @Test func theAppsTwoPackagingsHaveOneContentDigest() throws {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "repack-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        ExperimentStore.rootOverride = temp
+        WorkspaceRoot.programmaticOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            WorkspaceRoot.programmaticOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+        let manifest = try ExperimentStore.create(
+            name: "repack", description: "", modelID: "test/model", modelRevision: "abc123")
+        func metadata(_ bundle: URL) throws -> (JSONValue, Data) {
+            let destination = temp.appending(component: "x-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            let process = Process()
+            process.executableURL = URL(filePath: "/usr/bin/tar")
+            process.arguments = ["-xzf", bundle.path, "-C", destination.path]
+            try process.run()
+            process.waitUntilExit()
+            let data = try Data(contentsOf: destination.appending(component: "steerlab-bundle.json"))
+            return (try JSONDecoder().decode(JSONValue.self, from: data), try Data(contentsOf: bundle))
+        }
+        let (first, firstBytes) = try metadata(try RunBundlePackager.packageExperiment(manifest))
+        let (second, secondBytes) = try metadata(try RunBundlePackager.packageExperiment(manifest))
+        #expect(firstBytes != secondBytes, "each packaging stamps its own time")
+        let digest = try #require(SubmissionKey.bundleContentDigest(first))
+        #expect(SubmissionKey.bundleContentDigest(second) == digest)
+    }
+
+    @Test func theAppSaysTheOutcomeIsUnknownInTheCommandLinesWords() {
+        let safe = SubmissionOutcomeUnknown(
+            endpoint: "http://server.test", cause: "the wait for an answer ran out",
+            repeatIsSafe: true, waitedSeconds: 3600)
+        #expect(safe.appSentence.contains("The outcome is unknown"))
+        #expect(safe.appSentence.contains("Check the server's jobs"))
+        #expect(safe.appSentence.contains("recognises a repeat of the same study"))
+        #expect(!safe.appSentence.contains("nothing is running"))
+        let older = SubmissionOutcomeUnknown(
+            endpoint: "http://server.test", cause: "the connection dropped",
+            repeatIsSafe: false, waitedSeconds: 3600)
+        #expect(older.appSentence.contains("would run the study twice"))
     }
 
     @Test func anAlreadySubmittedAnswerSaysSoAndChangesNothing() async throws {
@@ -267,7 +385,7 @@ import Testing
         // the digest of the manifest bytes the server returned
         // (d7d234f7…0602 for {"name":"demo"}) and the derivation's version.
         #expect(sent.first?.1["submissionKey"] == .string(
-            "63982d06bf44e20eb7402e2c86e2233e7574543fecff94597d44313776405f2b"))
+            "6cf379cc132b7b9b48b48f6f5f0474dacb5edea4c144ea76134089d6b04fc4e4"))
     }
 
     // MARK: - The walltime notice
