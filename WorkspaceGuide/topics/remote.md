@@ -49,21 +49,26 @@ A resume (resubmitting a checkpointed or cancelled job) waits as long, and
 one that was sent and never answered is `resumeOutcomeUnknown` (exit 12):
 check the job's status before resuming again.
 
-**What the walltime check refuses, and what it only advises.** The
-submission estimates the time its job needs from the cluster's own history
-for this kind of study, from the past jobs whose items were nearest this
-study's length. The estimate is advice: when it exceeds the requested
-walltime, the check warns and names the walltime to ask for (or splitting the
-study), and says that a run which reaches its walltime keeps its finished
-records and can be resumed. It refuses only when even the pace of a
-comparable past job with shorter items (the same kind of study, model and
-GPU, timed from its own records, without the model load) cannot fit the
-records in the requested walltime. When no past job's items were near this
-length, or the history does not record how long its items were and these are
-long, the estimate says so in a plain warning (`promptLengthNotice`, echoed
-as `result.walltimeNotice`). Tell the researcher, and ask for more time than
-the estimate or split the study; a short pilot of a few items measures the
-real pace.
+**The walltime check is advice, and never refuses.** The submission
+estimates the time its job needs from the cluster's own history for this
+kind of study: the past jobs whose items were nearest this study's length,
+each timed from its own records where known (without the model load). When
+the estimate exceeds the requested walltime, the check warns in plain words
+(`walltimeAdvice`, echoed as `result.walltimeNotice` and printed on stderr by
+both clients): the estimate and its basis, the walltime to ask for (the
+estimate rounded up to the hour), and splitting the study as the
+alternative; past twice the request it says the job is very likely to run
+out of time. A past job can be slow or fast for reasons that are not this
+study's, so no history-based figure refuses a submission. What happens at
+the walltime depends on the step (`atWalltime`): a `run` keeps the records it
+finished and a `sweep` the cells it finished, and either can be resumed; a
+pipeline can be resumed only when the walltime finds it in its run stage;
+`extract`, `validate`, and `evaluate`, and a pipeline in any other stage, stop
+and must be submitted again. When no past job's items were near this length,
+or the history does not record how long its items were and these are long,
+the estimate says so too (`promptLengthNotice`). Tell the researcher, and ask for more time than the
+estimate or split the study; a short pilot of a few items measures the real
+pace.
 
 <!-- client: mac -->
 
