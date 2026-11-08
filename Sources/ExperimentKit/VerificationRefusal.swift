@@ -186,6 +186,16 @@ enum VerificationRefusal {
             + "the study's judges. "
     }
 
+    /// How this client gives a temperature-0 draft one seed
+    /// (`StudySampling.greedySeedListProblem`). Said before the declaration
+    /// repair. Server twin: `verification_refusal.greedy_seed_list_repair`.
+    static func greedySeedListRepair(
+        name: String, program: String = ExperimentCLIHelp.program
+    ) -> String {
+        "Set one seed: \(program) experiment set-sampling \(name) --seeds <n>, "
+            + "or raise the temperature above 0 to sample. "
+    }
+
     /// The repair when no file changed and the declaration is the problem.
     static func declarationRepair(
         name: String, program: String = ExperimentCLIHelp.program
@@ -211,6 +221,9 @@ enum VerificationRefusal {
                 + (violations.contains(where: {
                     $0.hasPrefix(baselineOnlyPairedRubricPrefix)
                 }) ? pairedRubricRepair(name: name) : "")
+                + (violations.contains(where: {
+                    $0.hasPrefix(StudySampling.greedySeedListPrefix)
+                }) ? greedySeedListRepair(name: name) : "")
                 + declarationRepair(name: name)
         default: ExperimentTasks.pinDriftRepair(name: name, violations: violations)
         }

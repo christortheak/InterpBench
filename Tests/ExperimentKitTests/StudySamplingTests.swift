@@ -82,6 +82,8 @@ struct StudySamplingTests {
             let sampleCount: Int
             let records: [Record]
             let advisories: [String]
+            /// The run-start, submission, and draft-verify refusal, or nil.
+            let refusal: String?
         }
 
         /// The manifest's sampling fields; an absent key is undeclared.
@@ -124,7 +126,7 @@ struct StudySamplingTests {
     /// items with the same text and different IDs draw different streams.
     @Test func seedRuleMatchesThePythonEngineOnTheSharedFixture() throws {
         let fixture = try seedFixture()
-        #expect(fixture.cases.count >= 7)
+        #expect(fixture.cases.count >= 10)
         #expect(Set(fixture.prompts.map(\.prompt)).count == 1)
         for value in fixture.cases {
             let study = manifest(value.manifest)
@@ -146,7 +148,26 @@ struct StudySamplingTests {
             }
             #expect(records == value.records, "\(value.label)")
             #expect(StudySampling.unusedSeedSettings(study) == value.advisories, "\(value.label)")
+            #expect(StudySampling.greedySeedListProblem(study) == value.refusal, "\(value.label)")
         }
+    }
+
+    /// Temperature 0 with several seeds (public issue #9) is refused under
+    /// every seed policy, and no advisory calls the list one with no effect.
+    @Test func aGreedyStudyWithSeveralSeedsIsRefusedAndNeverAdvised() throws {
+        let refused = try seedFixture().cases.filter { $0.refusal != nil }
+        #expect(Set(refused.map(\.label)) == [
+            "manifestSeeds, greedy, seed list", "derivedSHA256, greedy, seed list",
+            "undeclared, greedy, seed list",
+        ])
+        for value in refused {
+            #expect(value.advisories.isEmpty)
+            #expect(value.refusal?.hasPrefix(StudySampling.greedySeedListPrefix) == true)
+        }
+        var panel = ExperimentManifest(name: "panel", description: "", modelID: "test/model")
+        panel.studyKind = .multiAgent
+        panel.seeds = [1, 2, 3]
+        #expect(StudySampling.greedySeedListProblem(panel) == nil)
     }
 
     @Test func aDeclaredDerivedPolicyDerivesSeedsWithOneSamplePerItem() throws {

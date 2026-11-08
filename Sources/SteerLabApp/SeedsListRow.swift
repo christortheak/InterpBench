@@ -7,9 +7,10 @@ import SwiftUI
 /// had a picker while the list it indexes into could only ever be the
 /// default `[20260610]` or a confirm-draft carry. Renders only under the
 /// fixed-list policy (the derived policy never reads it), and the help
-/// text carries the greedy caveat: at temperature 0 both engines decode
-/// greedily and stamp `seedInert`, so these seeds are causally meaningful
-/// only above temperature 0 (on either engine).
+/// text carries the greedy rule: at temperature 0 both engines decode
+/// greedily, so every seed gives the same response and a study lists one
+/// (`StudySampling.greedySeedListProblem`; verify refuses more, public issue
+/// #9). The parser is the one `set-sampling --seeds` uses.
 ///
 /// Pattern: `OrdinalScaleInstrumentControls` — the store's draft-edit gate,
 /// never a parallel save path.
@@ -28,8 +29,9 @@ struct SeedsListControls: View {
         "the fixed seed list a stochastic run indexes into on either engine "
         + "(sample k of a record uses seed k). Comma-separated whole numbers, "
         + "order preserved, duplicates refused. At temperature 0 decoding is "
-        + "greedy and the records stamp seedInert — the seeds then carry no "
-        + "causal meaning"
+        + "greedy and every seed gives the same response, so list one seed: "
+        + "a study at temperature 0 with several is refused at verify, "
+        + "because each seed would write an identical record per item"
 
     var body: some View {
         Group {
@@ -84,18 +86,15 @@ struct SeedsListControls: View {
     }
 
     private func commit() {
-        let parts = seedsText
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        var seeds: [UInt64] = []
-        for part in parts {
-            guard let seed = UInt64(part) else {
-                errorText = "'\(part)' is not a whole number seed"
-                confirmationText = nil
-                return
-            }
-            seeds.append(seed)
+        let seeds: [UInt64]
+        do {
+            seeds = try ExperimentStore.parseSeedList(
+                seedsText, experimentName: manifest.name)
+        } catch {
+            errorText = (error as? ExperimentError)?.reason
+                ?? error.localizedDescription
+            confirmationText = nil
+            return
         }
         do {
             _ = try ExperimentStore.setSeeds(

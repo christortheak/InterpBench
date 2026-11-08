@@ -16,6 +16,9 @@
     "promptMode" : "chatAssistant",
     "samplesPerItem" : 25,
     "seedPolicy" : "derivedSHA256",
+    "seeds" : [
+      "20260610"
+    ],
     "temperature" : 0.7
   },
   "schemaVersion" : 1,

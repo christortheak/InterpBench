@@ -714,14 +714,14 @@ public enum ExperimentCLIParser {
                 + "), the stochastic replication policy (samples per "
                 + "item × seed policy: "
                 + ExperimentStore.knownSeedPolicies.joined(separator: ", ")
-                + "), and the reasoning protocol (effort "
+                + "), the fixed seed list, and the reasoning protocol (effort "
                 + ReasoningEffort.vocabulary.joined(separator: ", ")
                 + " × the reasoning block's own token cap; --max-tokens is "
                 + "then the answer budget).",
             valueFlags: [
                 "--temperature", "--max-tokens", "--prompt-mode",
                 "--samples-per-item", "--seed-policy",
-                "--reasoning-effort", "--reasoning-max-tokens",
+                "--reasoning-effort", "--reasoning-max-tokens", "--seeds",
             ]),
         // The legal values come from `ExclusionEngine.ruleVocabulary` — the
         // SAME constant the refusal prints — so `--help` and the refusal

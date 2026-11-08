@@ -3485,6 +3485,22 @@ public enum ExperimentTasks {
         throw ExperimentError(reason: probeMeasurementsNotExecutableProblem)
     }
 
+    /// The run-start refusal for a temperature-0 study with several seeds
+    /// (public issue #9). This engine used to run it, writing one identical
+    /// greedy record per listed seed per item, each stamped `seedInert`, and
+    /// analysis counted them as independent observations. A draft is refused
+    /// by `verify` already (in `loadVerified`, just before this); a study
+    /// frozen under an older release still verifies, so it meets the rule
+    /// here, before anything is read or loaded. Server twin:
+    /// `study_admission.settings_refusal`, same sentence.
+    static func refuseGreedySeedList(_ manifest: ExperimentManifest) throws {
+        guard let problem = StudySampling.greedySeedListProblem(manifest) else { return }
+        throw ExperimentError.refusing(
+            .studyDeclaration, problem,
+            repair: StudySampling.greedySeedListRepair(
+                name: manifest.name, frozen: manifest.status != .draft))
+    }
+
     static let probeMeasurementsNotExecutableProblem =
         "This study records probe measurements, and the engine built into this "
         + "app (\u{201C}\(ComputeChoice.macQuickStart.title)\u{201D}) does not "
@@ -3506,7 +3522,10 @@ public enum ExperimentTasks {
         // readout it did not record (release review 2026-10-04, F1). Only
         // the run path refuses; verify and freeze stay open.
         try refuseUnrecordableReadout(manifest)
-        // Set only once the run is going ahead: the two refusals above are
+        // Temperature 0 with several seeds would write identical records
+        // (public issue #9): refused before anything is read or loaded.
+        try refuseGreedySeedList(manifest)
+        // Set only once the run is going ahead: the refusals above are
         // about measurements this engine does not take, and a refused run
         // has no business touching the GPU runtime at all.
         MLX.Memory.cacheLimit = 2 * 1024 * 1024 * 1024

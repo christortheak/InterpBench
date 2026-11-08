@@ -158,6 +158,7 @@ public enum CLIFlagVocabulary {
         "experiment set-sampling --reasoning-effort":
             "<" + ReasoningEffort.vocabulary.joined(separator: "|") + ">",
         "experiment set-sampling --reasoning-max-tokens": "<n>",
+        "experiment set-sampling --seeds": "<n>[,<n>…]",
         "remote fetch --out": "<dir>",
         "remote import --out": "<dir>",
         "results export --out": "<dir>",
@@ -538,6 +539,11 @@ public enum CLIFlagVocabulary {
             + "--max-tokens is then the answer budget, counted from the token "
             + "after it. Required beside a non-off --reasoning-effort, refused "
             + "beside off.",
+        "experiment set-sampling --seeds":
+            "The fixed seed list, replacing the one the study has: "
+            + "comma-separated whole numbers, order kept, each seed once. Under "
+            + "the fixed list each item runs once per seed; at temperature 0 "
+            + "every seed gives the same response, so list one.",
         "experiment create --model": "The model this experiment is pinned to (required).",
         "vectors backfill-norms --model": "Load this model for the measurement.",
         "vectors mirror-poles --concept":

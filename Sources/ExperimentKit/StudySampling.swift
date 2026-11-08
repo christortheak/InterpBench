@@ -68,17 +68,59 @@ public enum StudySampling {
         return manifest.seeds[sampleIndex]
     }
 
+    /// How `greedySeedListProblem`'s sentence opens, on both engines.
+    /// `VerificationRefusal` matches it to name the repair verb, and it says
+    /// none of the words a drift sentence uses. Python twin:
+    /// `sampling.GREEDY_SEED_LIST_PREFIX`.
+    public static let greedySeedListPrefix =
+        "at temperature 0 decoding is greedy, so every seed gives the same response"
+
+    /// Why an ordinary study at temperature 0 must list exactly one seed
+    /// (public issue #9), or nil. Under the fixed seed list an item runs once
+    /// per listed seed; at temperature 0 every seed gives the same greedy
+    /// response, so N seeds would write N identical records per item (each
+    /// stamped `seedInert`) and analysis would count them as N observations.
+    /// A panel never reads the list. One sentence everywhere: a `verify`
+    /// violation on a draft (so `freeze` refuses), the engine's submission
+    /// preflight, and both engines' run start. Byte-identical to the Python
+    /// twin `sampling.greedy_seed_list_problem`; the shared fixture
+    /// `Tests/Fixtures/cross-engine/study-sampling-seeds.json` pins both.
+    public static func greedySeedListProblem(_ manifest: ExperimentManifest) -> String? {
+        guard manifest.studyKind != .multiAgent, manifest.temperature <= 0 else {
+            return nil
+        }
+        let count = manifest.seeds.count
+        guard count > 1 else { return nil }
+        return "\(greedySeedListPrefix), and the study's \(count) seeds would "
+            + "write \(count) identical records per item. Set one seed, or "
+            + "raise the temperature above 0 to sample"
+    }
+
+    /// The run-start repair for `greedySeedListProblem`: one seed with
+    /// `set-sampling --seeds`, on a duplicate when the study is frozen.
+    /// Python twin: `sampling.greedy_seed_list_repair`, as the Mac command
+    /// line spells it.
+    public static func greedySeedListRepair(name: String, frozen: Bool) -> String {
+        let target = frozen ? "\(name)-v2" : name
+        return (frozen ? "steerlab-cli experiment duplicate \(name) \(target) && " : "")
+            + "steerlab-cli experiment set-sampling \(target) --seeds <n>"
+            + "  (one seed; or raise the temperature above 0 to sample)"
+    }
+
     /// Declared seed settings an ordinary study's run will not read — said
     /// at `verify` and at `set-sampling`, never refused (advisory code
     /// `seedSettingNotUsed`). A panel says nothing here: its turns take seeds
-    /// by their own rule. Byte-identical to the Python twin
-    /// `sampling.unused_seed_settings`; the shared fixture
+    /// by their own rule. Nor does a temperature-0 study with several seeds:
+    /// it is refused (`greedySeedListProblem`), and a setting a study is
+    /// refused for is never called one with "no effect". Byte-identical to
+    /// the Python twin `sampling.unused_seed_settings`; the shared fixture
     /// `Tests/Fixtures/cross-engine/study-sampling-seeds.json` pins both.
     public static func unusedSeedSettings(_ manifest: ExperimentManifest) -> [String] {
         guard manifest.seedPolicy == "derivedSHA256", manifest.studyKind != .multiAgent else {
             return []
         }
         guard manifest.temperature > 0 else {
+            if greedySeedListProblem(manifest) != nil { return [] }
             return [
                 "seedPolicy derivedSHA256 has no effect at temperature 0: "
                     + "decoding is greedy and no seed is used. Seeds are derived "

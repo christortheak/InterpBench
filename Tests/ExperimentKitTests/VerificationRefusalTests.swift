@@ -208,6 +208,14 @@ import Testing
         let unpinned = VerificationRefusal.baselineOnlyUnpinnedPromptsViolation
         cases.append([unpinned])
         cases.append([unpinned, pairedRubric, Self.declarationSentences[0]])
+        // A temperature-0 draft with several seeds (public issue #9): a
+        // declaration problem whose repair names `set-sampling --seeds`.
+        var greedy = ExperimentManifest(name: "demo", description: "", modelID: Self.model)
+        greedy.temperature = 0
+        greedy.seeds = [11, 22, 33]
+        let greedySeeds = try #require(StudySampling.greedySeedListProblem(greedy))
+        cases.append([greedySeeds])
+        cases.append([unpinned, greedySeeds, Self.declarationSentences[0]])
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         let python = ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"] ?? "python3"
@@ -216,6 +224,7 @@ import Testing
             """
             import json, sys
             from steerlab_server.experiment import verification_refusal as r
+            from steerlab_server.experiment import sampling as s
             rows = []
             for case in json.loads(sys.argv[1]):
                 gate = r.gate(case)
@@ -227,7 +236,8 @@ import Testing
             print(json.dumps({'rows': rows, 'markers': list(r.DRIFT_MARKERS),
                               'sentinels': [r.EMPTY_MODEL_OUTPUT_VIOLATION, r.EMPTY_MULTI_AGENT_VIOLATION],
                               'pairedRubric': r.baseline_only_paired_rubric_violation('prompts/rubrics/paired.md'),
-                              'unpinnedPrompts': r.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION}))
+                              'unpinnedPrompts': r.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION,
+                              'greedySeeds': s.greedy_seed_list_problem(0, [11, 22, 33])}))
             """,
             String(decoding: try JSONEncoder().encode(cases), as: UTF8.self),
         ]
@@ -257,11 +267,13 @@ import Testing
             let sentinels: [String]
             let pairedRubric: String
             let unpinnedPrompts: String
+            let greedySeeds: String
         }
         let answer = try JSONDecoder().decode(Answer.self, from: bytes)
         #expect(answer.markers == VerificationRefusal.driftMarkers)
         #expect(answer.pairedRubric == pairedRubric)
         #expect(answer.unpinnedPrompts == unpinned)
+        #expect(answer.greedySeeds == greedySeeds)
         #expect(
             answer.sentinels == [
                 VerificationRefusal.emptyModelOutputViolation,

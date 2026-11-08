@@ -4969,7 +4969,7 @@ public struct ExperimentCLIRunner: Sendable {
                         + ExperimentStore.knownSeedPolicies.joined(separator: "|")
                         + "] [--reasoning-effort "
                         + ReasoningEffort.vocabulary.joined(separator: "|")
-                        + "] [--reasoning-max-tokens <n>]"
+                        + "] [--reasoning-max-tokens <n>] [--seeds <n>[,<n>…]]"
                         + "  (\"\" clears --prompt-mode/--seed-policy; "
                         + "--samples-per-item 1 clears to the deterministic "
                         + "default; a non-off --reasoning-effort needs "
@@ -4979,7 +4979,7 @@ public struct ExperimentCLIRunner: Sendable {
             let samplingFlags = [
                 "--temperature", "--max-tokens", "--prompt-mode",
                 "--samples-per-item", "--seed-policy",
-                "--reasoning-effort", "--reasoning-max-tokens",
+                "--reasoning-effort", "--reasoning-max-tokens", "--seeds",
             ]
             guard samplingFlags.contains(where: args.contains) else {
                 throw ExperimentError.malformed(
@@ -5035,6 +5035,14 @@ public struct ExperimentCLIRunner: Sendable {
                 }
                 declaredReasoningMaxTokens = value
             }
+            // The fixed seed list, by the app's seed-row rules: whole
+            // numbers, order kept, duplicates refused. Before this flag the
+            // list was writable only from the app or a study pack, so a
+            // duplicated temperature-0 study could not be given its one seed
+            // from the command line (public issue #9).
+            let declaredSeeds = try flag("--seeds").map {
+                try ExperimentStore.parseSeedList($0, experimentName: args[1])
+            }
             let sampling = try ExperimentStore.setSamplingProtocol(
                 temperature: declaredTemperature,
                 maxTokens: declaredMaxTokens,
@@ -5043,6 +5051,7 @@ public struct ExperimentCLIRunner: Sendable {
                 seedPolicy: flag("--seed-policy"),
                 reasoningEffort: flag("--reasoning-effort"),
                 reasoningMaxTokens: declaredReasoningMaxTokens,
+                seeds: declaredSeeds,
                 experimentName: args[1])
             // The design line the panel shows, said where the values landed:
             // the SAMPLES × TEMPERATURE × TOKENS product is the study's cost
@@ -5073,6 +5082,10 @@ public struct ExperimentCLIRunner: Sendable {
             }
             if let policy = sampling.seedPolicy {
                 samplingLine += "  ·  seed policy \(policy)"
+            }
+            if declaredSeeds != nil {
+                samplingLine += "  ·  seeds "
+                    + sampling.seeds.map(String.init).joined(separator: ", ")
             }
             sink.out(samplingLine)
             var samplingAdvisories: [SteerLabCLIEnvelope.Advisory] = []
@@ -5118,6 +5131,9 @@ public struct ExperimentCLIRunner: Sendable {
                     "seedPolicy": sampling.seedPolicy.map {
                         JSONValue.string($0)
                     } ?? .null,
+                    // As text: a UInt64 seed above 2^53 would lose digits as
+                    // a JSON number.
+                    "seeds": .array(sampling.seeds.map { .string(String($0)) }),
                 ],
                 advisories: samplingAdvisories,
                 // The joint stochastic rules (samplesPerItem > 1 needs

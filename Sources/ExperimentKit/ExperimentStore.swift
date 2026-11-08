@@ -1544,18 +1544,33 @@ public enum ExperimentStore {
     /// SAME CALL as an off effort is refused, because that call says two
     /// things. Writing the effort drops the legacy `qwenThinkingEnabled`
     /// from the draft, so a draft never spells one parameter twice.
+    ///
+    /// `seeds` replaces the fixed seed list (`setSeeds`'s rules: never
+    /// empty, no duplicates, order kept). It is how a duplicated
+    /// temperature-0 study is given the one seed its run needs (public issue
+    /// #9); that joint rule, too, stays a verify() violation.
     @discardableResult
     public static func setSamplingProtocol(
         temperature: Double? = nil, maxTokens: Int? = nil,
         promptMode: String? = nil, samplesPerItem: Int? = nil,
         seedPolicy: String? = nil, reasoningEffort: String? = nil,
-        reasoningMaxTokens: Int? = nil, experimentName: String
+        reasoningMaxTokens: Int? = nil, seeds: [UInt64]? = nil,
+        experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
             let capabilities = (reasoningEffort != nil || reasoningMaxTokens != nil)
                 ? modelCapabilities(for: manifest) : nil
-            try ManifestDraftEdits.setSamplingProtocol(temperature: temperature, maxTokens: maxTokens, promptMode: promptMode, samplesPerItem: samplesPerItem, seedPolicy: seedPolicy, reasoningEffort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens, experimentName: experimentName, manifest: &manifest, capabilities: capabilities)
+            try ManifestDraftEdits.setSamplingProtocol(temperature: temperature, maxTokens: maxTokens, promptMode: promptMode, samplesPerItem: samplesPerItem, seedPolicy: seedPolicy, reasoningEffort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens, seeds: seeds, experimentName: experimentName, manifest: &manifest, capabilities: capabilities)
         }
+    }
+
+    /// A seed list as `set-sampling --seeds` and the app's seed row spell
+    /// it: comma-separated whole numbers, order kept (`ManifestDraftEdits.
+    /// parseSeeds`). A word that is not one is a malformed invocation.
+    public static func parseSeedList(
+        _ text: String, experimentName: String
+    ) throws -> [UInt64] {
+        try ManifestDraftEdits.parseSeeds(text, experimentName: experimentName)
     }
 
     /// The layer(s) convergent validity reads at (D4) — declared, never
@@ -1580,7 +1595,8 @@ public enum ExperimentStore {
     }
 
     /// The manifest's fixed seed list (audit 2026-08-01: only the default
-    /// [20260610] and the confirm-draft carry could ever populate it).
+    /// [20260610] and the confirm-draft carry could ever populate it; the
+    /// app's seed row and `set-sampling --seeds` write it now).
     /// Refuses empty (the fixed-list policy indexes into this list) and
     /// duplicates (two identical seeds generate two identical records that
     /// look like independent samples). Order is data — it is preserved.
@@ -3718,6 +3734,19 @@ public enum ExperimentStore {
                     "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' "
                         + "(per-record seeds derived from condition/prompt/sampleIndex)")
             }
+        }
+        // …and at temperature 0 an ordinary study lists exactly one seed
+        // (public issue #9): every seed gives the same greedy response, so
+        // each extra seed writes an identical record per item. A DRAFT only,
+        // so freeze refuses it; a study frozen under an older release is
+        // refused where it would run (run start, `refuseGreedySeedList`, and
+        // the engine's submission preflight), because verify also admits
+        // analysis and evaluation of runs that already exist. Server twin:
+        // Manifest.verify, same sentence.
+        if manifest.status == .draft,
+            let greedySeeds = StudySampling.greedySeedListProblem(manifest)
+        {
+            violations.append(greedySeeds)
         }
         // The declared prompt reading (issue #6): a block outside the
         // contract is a violation, never a silent fallback to a device

@@ -115,9 +115,14 @@ enum ManifestDraftEdits {
         temperature: Double? = nil, maxTokens: Int? = nil,
         promptMode: String? = nil, samplesPerItem: Int? = nil,
         seedPolicy: String? = nil, reasoningEffort: String? = nil,
-        reasoningMaxTokens: Int? = nil, experimentName: String, manifest: inout ExperimentManifest,
+        reasoningMaxTokens: Int? = nil, seeds: [UInt64]? = nil,
+        experimentName: String, manifest: inout ExperimentManifest,
         capabilities: ModelCapabilities? = nil
     ) throws {
+        // The fixed seed list, by the app's seed-row rules (`setSeeds`).
+        if let seeds {
+            try setSeeds(seeds, experimentName: experimentName, manifest: &manifest)
+        }
         if reasoningEffort != nil || reasoningMaxTokens != nil {
             let mergedEffort =
                 reasoningEffort ?? manifest.resolvedReasoningEffort.rawValue
@@ -200,21 +205,49 @@ enum ManifestDraftEdits {
         }
     }
 
+    /// The fixed seed list: never empty, no duplicates, order kept. A value
+    /// outside the rules is a malformed invocation (64), as on the client's
+    /// `set-protocol --set seeds=…` (`draft_protocol_policy`, same sentences).
     static func setSeeds(
         _ seeds: [UInt64], experimentName: String, manifest: inout ExperimentManifest
     ) throws {
         guard !seeds.isEmpty else {
-            throw ExperimentError(
-                reason: "the seed list cannot be empty — the fixed-list "
-                    + "seed policy indexes into it")
+            throw ExperimentError.malformed(
+                "the seed list cannot be empty — the fixed-list "
+                    + "seed policy indexes into it",
+                repair: "steerlab-cli experiment set-sampling \(experimentName) "
+                    + "--seeds <n>")
         }
         guard Set(seeds).count == seeds.count else {
-            throw ExperimentError(
-                reason: "duplicate seeds — two identical seeds generate "
+            throw ExperimentError.malformed(
+                "duplicate seeds — two identical seeds generate "
                     + "two identical records that would masquerade as "
-                    + "independent samples")
+                    + "independent samples",
+                repair: "steerlab-cli experiment set-sampling \(experimentName) "
+                    + "--seeds <n>[,<n>…]  (each seed once)")
         }
         manifest.seeds = seeds
+    }
+
+    /// The seed list as the app's seed row and `set-sampling --seeds` spell
+    /// it: comma-separated whole numbers, blanks between commas ignored,
+    /// order kept. The list's own rules (never empty, no duplicates) are
+    /// `setSeeds`'s, checked when it is written.
+    static func parseSeeds(_ text: String, experimentName: String) throws -> [UInt64] {
+        var seeds: [UInt64] = []
+        for part in text.split(separator: ",", omittingEmptySubsequences: false) {
+            let trimmed = part.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            guard let seed = UInt64(trimmed) else {
+                throw ExperimentError.malformed(
+                    "'\(trimmed)' is not a whole number seed",
+                    repair: "steerlab-cli experiment set-sampling \(experimentName) "
+                        + "--seeds <n>[,<n>…]  (whole numbers from 0 to "
+                        + "\(UInt64.max))")
+            }
+            seeds.append(seed)
+        }
+        return seeds
     }
 
     static func setPromotionRule(
