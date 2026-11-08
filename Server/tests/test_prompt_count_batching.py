@@ -67,7 +67,7 @@ def _setting(mode=prompt_render.CHAT_ASSISTANT, system=None):
 
 def _items():
     rng = random.Random(11)
-    words = ["record", "shows", "the", "motion", "was", "denied", "and"]
+    words = ["garden", "river", "the", "lamp", "was", "quiet", "and"]
 
     def text(n):
         return " ".join(rng.choice(words) for _ in range(n))
@@ -142,11 +142,11 @@ def test_real_tokenizers_count_identically(model_id, monkeypatch):
     except Exception as exc:  # noqa: BLE001 - not in this machine's cache
         pytest.skip(f"{model_id} is not in this machine's model cache ({exc})")
     rng = random.Random(3)
-    words = ["court", "held", "that", "the", "statute", "applies", "witness",
-             "testified", "record", "ruling", "of", "to", "in", "a", "é", "—"]
+    words = ["garden", "river", "lamp", "the", "window", "orange", "seven",
+             "bridge", "paper", "cloud", "of", "to", "in", "a", "é", "—"]
     prompts = []
     for i in range(6):
-        turns = [{"role": "system", "content": "You read records."}]
+        turns = [{"role": "system", "content": "You read short notes."}]
         for t in range(6):
             turns.append({"role": "user" if t % 2 == 0 else "assistant",
                           "content": " ".join(rng.choice(words)
@@ -154,7 +154,7 @@ def test_real_tokenizers_count_identically(model_id, monkeypatch):
         turns.append({"role": "user", "content": "Answer A or B."})
         prompts.append({"id": f"p{i}", "prompt": "Answer A or B.",
                         "transcript": turns})
-    prompts.append({"id": "plain", "prompt": " ".join(["record"] * 3000)})
+    prompts.append({"id": "plain", "prompt": " ".join(["lantern"] * 3000)})
     settings = [_setting(), _setting(system="Be brief.")]
     monkeypatch.setattr(prompt_reading, "COUNT_BATCH_CHARACTERS", 60_000)
     expected = [[prompt_render.render_for_generation(
