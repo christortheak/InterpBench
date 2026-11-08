@@ -4491,9 +4491,19 @@ Consequences, stated plainly:
   the run. Alone, for a request no part has had accepted, it may be the job
   count or a per-job size or time limit, which never frees: at submission
   the fan-out is refused, and for a held part (at a tick, or at Resume) the
-  part stays held, never fails its run on it, keeps no other run waiting,
-  and its note says the scheduler gave no reason and to check the walltime
-  against the cluster's limit for one job (review round 5). Any other limit
+  part stays held, keeps no other run waiting, and its note says the
+  scheduler gave no reason and to check the walltime against the cluster's
+  limit for one job (review round 5). Each such refusal of the request
+  waits longer than the last (1, 2, 4, 8, 16, then 30 minutes, stamped on
+  the part as `unexplainedRefusals`, `unexplainedSince`, and
+  `nextAttemptAt`), and 24 hours of them fail the run with the scheduler's
+  words and the walltime repair; the run stays resumable (`heldGaveUp`, and
+  Resume is offered). A named job count, or the part's acceptance, ends the
+  count. A Resume whose first held part is refused that way answers
+  `heldUnexplained: true` with `schedulerMessage`, says the parts are held,
+  not running, and both clients report it as `pending` (12) with the next
+  step: read the run's status, and if its parts stay held, check the
+  walltime (review round 6). Any other limit
   code beside it (`QOSMaxWallDurationPerJobLimit`,
   `QOSMaxGRESPerJob`, `PartitionTimeLimit`, …) never waits: at submission
   the fan-out is refused, and for a held part the run is cancelled and failed

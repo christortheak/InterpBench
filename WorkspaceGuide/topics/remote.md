@@ -136,7 +136,11 @@ repair in the run's error; report it, and do not wait for it. When the
 scheduler refuses with only "Job violates accounting/QOS policy" and no
 reason code, it may be the job limit or a limit on the request, so the part
 stays held and its note says the scheduler gave no reason; if it stays held,
-check the walltime against the cluster's limit for one job. An engine older than this answers a
+check the walltime against the cluster's limit for one job. SteerLab asks
+again less and less often, and after 24 hours of such refusals fails the run
+with the scheduler's words; Resume then continues it. A Resume answered that
+way says its parts are held, not running (`heldUnexplained`), and is
+`pending` (12): read the run's status, and tell the researcher. An engine older than this answers a
 refused fan-out as a success, so on one, check `steerlab-cli remote jobs`
 and count the parts. **And stagger submissions where the site caps queued jobs per user:**
 K shards are K independent scheduler submissions, so a fan-out that crosses
