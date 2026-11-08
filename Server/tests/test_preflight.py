@@ -251,13 +251,20 @@ def test_walltime_warns_without_history(study_site, tmp_path):
     assert "no throughput history for acme/tiny on L4" in walltime["message"]
 
 
-def test_walltime_fail_when_estimate_exceeds_request(study_site, tmp_path):
+def test_walltime_warns_when_the_estimate_exceeds_the_request(study_site,
+                                                              tmp_path):
+    """Review round 4 (issue #11): an estimate is advice. Over the requested
+    walltime it warns, with the walltime to ask for, rather than refusing a
+    study that may well fit."""
     _seed_throughput(study_site["meta"])
     walltime = _check(_submit(tmp_path, resources={
         "gres": "gpu:L4:1", "walltime": "00:30:00",
         "gpuVram": {"L4": 24}}).preflight, "walltime")
-    assert walltime["status"] == "fail"     # 0.9 h estimate > 0.5 h requested
-    assert "raise the walltime or split the matrix" in walltime["message"]
+    # 6 records ÷ 10/h × 1.5 + 0.25 = 0.9 + 0.25 = 1.15 h, over 0.5 h.
+    assert walltime["status"] == "warn"
+    assert walltime["data"]["estimatedHours"] == 1.15
+    assert "request --walltime 02:00:00 or more" in walltime["message"]
+    assert "keeps the records it finished" in walltime["message"]
 
 
 def test_walltime_warn_above_80_percent(study_site, tmp_path):

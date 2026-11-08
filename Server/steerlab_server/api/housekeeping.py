@@ -654,12 +654,48 @@ def throughput_lookup(model_id: str, gpu_type: str | None,
 PROMPT_HISTORY_JOBS = 64
 
 
+def _number(value) -> bool:
+    """A real positive number: never a bool (``True`` is not one record)."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and value > 0)
+
+
+def record_pace_seconds(result: dict | None) -> float | None:
+    """A job's compute time per record, from its own records: (last record −
+    first record) ÷ (records − 1), the ``recordPace`` stamp the bundle
+    executor writes (``resume.RecordPace``). It leaves out the model load and
+    startup before the first record. None when the job carries no stamp
+    (every job from before it) or fewer than two records."""
+    result = result if isinstance(result, dict) else {}
+    pace = result.get("recordPace")
+    if not isinstance(pace, dict):
+        nested = result.get("runResult")
+        pace = nested.get("recordPace") if isinstance(nested, dict) else None
+    if not isinstance(pace, dict):
+        return None
+    count, first, last = (pace.get("records"), pace.get("firstRecordAt"),
+                          pace.get("lastRecordAt"))
+    if not (_number(count) and count >= 2 and _number(first) and _number(last)
+            and last >= first):
+        return None
+    seconds = (float(last) - float(first)) / (float(count) - 1.0)
+    return seconds if seconds > 0 else None
+
+
+#: How many stamped jobs a family entry keeps for pricing by prompt length
+#: (issue #11): the most recent, oldest dropped first.
+PROMPT_HISTORY_JOBS = 64
+
+
 def prompt_history(entry: dict | None) -> list[dict] | None:
     """A family entry's stamped jobs (``promptTokens.jobs``, issue #11), each
-    ``{"perRecord", "records", "hours", "hoursPerRecord"}``: the prompt tokens
-    each record read, how many records the job wrote, and how long it took.
-    None when the entry has none, or only a shape this release does not
-    read (a development build's pooled block)."""
+    ``{"perRecord", "records", "hours", "hoursPerRecord"}`` and, where the job
+    carried them, ``computeSecondsPerRecord`` (its records' own pace, without
+    the model load), ``maxTokens`` (the generated-token budget of a record)
+    and ``jobId``. ``hoursPerRecord`` is the compute pace where it is known,
+    else the job's whole elapsed time over its records. None when the entry
+    has none, or only a shape this release does not read. A value that is
+    not a real number (a bool included) disqualifies its row."""
     block = (entry or {}).get("promptTokens")
     jobs = block.get("jobs") if isinstance(block, dict) else None
     if not isinstance(jobs, list):
@@ -670,24 +706,48 @@ def prompt_history(entry: dict | None) -> list[dict] | None:
             continue
         per, records, hours = (job.get("perRecord"), job.get("records"),
                                job.get("hours"))
-        if all(isinstance(v, (int, float)) and v > 0
-               for v in (per, records, hours)):
-            out.append({"perRecord": per, "records": records, "hours": hours,
-                        "hoursPerRecord": float(hours) / float(records)})
+        if not all(_number(v) for v in (per, records, hours)):
+            continue
+        row = {"perRecord": per, "records": records, "hours": hours,
+               "hoursPerRecord": float(hours) / float(records)}
+        compute = job.get("computeSecondsPerRecord")
+        if _number(compute):
+            row["computeSecondsPerRecord"] = float(compute)
+            row["hoursPerRecord"] = float(compute) / 3600.0
+        if _number(job.get("maxTokens")):
+            row["maxTokens"] = job["maxTokens"]
+        if isinstance(job.get("jobId"), str) and job["jobId"]:
+            row["jobId"] = job["jobId"]
+        out.append(row)
     return out or None
 
 
+_ROW_KEYS = ("perRecord", "records", "hours", "computeSecondsPerRecord",
+             "maxTokens", "jobId")
+
+
 def _fold_prompt_tokens(entry: dict, prompt_tokens: int, records: int,
-                        elapsed_seconds: float) -> None:
+                        elapsed_seconds: float, *,
+                        compute_seconds: float | None = None,
+                        max_tokens: int | None = None,
+                        job_id: str | None = None) -> None:
     """Keep one job's prompt length and pace on its family entry. Jobs are
     kept apart, never pooled: a record's time is not proportional to its
     prompt's length (a short item is mostly a fixed cost, a long one mostly
     reading), so the estimator prices from the jobs nearest a submission's
-    length (``submissions._prompt_length_pricing``)."""
-    kept = [{k: job[k] for k in ("perRecord", "records", "hours")}
+    length, and refuses only on a comparable shorter job's own compute pace
+    (``submissions._check_walltime``)."""
+    kept = [{k: job[k] for k in _ROW_KEYS if k in job and k != "hoursPerRecord"}
             for job in (prompt_history(entry) or [])]
-    kept.append({"perRecord": int(prompt_tokens), "records": int(records),
-                 "hours": round(elapsed_seconds / 3600.0, 6)})
+    row = {"perRecord": int(prompt_tokens), "records": int(records),
+           "hours": round(elapsed_seconds / 3600.0, 6)}
+    if compute_seconds is not None:
+        row["computeSecondsPerRecord"] = round(compute_seconds, 6)
+    if max_tokens:
+        row["maxTokens"] = int(max_tokens)
+    if job_id:
+        row["jobId"] = job_id
+    kept.append(row)
     entry["promptTokens"] = {"jobs": kept[-PROMPT_HISTORY_JOBS:]}
 
 
@@ -714,10 +774,12 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
     The global entry never carries a basis: it keeps its historical meaning.
 
     Since public issue #11 a family entry also carries ``promptTokens``:
-    ``{"jobs": [{"perRecord", "records", "hours"}, …]}``, one row per stamped
-    job (the most recent :data:`PROMPT_HISTORY_JOBS`), kept apart rather than
-    pooled, because a record's time is not proportional to its prompt's
-    length. The block is additive and separate from the entry's historical
+    ``{"jobs": [{"perRecord", "records", "hours", "computeSecondsPerRecord"?,
+    "maxTokens"?, "jobId"}, …]}``, one row per stamped job (the most recent
+    :data:`PROMPT_HISTORY_JOBS`), kept apart rather than pooled, because a
+    record's time is not proportional to its prompt's length. A job that
+    stamped its records' own pace (``recordPace``) folds that pace, not its
+    elapsed time: a pilot's elapsed time is mostly its model load. The block is additive and separate from the entry's historical
     mean, so an entry folded before prompt lengths were stamped gains one
     from its next stamped job, and an older reader never sees its mean
     change.
@@ -744,7 +806,12 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                 continue
             gpu_type = parse_gpu_type(
                 (job.requested_resources or {}).get("gres"))
-            rate = count / (elapsed / 3600.0)
+            # The records' own pace where the job stamped it (issue #11): a
+            # pilot's elapsed time is mostly its model load, and dividing it
+            # by eight records priced every later record as if it loaded too.
+            compute = record_pace_seconds(result)
+            rate = (3600.0 / compute if compute is not None
+                    else count / (elapsed / 3600.0))
             family = stamped_family(job.requested_resources)
             tokens = stamped_max_tokens(job.requested_resources)
             prompt_tokens = stamped_prompt_tokens(job.requested_resources)
@@ -768,7 +835,8 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                     entries.append(minted)
                     if bucket is not None and prompt_tokens:
                         _fold_prompt_tokens(minted, prompt_tokens, count,
-                                            elapsed)
+                                            elapsed, compute_seconds=compute,
+                                            max_tokens=tokens, job_id=job.id)
                 else:
                     samples = int(entry.get("samples", 0))
                     mean = float(entry.get("recordsPerHour", 0.0))
@@ -789,7 +857,8 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                     entry["updatedAt"] = _now_iso()
                     if bucket is not None and prompt_tokens:
                         _fold_prompt_tokens(entry, prompt_tokens, count,
-                                            elapsed)
+                                            elapsed, compute_seconds=compute,
+                                            max_tokens=tokens, job_id=job.id)
             folded.add(job.id)
             changed = True
         if changed:

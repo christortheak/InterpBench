@@ -2606,7 +2606,7 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 | `remote status` | Report one job's scheduler view, records written so far, and how it ended, then exit; a split run reports each part. |
 | `remote logs` | Stream one job's log; with --tail N, print its last N lines and those of its own scheduler output, then exit. |
 | `remote cancel` | Request cancellation of one job. |
-| `remote resubmit` | Resume a checkpointed or cancelled job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. |
+| `remote resubmit` | Resume a checkpointed or cancelled job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. The request waits up to an hour, because the server can run sbatch inside it; one that was sent and never answered is `resumeOutcomeUnknown` (`pending`, exit 12), with the repair to check the job's status (`remote status`) before resuming again. |
 | `remote fetch` | Download one server artifact without importing it. |
 | `remote import` | Download, hash-verify, and import an evidence bundle into runs/. |
 | `remote import-chain` | Import a whole pipeline chain, verifying existing evidence without overwriting it. |
@@ -4167,9 +4167,11 @@ caller`).
 
 Representative failures: `memoryFit` fails when weights + KV cache + 20 %
 headroom exceed the requested GPU's VRAM, and names a GPU type that would fit;
-`walltime` fails when planned records ÷ observed throughput × 1.5 exceeds the
-requested walltime (and warns above 80 %); `maintenanceWindow` fails when the
-walltime crosses a configured window.
+`walltime` fails only when even the pace of a comparable past job with
+shorter items cannot fit the records in the requested walltime (below), and
+otherwise warns when its estimate (planned records ÷ observed throughput ×
+1.5, plus startup) exceeds the requested walltime or above 80 % of it;
+`maintenanceWindow` fails when the walltime crosses a configured window.
 
 **Which throughput the `walltime` check divides by** (corrected 2026-08-20).
 The submission is classified into one *instrument family* — from the
@@ -4201,26 +4203,42 @@ its historical meaning.
 **Prompt length** (public issue #11). The submission counts its task prompts
 once — every prompt under every arm's rendering, shared by `memoryFit` (the
 longest) and `walltime` (the average, stamped as `data.promptTokensPerRecord`)
-— and the fold keeps each stamped job's length and pace apart on its family
-entry (`promptTokens.jobs: [{perRecord, records, hours}]`, the most recent
-64), because a record's time is a fixed cost plus reading, not proportional
-to its prompt's length. A `deterministicLogprob` study is priced from the
-jobs nearest its length (within four times, and of those the closest): the
-slowest of them, each scaled up in proportion to length where its items were
-shorter and never down (a fixed cost does not shrink). A generating family
-keeps its generated-token pricing. When no job was within four times this
-length, the estimate is an extrapolation whose direction is known, and
-`data.estimateBound` names it: readouts on much shorter items, or a
-generating study on much longer prompts, give a **lower** bound, which still
-`fail`s over the requested walltime (the job needs at least that long);
-readouts on much longer items, or a generating study on much shorter
-prompts, give an **upper** bound, which only `warn`s. Either way
-`data.promptLengthNotice` says so in plain words (also on both clients'
-stderr and in the submission envelope's `result.walltimeNotice`), with the
-repair: more time, a split study, or a short pilot. A history that does not
-record its items' length gets the notice when these average 8,192 tokens or
-more (`estimateBound: unknown`). The estimate never sets the job's time
-limit: the requested `--walltime` (or the site's default) does.
+— and the fold keeps each stamped job's length, generated-token budget and
+compute pace apart on its family entry (`promptTokens.jobs: [{perRecord,
+records, hours, computeSecondsPerRecord, maxTokens, jobId}]`, the most
+recent 64). `computeSecondsPerRecord` is the job's own records' pace, (last
+record − first record) ÷ (records − 1), from the `recordPace` stamp the
+bundle executor writes; it leaves out the model load. The check then builds
+two figures (review round 4):
+
+- **The estimate** (`data.estimatedHours`), advice only. A
+  `deterministicLogprob` study is priced from the past jobs nearest its
+  length (less than four times longer or shorter, and of those the closest),
+  each one's time per record scaled in proportion to tokens, the slowest of
+  them; a generating family keeps its generated-token pricing; × 1.5, plus
+  15 minutes of startup. Over the requested walltime it is a `warn` that
+  names the walltime to ask for (the estimate rounded up to the hour) or a
+  split, and says that a run which reaches its walltime keeps its finished
+  records and can be resumed. With no past job near this length, the
+  notice (`data.promptLengthNotice`, also on both clients' stderr and in the
+  envelope's `result.walltimeNotice`) names the nearest past job and how far
+  it is (`data.farFromHistory`).
+- **The minimum** (`data.minimumHours`, `data.minimumBasis`), the only basis
+  for `fail`. A longer prompt never reads faster, so a past job of this
+  family, model and GPU (the history's own key) whose items were no longer,
+  and for a generating family whose records generated no more tokens, ran
+  each record at a pace this job cannot beat. The minimum is this job's
+  records (the largest part's, for a split run) × the slowest such job's
+  `computeSecondsPerRecord`, with no margin and no startup. When it exceeds
+  the requested walltime, the check fails and says so as certain ("even at
+  the pace of <job>'s shorter items, these N records need at least X h"),
+  with the repair: request at least that, or split the study. A past job of
+  another model or GPU, with longer items, or with no compute pace never
+  counts, and then the check only warns.
+
+A history that does not record its items' length gets the notice when these
+average 8,192 tokens or more. The estimate never sets the job's time limit:
+the requested `--walltime` (or the site's default) does.
 
 **GPU type and count.** There is no `--gpu`, `--gpu-type` or `--accelerator`
 flag, and none is needed: the GPU type IS `--gres`. `--gres A100` is expanded

@@ -9,20 +9,22 @@ items, and needed about five.
 
 What is pinned here, with every expected value computed by hand in the test:
 
-1. A deterministic-logprob study is priced from the history jobs nearest
-   its length (within four times), the slowest of the nearest, each scaled
-   up in proportion to length where its items were shorter and never down —
-   never from a pool of every length, because a record's time is a fixed
-   cost plus reading, not proportional to its prompt (the review's probes).
-2. With no job near, the estimate is an extrapolation whose direction is
-   known, said in plain words (``promptLengthNotice``, ``estimateBound``): a
-   LOWER bound over the wall is still refused before the queue; an UPPER
-   bound over the wall warns. A generating family keeps its token pricing;
-   its far-longer prompts make that a lower bound, far-shorter an upper one.
-   A history that does not record its items' length gets the notice when
-   these are long.
-3. The fold keeps each stamped job's length and pace apart
-   (``promptTokens.jobs``), the most recent first to be kept.
+1. Review round 4: the estimate is advice. A deterministic-logprob study is
+   priced from the history jobs nearest its length, in proportion to tokens
+   both ways (a generating one by its generated tokens); over the requested
+   walltime it warns with the walltime to ask for, and never refuses.
+2. Only the certain part refuses: a longer prompt never reads faster, so a
+   past job of this family, model and GPU with no longer items (and, for a
+   generating study, no larger token budget) ran each record at a pace this
+   job cannot beat. records × the slowest such pace, from the records' own
+   timestamps (no model load), with no margin: over the walltime, refused.
+   Another model's or GPU's history never counts.
+3. The notice compares against the NEAREST past job, both ways; a history
+   that does not record its items' length gets the notice when these are
+   long.
+4. The fold keeps each stamped job's length, budget and records' own pace
+   apart (``promptTokens.jobs``), and its rate uses that pace, so a pilot's
+   model load does not slow every later estimate.
 5. One submission counts its task prompts once, and stamps their average.
 6. The estimate never sets the job's time limit: the requested walltime
    does, and a long-prompt job under a short one is refused, not queued.
@@ -90,61 +92,184 @@ def _entry(rate, family, *, prompt=None, samples=4):
     return entry
 
 
+def _row(per, records, hours, *, compute=None, max_tokens=None, job=None):
+    """One stamped history job: prompt tokens a record, records, elapsed
+    hours, and optionally its records' own compute pace (s a record), its
+    generated-token budget, and its id."""
+    row = {"perRecord": per, "records": records, "hours": hours}
+    if compute is not None:
+        row["computeSecondsPerRecord"] = compute
+    if max_tokens is not None:
+        row["maxTokens"] = max_tokens
+    if job is not None:
+        row["jobId"] = job
+    return row
+
+
 def _history(*rows):
-    """A family entry's stamped jobs: ``(perRecord, records, hours)``."""
-    return {"jobs": [{"perRecord": p, "records": n, "hours": h}
-                     for p, n, h in rows]}
+    """A family entry's stamped jobs, from rows or ``(per, records, hours)``."""
+    return {"jobs": [row if isinstance(row, dict) else _row(*row)
+                     for row in rows]}
 
 
-def _walltime(manifest, records, mean_tokens, walltime="04:00:00"):
+def _walltime(manifest, records, mean_tokens, walltime="04:00:00",
+              model=None, shard_count=1):
     measured = ({"measured": True, "meanPromptTokens": mean_tokens,
                  "longestPromptTokens": mean_tokens}
                 if mean_tokens is not None else
                 {"measured": False, "reason": "no tokenizer here"})
+    if model is not None:
+        manifest.model_id = model
     return sub._check_walltime(
         manifest, SlurmResources(gres="gpu:A100:1", walltime=walltime,
                                  gpu_vram_gb={"A100": 80}),
-        records, ServerProfile.from_env(), "run", measured=measured)
+        records, ServerProfile.from_env(), "run", measured=measured,
+        shard_count=shard_count)
 
 
-#: The review's history: 100 items of 300 prompt tokens at 692 an hour, and
-#: a pilot of 8 items of 150,000 tokens in 2 hours.
-WIDE = ((300, 100, 100 / 692), (150_000, 8, 2.0))
+# --- the review's probes: an estimate never refuses ----------------------------
 
 
-# --- 1. priced from the jobs nearest this length ---------------------------------
-
-
-def test_short_items_are_priced_from_the_short_jobs_not_a_pool(meta):
-    """THE review's probe: 3,000 items of 300 tokens on a 4 h wall. The
-    nearest job is the 300-token one (the pilot is 500 times away). By hand:
-    3,000 ÷ 692 = 4.33526 h × 1.5 = 6.50289 + 0.25 = 6.75289 h ≈ 6.75 h, over
-    the 4 h asked: refused before the queue. (A pool of both jobs read
-    573,558 tokens an hour and said 2.6 h, ok — a job that times out.)"""
+def test_the_reviews_first_probe_warns_rather_than_refusing(meta):
+    """One past job of 50 items of 150,000 tokens in 4 h (0.08 h an item),
+    and 400 items of 30,000 on an 8 h wall. The nearest job is five times
+    longer, so the estimate extrapolates: 0.08 × 30,000 ÷ 150,000 = 0.016 h
+    an item; 400 × 0.016 = 6.4 h × 1.5 = 9.6 + 0.25 = 9.85 h. Over the wall,
+    but an estimate: a warning, with the walltime to ask for. No past job had
+    shorter items, so nothing is certain and nothing is refused."""
     _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
-                        prompt=_history(*WIDE))])
-    check = _walltime(_readout(), 3000, 300)
-    assert check["data"]["estimatedHours"] == 6.75
-    assert check["status"] == "fail"
-    assert check["data"]["recordsPerHour"] == 692.0
-    assert check["data"]["recordsPerHourBasis"] == "nearPromptLength"
-    assert check["data"]["promptTokensHistory"]["pricedFrom"] == [
-        {"perRecord": 300, "recordsPerHour": 692.0}]
-    assert "promptLengthNotice" not in check["data"]
-
-
-def test_long_items_are_priced_from_the_long_jobs_not_a_pool(meta):
-    """The reverse: 1,000 short items dominate the history, and the study is
-    50 items of 150,000 tokens on a 20 h wall. The nearest job is the pilot,
-    0.25 h an item. By hand: 50 × 0.25 = 12.5 h × 1.5 = 18.75 + 0.25 = 19.0 h:
-    tight (over 80 % of 20 h), not refused. (A pool said 26.1 h, refused.)"""
-    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
-        (300, 1000, 1000 / 692), (150_000, 8, 2.0)))])
-    check = _walltime(_readout(), 50, 150_000, walltime="20:00:00")
-    assert check["data"]["estimatedHours"] == 19.0
+                        prompt=_history((150_000, 50, 4.0)))])
+    check = _walltime(_readout(), 400, 30_000, walltime="08:00:00")
+    assert check["data"]["estimatedHours"] == 9.85
     assert check["status"] == "warn"
-    assert "tight" in check["message"]
-    assert "promptLengthNotice" not in check["data"]
+    assert "minimumHours" not in check["data"]
+    # Its records' own pace known (280 s each) changes the estimate, never
+    # the verdict: longer items are no pace for shorter ones.
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
+                        prompt=_history(_row(150_000, 50, 4.0, compute=280.0)))])
+    paced = _walltime(_readout(), 400, 30_000, walltime="08:00:00")
+    assert paced["status"] == "warn" and "minimumHours" not in paced["data"]
+    assert "request --walltime 10:00:00 or more" in check["message"]
+    assert "keeps the records it finished, and can be resumed" in \
+        check["message"]
+    assert "about 5 times shorter" in check["data"]["promptLengthNotice"]
+    assert check["data"]["farFromHistory"] == "shorter"
+
+
+@pytest.mark.parametrize("tokens", [20_000, 19_999])
+def test_the_reviews_second_probe_warns_at_the_window_and_past_it(meta,
+                                                                 tokens):
+    """One past job of 10 items of 80,000 tokens in 0.25 h (0.025 h an item),
+    and 100 items of 20,000 (exactly four times shorter, which is not near)
+    or 19,999 on a 2 h wall. Scaled down in proportion: 0.025 × 20,000 ÷
+    80,000 = 0.00625 h; 100 × 0.00625 = 0.625 h × 1.5 = 0.9375 + 0.25
+    = 1.1875 h ≈ 1.19 h (19,999: 1.18745 h ≈ 1.19 h). Under the wall, but an
+    extrapolation: a warning, never a refusal."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
+                        prompt=_history((80_000, 10, 0.25)))])
+    check = _walltime(_readout(), 100, tokens, walltime="02:00:00")
+    assert check["data"]["estimatedHours"] == 1.19
+    assert check["status"] == "warn"
+    assert "about 4 times shorter" in check["data"]["promptLengthNotice"]
+
+
+def test_the_issues_part_warns_with_the_walltime_it_needs(meta):
+    """THE issue's part: 50 items averaging 150,000 tokens (82,000 to
+    219,000), a history of 2,000-token items at 692 an hour (5.2023 s a
+    record of compute), a 4 h wall. Estimate, scaled up in proportion:
+    50 × (1 ÷ 692) × 75 = 5.41908 h × 1.5 = 8.12862 + 0.25 = 8.37862 h ≈
+    8.38 h: warn, ask for at least 9 h. Minimum, at the short job's own pace
+    (longer items never read faster): 50 × 5.2023 s = 260.1 s ≈ 0.07 h,
+    which fits, so it is not refused."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(2000, 100, 100 / 692, compute=3600 / 692, job="short1")))])
+    check = _walltime(_readout(), 50, 150_000)
+    assert check["data"]["estimatedHours"] == 8.38
+    assert check["status"] == "warn"
+    assert check["data"]["minimumHours"] == 0.07
+    assert "request --walltime 09:00:00 or more" in check["message"]
+    assert "job short1 (items of 2,000 prompt tokens, 5.2 s a record)" in \
+        check["message"]
+
+
+# --- the certain part: only it refuses ------------------------------------------
+
+
+def test_a_certain_shortfall_is_refused_with_its_minimum(meta):
+    """A past job of 2,000-token items ran at 30 s a record of compute (job
+    past1, 36 s a record with its model load). 1,000 records of 3,000-token
+    items cannot read faster: 1,000 × 30 s = 30,000 s = 8.3333 h, over the
+    4 h wall: refused, as certain. The estimate (the safer figure):
+    30 s = 0.0083333 h × 3,000 ÷ 2,000 = 0.0125 h; 1,000 × 0.0125 = 12.5 h
+    × 1.5 = 18.75 + 0.25 = 19.0 h."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(2000, 100, 1.0, compute=30.0, job="past1")))])
+    check = _walltime(_readout(), 1000, 3000)
+    assert check["status"] == "fail"
+    assert check["data"]["minimumHours"] == 8.33
+    assert check["data"]["estimatedHours"] == 19.0
+    assert check["data"]["minimumBasis"] == {
+        "records": 1000, "secondsPerRecord": 30.0, "perRecord": 2000,
+        "jobId": "past1"}
+    assert check["message"].startswith(
+        "even at the pace of job past1's shorter items")
+    assert "these 1,000 records need at least 8.3 h; the requested walltime " \
+        "is 4.0 h (04:00:00). Request --walltime 09:00:00 or more" in \
+        check["message"]
+
+
+def test_the_same_length_with_a_known_pace_is_certain(meta):
+    """The round-3 probe, 3,000 items of 300 tokens on a 4 h wall, now that
+    the 300-token job's compute pace is known (3600 ÷ 692 = 5.2023 s a
+    record): 3,000 × 5.2023 s = 15,607 s = 4.3353 h, over 4 h: refused.
+    Without the pace (an older history) it is only the estimate, 6.75 h: a
+    warning."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(300, 100, 100 / 692, compute=3600 / 692),
+        (150_000, 8, 2.0)))])
+    check = _walltime(_readout(), 3000, 300)
+    assert check["status"] == "fail"
+    assert check["data"]["minimumHours"] == 4.34
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        (300, 100, 100 / 692), (150_000, 8, 2.0)))])
+    older = _walltime(_readout(), 3000, 300)
+    assert older["status"] == "warn"
+    assert older["data"]["estimatedHours"] == 6.75
+    assert "minimumHours" not in older["data"]
+
+
+def test_a_minimum_is_per_part_for_a_split_run(meta):
+    """The walltime is each part's: 1,000 records over 4 parts is 250 a
+    part, 250 × 30 s = 7,500 s = 2.0833 h, under 4 h: not refused."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(2000, 100, 1.0, compute=30.0, job="past1")))])
+    check = _walltime(_readout(), 1000, 3000, shard_count=4)
+    assert check["data"]["minimumHours"] == 2.08
+    assert check["status"] != "fail"
+
+
+def test_another_models_history_never_refuses(meta):
+    """A slow job of another model (30 s a record) is never a pace for this
+    one: the history is keyed by model, GPU and family, and this model has
+    only a global mean, 692 an hour. By hand: 1,000 ÷ 692 = 1.44509 h × 1.5
+    = 2.16763 + 0.25 = 2.41763 h ≈ 2.42 h, ok."""
+    other = _entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(2000, 100, 1.0, compute=30.0)))
+    other["modelId"] = "other/model"
+    slower_gpu = _entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(2000, 100, 1.0, compute=30.0)))
+    slower_gpu["gpuType"] = "L4"
+    plain = _entry(692.0, fam.DETERMINISTIC_LOGPROB)
+    plain.pop("instrumentFamily")
+    _seed(meta, [other, slower_gpu, plain])
+    check = _walltime(_readout(), 1000, 3000)
+    assert check["data"]["rateSource"] == "global"
+    assert check["data"]["estimatedHours"] == 2.42
+    assert check["status"] == "ok"
+    assert "minimumHours" not in check["data"]
+
+
+# --- the estimate: nearest-length pricing, both ways ---------------------------
 
 
 def test_the_nearest_jobs_price_it_and_the_slowest_wins(meta):
@@ -161,104 +286,81 @@ def test_the_nearest_jobs_price_it_and_the_slowest_wins(meta):
             check["data"]["promptTokensHistory"]["pricedFrom"]] == [2000, 2000]
 
 
-def test_a_nearby_job_is_scaled_up_never_down(meta):
+def test_a_nearby_job_is_scaled_in_proportion_both_ways(meta):
     """One job of 1,000-token items, 0.002 h an item. Items three times
-    longer: 0.002 × 3 = 0.006; 200 × 0.006 = 1.2 h × 1.5 = 1.8 + 0.25
-    = 2.05 h. Items half as long keep the fixed cost: 200 × 0.002 = 0.4 h
-    × 1.5 = 0.6 + 0.25 = 0.85 h."""
+    longer: 0.006; 200 × 0.006 = 1.2 h × 1.5 = 1.8 + 0.25 = 2.05 h. Items
+    half as long: 0.001; 200 × 0.001 = 0.2 h × 1.5 = 0.3 + 0.25 = 0.55 h."""
     _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
                         prompt=_history((1000, 100, 0.2)))])
     assert _walltime(_readout(), 200, 3000)["data"]["estimatedHours"] == 2.05
-    assert _walltime(_readout(), 200, 500)["data"]["estimatedHours"] == 0.85
+    assert _walltime(_readout(), 200, 500)["data"]["estimatedHours"] == 0.55
 
 
-def test_within_the_history_an_estimate_over_the_wall_still_refuses(meta):
-    """600 items of 4,000 against 2,000-token jobs at 0.005 h an item: 0.01 h
-    an item, 600 × 0.01 = 6.0 h × 1.5 = 9.0 + 0.25 = 9.25 h over 4 h."""
-    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
-                        prompt=_history((2000, 100, 0.5)))])
-    check = _walltime(_readout(), 600, 4000)
-    assert check["data"]["estimatedHours"] == 9.25
-    assert check["status"] == "fail"
-    assert "promptLengthNotice" not in check["data"]
+def test_the_compute_pace_prices_rather_than_the_model_load(meta):
+    """A pilot of 8 records took 0.5 h, most of it its model load; its
+    records ran at 50 s each. The estimate prices 50 s, not 225 s: 100 × 50 s
+    = 1.3889 h × 1.5 = 2.08333 + 0.25 = 2.33333 h ≈ 2.33 h."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        _row(2000, 8, 0.5, compute=50.0)))])
+    check = _walltime(_readout(), 100, 2000)
+    assert check["data"]["estimatedHours"] == 2.33
+    assert check["data"]["recordsPerHour"] == 72.0
 
 
-# --- 2. far from every job: which way the estimate errs --------------------------
-
-
-def test_far_longer_readouts_are_an_upper_bound_and_warn(meta):
-    """Only 300-token jobs (0.0005 h an item), and 50 items of 150,000:
-    scaled in proportion, 0.0005 × 500 = 0.25 h an item; 50 × 0.25 = 12.5 h
-    × 1.5 = 18.75 + 0.25 = 19.0 h. It over-prices the short items' fixed
-    cost, so over the 4 h wall it warns rather than refusing."""
-    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
-                        prompt=_history((300, 100, 0.05)))])
-    check = _walltime(_readout(), 50, 150_000)
-    assert check["data"]["estimatedHours"] == 19.0
-    assert check["status"] == "warn"
-    assert check["data"]["estimateBound"] == "upperBound"
+def test_the_notice_names_the_nearest_job(meta):
+    """Jobs at 1,000 and 100,000 tokens, none within four times of 5,000:
+    the nearest is the 1,000-token one, five times shorter than these."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        (1000, 100, 0.2), (100_000, 8, 2.0)))])
+    check = _walltime(_readout(), 100, 5000)
     assert check["data"]["farFromHistory"] == "longer"
     notice = check["data"]["promptLengthNotice"]
-    assert "about 500 times longer" in notice
-    assert "It is an UPPER bound" in notice
-    assert "or split the study into smaller parts" in notice
+    assert notice.startswith("The nearest past job in the throughput history "
+                             "had items of 1,000 prompt tokens")
+    assert "about 5 times longer" in notice
+    assert "may be well off in either direction" in notice
 
 
-def test_far_shorter_readouts_are_a_lower_bound_and_still_refuse(meta):
-    """Only 150,000-token jobs (0.25 h an item), and 2,000 items of 2,000:
-    0.25 × 2,000 ÷ 150,000 = 0.0033333 h an item; 2,000 × that = 6.6667 h
-    × 1.5 = 10.0 + 0.25 = 10.25 h. It under-prices the fixed cost, so the job
-    needs at least that: over the 4 h wall it is refused before the queue."""
-    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
-                        prompt=_history((150_000, 8, 2.0)))])
-    check = _walltime(_readout(), 2000, 2000)
-    assert check["data"]["estimatedHours"] == 10.25
+# --- generating families --------------------------------------------------------
+
+
+def test_a_generating_study_is_refused_only_on_a_comparable_pace(meta):
+    """Long-form text, 512 generated tokens. A past job of 1,000-token
+    prompts generating up to 512 tokens ran at 20 s a record: 2,000 records
+    of the same prompts and budget need at least 2,000 × 20 s = 40,000 s =
+    11.1111 h, over 4 h: refused. Estimate: 2,000 ÷ 200 × 1.5 + 0.25 =
+    15.25 h."""
+    _seed(meta, [_entry(200.0, fam.LONG_FORM_TEXT, prompt=_history(
+        _row(1000, 100, 0.6, compute=20.0, max_tokens=512, job="gen1")))])
+    check = _walltime(_long_form(), 2000, 1000)
     assert check["status"] == "fail"
-    assert check["data"]["estimateBound"] == "lowerBound"
-    notice = check["data"]["promptLengthNotice"]
-    assert "about 75 times shorter" in notice
-    assert "It is a LOWER bound" in notice
+    assert check["data"]["minimumHours"] == 11.11
+    assert check["data"]["estimatedHours"] == 15.25
 
 
-def test_a_lower_bound_under_the_wall_warns(meta):
-    """400 items of 2,000 against the same: 400 × 0.0033333 = 1.33333 h
-    × 1.5 = 2.0 + 0.25 = 2.25 h, under 4 h: a warning that it may be low."""
-    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
-                        prompt=_history((150_000, 8, 2.0)))])
-    check = _walltime(_readout(), 400, 2000)
-    assert check["data"]["estimatedHours"] == 2.25
+def test_a_generating_job_that_generated_more_is_no_pace(meta):
+    """The same job generating up to 1,024 tokens a record is not a pace for
+    512: its records may be slower for that alone. Only the estimate:
+    15.25 h, a warning."""
+    _seed(meta, [_entry(200.0, fam.LONG_FORM_TEXT, prompt=_history(
+        _row(1000, 100, 0.6, compute=20.0, max_tokens=1024)))])
+    check = _walltime(_long_form(), 2000, 1000)
     assert check["status"] == "warn"
-    assert check["data"]["estimateBound"] == "lowerBound"
+    assert "minimumHours" not in check["data"]
 
 
-def test_a_long_form_study_on_far_longer_prompts_is_refused(meta):
-    """THE review's second probe: long-form text, 512 generated tokens, a
-    200-an-hour history on 1,000-token items, and 2,000 items of 20,000.
-    Generation alone: 2,000 ÷ 200 × 1.5 × (512 ÷ 512) + 0.25 = 15.0 + 0.25
-    = 15.25 h. Reading is not priced, so it is a lower bound: over the 4 h
-    wall it fails before the queue."""
+def test_the_long_form_probe_on_far_longer_prompts_warns(meta):
+    """2,000 items of 20,000-token prompts against a 1,000-token history with
+    no compute pace: generation alone, 2,000 ÷ 200 × 1.5 + 0.25 = 15.25 h,
+    over the 4 h wall: a warning that reading is not priced, not a refusal."""
     _seed(meta, [_entry(200.0, fam.LONG_FORM_TEXT,
                         prompt=_history((1000, 100, 0.5)))])
     check = _walltime(_long_form(), 2000, 20_000)
     assert check["data"]["estimatedHours"] == 15.25
-    assert check["status"] == "fail"
-    assert check["data"]["estimateBound"] == "lowerBound"
+    assert check["status"] == "warn"
     notice = check["data"]["promptLengthNotice"]
     assert "about 20 times longer" in notice
-    assert "does not price reading the longer prompts" in notice
-
-
-def test_a_long_form_study_on_far_shorter_prompts_warns(meta):
-    """The same history on 20,000-token items, and 1,000 items of 1,000:
-    1,000 ÷ 200 × 1.5 + 0.25 = 7.5 + 0.25 = 7.75 h over 4 h. The rate
-    includes reading longer prompts, so it is an upper bound: a warning."""
-    _seed(meta, [_entry(200.0, fam.LONG_FORM_TEXT,
-                        prompt=_history((20_000, 100, 0.5)))])
-    check = _walltime(_long_form(), 1000, 1000)
-    assert check["data"]["estimatedHours"] == 7.75
-    assert check["status"] == "warn"
-    assert check["data"]["estimateBound"] == "upperBound"
-    assert "about 20 times shorter" in check["data"]["promptLengthNotice"]
+    assert "reading prompts of a different length is not priced" in notice
 
 
 def test_a_long_form_study_near_its_history_is_priced_as_before(meta):
@@ -270,10 +372,9 @@ def test_a_long_form_study_near_its_history_is_priced_as_before(meta):
     assert check["data"]["estimatedHours"] == 1.0
     assert check["status"] == "ok"
     assert "promptLengthNotice" not in check["data"]
-    assert "estimateBound" not in check["data"]
 
 
-# --- a history that does not record its items' length ---------------------------
+# --- older histories -------------------------------------------------------------
 
 
 def test_todays_history_says_it_cannot_tell(meta):
@@ -284,10 +385,8 @@ def test_todays_history_says_it_cannot_tell(meta):
     check = _walltime(_readout(), 50, 150_000)
     assert check["data"]["estimatedHours"] == 0.36
     assert check["status"] == "warn"
-    assert check["data"]["estimateBound"] == "unknown"
     notice = check["data"]["promptLengthNotice"]
     assert "does not record how long its items were" in notice
-    assert "it is not known which way the estimate errs" in notice
     assert "does not record how long its items were, so the estimate " \
         "assumes they were as long as these (150,000" in check["message"]
 
@@ -302,6 +401,29 @@ def test_a_block_in_a_shape_this_release_does_not_read_counts_as_none(meta):
     assert check["data"]["estimatedHours"] == 0.36
     assert "does not record how long its items were" in \
         check["data"]["promptLengthNotice"]
+
+
+def test_rows_from_before_the_compute_pace_price_but_never_refuse(meta):
+    """Round-3 rows carry no compute pace: they still price the estimate,
+    and are never a minimum."""
+    _seed(meta, [_entry(692.0, fam.DETERMINISTIC_LOGPROB,
+                        prompt=_history((2000, 100, 1.0)))])
+    check = _walltime(_readout(), 1000, 3000)
+    assert check["status"] == "warn"
+    assert "minimumHours" not in check["data"]
+
+
+@pytest.mark.parametrize("bad", [True, False, "2000", None, -5, 0])
+def test_a_row_whose_numbers_are_not_numbers_is_skipped(meta, bad):
+    """A bool is not one record, nor one token: such a row is no history."""
+    entry = _entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        {"perRecord": bad, "records": 100, "hours": 1.0},
+        {"perRecord": 2000, "records": bad, "hours": 1.0}))
+    assert hk.prompt_history(entry) is None
+    entry = _entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+        {"perRecord": 2000, "records": 100, "hours": 1.0,
+         "computeSecondsPerRecord": bad}))
+    assert "computeSecondsPerRecord" not in hk.prompt_history(entry)[0]
 
 
 def test_short_items_against_todays_history_stay_quiet(meta):
@@ -320,20 +442,27 @@ def test_unmeasured_prompts_change_nothing(meta):
     assert check["data"]["estimatedHours"] == 0.36
     assert "promptTokensPerRecord" not in check["data"]
     assert "promptLengthNotice" not in check["data"]
+    assert "minimumHours" not in check["data"]
 
 
-# --- 3. the fold keeps each job apart ---------------------------------------------
+# --- the fold keeps each job apart, with its compute pace -------------------------
 
 
 def _stamped_job(store, job_id, *, family, records, seconds, prompt_tokens,
-                 max_tokens=None):
+                 max_tokens=None, pace=None, local=False):
     data = {"instrumentFamily": family}
     if prompt_tokens is not None:
         data["promptTokensPerRecord"] = prompt_tokens
     if max_tokens is not None:
         data["maxTokens"] = max_tokens
+    result = {"elapsedSeconds": seconds, "recordCount": records}
+    if pace is not None:
+        if local:
+            result["runResult"] = {"recordPace": pace}
+        else:
+            result["recordPace"] = pace
     job = Job(id=job_id, kind="study-submit-bundle", status="succeeded",
-              result={"elapsedSeconds": seconds, "recordCount": records},
+              result=result,
               requested_resources={
                   "modelID": MODEL, "gres": "gpu:A100:1",
                   "preflight": {"checks": [{"id": "walltime", "data": data}]}},
@@ -366,11 +495,38 @@ def test_the_fold_keeps_each_job_apart(meta, tmp_path):
         ("j2", {"family": fam.DETERMINISTIC_LOGPROB, "records": 50,
                 "seconds": 3600, "prompt_tokens": 8000})])
     entry = _family_entry(table, fam.DETERMINISTIC_LOGPROB)
-    assert entry["promptTokens"] == _history((2000, 100, 0.5),
-                                             (8000, 50, 1.0))
+    assert entry["promptTokens"] == _history(
+        _row(2000, 100, 0.5, job="j1"), _row(8000, 50, 1.0, job="j2"))
     assert entry["recordsPerHour"] == 125.0
     glob = next(e for e in table["entries"] if "instrumentFamily" not in e)
     assert "promptTokens" not in glob
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_the_fold_takes_a_pilots_pace_from_its_records(meta, tmp_path, local):
+    """A pilot of 8 records took 1,800 s, most of it its model load; its
+    records ran from t = 1,000 s to t = 1,350 s: (1,350 − 1,000) ÷ (8 − 1)
+    = 50 s a record, 72 an hour, not the 16 an hour its elapsed time says.
+    Stamped either at the result's root (Slurm) or under runResult (local)."""
+    table = _fold_in_order(tmp_path, f"pilot-{local}", [(
+        "p1", {"family": fam.DETERMINISTIC_LOGPROB, "records": 8,
+               "seconds": 1800, "prompt_tokens": 82_000, "local": local,
+               "pace": {"records": 8, "firstRecordAt": 1000.0,
+                        "lastRecordAt": 1350.0}})])
+    entry = _family_entry(table, fam.DETERMINISTIC_LOGPROB)
+    assert entry["recordsPerHour"] == 72.0
+    assert entry["promptTokens"] == _history(
+        _row(82_000, 8, 0.5, compute=50.0, job="p1"))
+
+
+def test_the_fold_keeps_a_generating_jobs_budget(meta, tmp_path):
+    table = _fold_in_order(tmp_path, "gen", [
+        ("g1", {"family": fam.LONG_FORM_TEXT, "records": 100, "seconds": 1800,
+                "prompt_tokens": 1000, "max_tokens": 512,
+                "pace": {"records": 100, "firstRecordAt": 10.0,
+                         "lastRecordAt": 1990.0}})])
+    assert _family_entry(table, fam.LONG_FORM_TEXT)["promptTokens"] == \
+        _history(_row(1000, 100, 0.5, compute=20.0, max_tokens=512, job="g1"))
 
 
 def test_the_fold_keeps_the_most_recent_jobs(meta, tmp_path, monkeypatch):
@@ -380,7 +536,7 @@ def test_the_fold_keeps_the_most_recent_jobs(meta, tmp_path, monkeypatch):
                    "seconds": 360, "prompt_tokens": 1000 * i})
         for i in (1, 2, 3)])
     assert _family_entry(table, fam.DETERMINISTIC_LOGPROB)["promptTokens"] == \
-        _history((2000, 10, 0.1), (3000, 10, 0.1))
+        _history(_row(2000, 10, 0.1, job="j2"), _row(3000, 10, 0.1, job="j3"))
 
 
 def test_an_entry_from_before_gains_a_prompt_history(meta, tmp_path):
@@ -391,7 +547,7 @@ def test_an_entry_from_before_gains_a_prompt_history(meta, tmp_path):
         "j1", {"family": fam.DETERMINISTIC_LOGPROB, "records": 8,
                "seconds": 720, "prompt_tokens": 82_000})])
     entry = _family_entry(table, fam.DETERMINISTIC_LOGPROB)
-    assert entry["promptTokens"] == _history((82_000, 8, 0.2))
+    assert entry["promptTokens"] == _history(_row(82_000, 8, 0.2, job="j1"))
     assert entry["samples"] == 8
 
 
@@ -403,17 +559,7 @@ def test_a_block_from_a_development_build_is_started_again(meta, tmp_path):
         "j1", {"family": fam.DETERMINISTIC_LOGPROB, "records": 100,
                "seconds": 1800, "prompt_tokens": 2000})])
     assert _family_entry(table, fam.DETERMINISTIC_LOGPROB)["promptTokens"] == \
-        _history((2000, 100, 0.5))
-
-
-def test_a_generating_family_records_its_jobs_too(meta, tmp_path):
-    table = _fold_in_order(tmp_path, "gen", [
-        ("j1", {"family": fam.LONG_FORM_TEXT, "records": 100, "seconds": 1800,
-                "prompt_tokens": 1000, "max_tokens": 512}),
-        ("j2", {"family": fam.LONG_FORM_TEXT, "records": 100, "seconds": 3600,
-                "prompt_tokens": 3000, "max_tokens": 512})])
-    assert _family_entry(table, fam.LONG_FORM_TEXT)["promptTokens"] == \
-        _history((1000, 100, 0.5), (3000, 100, 1.0))
+        _history(_row(2000, 100, 0.5, job="j1"))
 
 
 def test_an_unstamped_job_folds_as_before(meta, tmp_path):
@@ -421,6 +567,27 @@ def test_an_unstamped_job_folds_as_before(meta, tmp_path):
         "j1", {"family": fam.DETERMINISTIC_LOGPROB, "records": 100,
                "seconds": 360, "prompt_tokens": None})])
     assert "promptTokens" not in _family_entry(table, fam.DETERMINISTIC_LOGPROB)
+
+
+def test_the_record_pace_counts_this_processs_records(tmp_path):
+    """The writer notes each generation record it writes, and nothing else:
+    a sidecar stream is not a record."""
+    from steerlab_server.experiment import resume
+    resume.RECORD_PACE.reset()
+    writer = resume.GenerationWriter(str(tmp_path))
+    for index in range(3):
+        writer.emit({"condition": "c", "promptIndex": index,
+                     "promptID": f"p{index}", "sample": 0, "text": "x"})
+    side = resume.GenerationWriter(str(tmp_path), filename="battery.jsonl")
+    side.emit({"condition": "c", "promptIndex": 9, "promptID": "p9",
+               "sample": 0})
+    writer.close()
+    side.close()
+    pace = resume.RECORD_PACE.snapshot()
+    assert pace["records"] == 3
+    assert pace["lastRecordAt"] >= pace["firstRecordAt"]
+    resume.RECORD_PACE.reset()
+    assert resume.RECORD_PACE.snapshot() is None
 
 
 # --- 5 and 6. one count per submission, and the time limit ------------------------
@@ -528,17 +695,34 @@ def test_one_submission_counts_its_prompts_once(readout_site, monkeypatch):
 
 def test_the_estimate_never_sets_the_time_limit(readout_site):
     """The job's limit is the walltime asked for (or the site's default); the
-    estimate only compares against it. By hand, for this study's 4 records
-    (2 items × the condition and the implicit baseline, one sample each),
-    priced from the pilot at their length (0.25 h an item, never scaled down
-    for items a little shorter): 4 × 0.25 = 1.0 h × 1.5 = 1.5 + 0.25 = 1.75 h
-    — so a 00:20:00 request is refused, and nothing is queued under it."""
+    estimate only advises. By hand, for this study's 4 records (2 items × the
+    condition and the implicit baseline, one sample each), priced from the
+    pilot at their length in proportion to tokens: 0.25 × 149,814 ÷ 150,000
+    = 0.24969 h; 4 × 0.24969 = 0.99876 h × 1.5 = 1.49814 + 0.25 = 1.74814 h
+    ≈ 1.75 h — over a 00:20:00 request, so a warning; the job is submitted
+    under the walltime asked for."""
     preview = _submit(readout_site, walltime="00:20:00")
     check = _walltime_check(preview)
     assert check["data"]["plannedRecords"] == 4
     assert check["data"]["estimatedHours"] == 1.75
-    assert check["status"] == "fail"
+    assert check["status"] == "warn"
     script = open(preview.slurm_bundle["script_path"], encoding="utf-8").read()
     assert "#SBATCH --time=00:20:00" in script
+
+
+def test_a_certain_shortfall_is_refused_before_the_queue(readout_site):
+    """With a past job of shorter items (100,000 tokens) whose records ran at
+    900 s each, these 4 records of 149,814 tokens need at least 4 × 900 s
+    = 3,600 s = 1.0 h, over 00:20:00: the submission is refused, and nothing
+    is queued under it."""
+    meta = readout_site["tmp"] / "meta"
+    (meta / "throughput.json").write_text(json.dumps({
+        "schemaVersion": 1, "foldedJobIds": [], "entries": [
+            _entry(692.0, fam.DETERMINISTIC_LOGPROB, prompt=_history(
+                _row(100_000, 8, 2.5, compute=900.0, job="past9")))]}),
+        encoding="utf-8")
+    check = _walltime_check(_submit(readout_site, walltime="00:20:00"))
+    assert check["status"] == "fail"
+    assert check["data"]["minimumHours"] == 1.0
     with pytest.raises(sub.PreflightRejection):
         _submit(readout_site, dry_run=False, walltime="00:20:00")

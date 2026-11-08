@@ -3186,6 +3186,24 @@ public struct ExperimentCLIRunner: Sendable {
             do {
                 resubmission = try await client.resubmitJob(
                     resubmitJobID, walltime: walltimeRequested)
+            } catch let unknown as ResumeOutcomeUnknown {
+                // Review round 4: a resume that was sent and never answered
+                // may have resumed the job. `pending` (12); look first.
+                let repair = unknown.repair(
+                    statusCommand: "steerlab-cli remote status \(resubmitJobID) "
+                        + (siteID.map { "--site \($0)" } ?? "--url \(url.absoluteString)")
+                        + " --json")
+                sink.err("resume outcome unknown: \(unknown.reason)\n  \(repair)\n")
+                throw ExperimentCLIStop(
+                    exitCode: SteerLabCLIState.pending.exitCode, state: .pending,
+                    code: ResumeOutcomeUnknown.code, reason: unknown.reason,
+                    repairAction: repair,
+                    payload: [
+                        "jobID": .string(resubmitJobID),
+                        "endpoint": .string(unknown.endpoint),
+                        "waitedSeconds": .number(unknown.waitedSeconds),
+                        "retried": .bool(false),
+                    ])
             } catch let ClusterClient.ClientError.badResponse(status, detail)
                 where status == 409
             {
