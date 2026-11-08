@@ -89,10 +89,17 @@ def test_export_checks_unrecorded_job_names_and_requires_terminal_scheduler(setu
     monkeypatch.setattr(managed_campaign,'action',lambda *a:{'status':{'cellCount':1,'totals':{'completed':1},'cells':[{'cellID':cell,'jobID':None}]}})
     names=[]
     monkeypatch.setattr(owner.executors.SlurmExecutor,'find_job_by_name',lambda self,name,since=None:names.append(name) or '88')
-    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_state_detailed',lambda *a:('RUNNING',True))
+    observe=lambda state,ok=True,raw=None:(lambda *a:owner.executors.SchedulerObservation(state=state,query_ok=ok,raw_state=raw))
+    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_observation',observe('running',raw='RUNNING'))
     with pytest.raises(archives.Refusal,match='still active'):managed_campaign.require_complete('job',None,profile)
     assert names and names[0].endswith(cell)
-    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_state_detailed',lambda *a:(None,False))
+    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_observation',observe(None,ok=False))
     with pytest.raises(archives.Refusal):managed_campaign.require_complete('job',None,profile)
-    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_state_detailed',lambda *a:('COMPLETED',True))
+    # A state SteerLab has no word for is "cannot say", never ended (issue #12 review round 5).
+    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_observation',observe(None,raw='REQUEUE_HOLD'))
+    with pytest.raises(archives.Refusal,match='cannot read as ended .REQUEUE_HOLD.'):managed_campaign.require_complete('job',None,profile)
+    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_observation',observe('succeeded',raw='COMPLETED'))
+    managed_campaign.require_complete('job',None,profile)
+    # Positive absence (the scheduler knows no such job) still reads as ended.
+    monkeypatch.setattr(owner.executors.SlurmExecutor,'poll_observation',observe(None))
     managed_campaign.require_complete('job',None,profile)

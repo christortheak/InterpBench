@@ -547,6 +547,132 @@ def test_resuming_with_a_walltime_above_the_maximum_is_refused_at_once(
         "submitted", "submitted"]
 
 
+def test_a_resume_refused_without_a_reason_keeps_its_parts_held(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 5: the general sentence alone, for this Resume's new
+    walltime, may be the job count (which frees) or a limit on the request
+    (which does not). The parts are not withdrawn: they stay held, and the
+    answer says plainly that the scheduler gave no reason."""
+    from steerlab_server.api.job_status import job_status
+    from steerlab_server.api.jobs import HELD_PART_UNEXPLAINED_NOTE
+    jobs, submission = _cancelled_run_whose_ran_parts_finished(
+        tmp_path, monkeypatch, "heldresumevague")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=02:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", POLICY)
+    answer = jobs.resubmit(submission.job_id, walltime="02:00:00")
+    assert answer["ok"] is True
+    assert "without saying why" in answer["message"]
+    assert "check the walltime against the cluster's limit for one job" in \
+        answer["message"]
+    held = [jobs.get(entry["jobId"]) for entry in answer["resumedShards"]]
+    assert len(held) == 2 and all(jobs.is_held(part) for part in held)
+    assert jobs.get(submission.job_id).status == "running"
+    shards = job_status(jobs, jobs.get(submission.job_id))["shards"]
+    assert shards[2]["heldNote"] == HELD_PART_UNEXPLAINED_NOTE
+
+    # The slot frees, or the cause was the count after all: they go.
+    monkeypatch.delenv("FAKE_SBATCH_FAIL_IF_ARG")
+    jobs._held_deferred_until.clear()
+    _tick(jobs)
+    assert [part.status for part in
+            (jobs.get(p.id) for p in held)] == ["submitted", "submitted"]
+
+
+def test_a_resume_whose_part_has_no_script_names_what_is_missing(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 5: a missing script is not a scheduler refusal."""
+    jobs, submission = _cancelled_run_whose_ran_parts_finished(
+        tmp_path, monkeypatch, "heldresumenoscript")
+    tail = _held_tails(jobs, submission)[0]
+    os.remove(tail.requested_resources["scriptPath"])
+    calls = len(fake_slurm.calls("sbatch"))
+    with pytest.raises(ResubmitRefused) as refused:
+        jobs.resubmit(submission.job_id, walltime="02:00:00")
+    message = str(refused.value)
+    assert "cannot be submitted, because its sbatch script is not on disk" \
+        in message
+    assert message.endswith("submit the study again")
+    assert "scheduler" not in message.split("cannot be submitted")[1]
+    assert len(fake_slurm.calls("sbatch")) == calls
+    assert jobs.get(submission.job_id).status == "cancelled"
+    assert not any(jobs.is_held(t) for t in _held_tails(jobs, submission))
+
+
+def test_a_held_part_with_no_script_fails_its_run_with_a_fresh_submission(
+        tmp_path, monkeypatch, fake_slurm):
+    _limited(monkeypatch, accepted=2)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldnoscript")
+    os.remove(_parts(jobs, submission)[2].requested_resources["scriptPath"])
+    _slot_frees(monkeypatch)
+    _tick(jobs)
+    parent = jobs.get(submission.job_id)
+    assert parent.status == "failed"
+    assert "its sbatch script is not on disk" in parent.error
+    assert parent.error.endswith("Submit the study again")
+    assert "Correct what the scheduler said" not in parent.error
+
+
+def test_two_resumes_at_once_hold_each_part_again_only_once(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review round 5: both Resumes found the same cancelled held parts
+    before either took the lock. Without the check under the lock, each held
+    them again, and one continuation per part stayed pending for ever."""
+    import threading
+    jobs, submission = _cancelled_run_whose_ran_parts_finished(
+        tmp_path, monkeypatch, "heldresumetwice")
+    gate = threading.Barrier(2)
+
+    class GatedLock:
+        """The held lock, but the first two entries wait for each other,
+        so both Resumes have found their parts before either holds them."""
+
+        def __init__(self, inner):
+            self.inner, self.entered, self.count = inner, threading.Lock(), 0
+
+        def __enter__(self):
+            with self.entered:
+                self.count += 1
+                waits = self.count <= 2
+            if waits:
+                gate.wait(timeout=10)
+            self.inner.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            self.inner.release()
+
+        def acquire(self, *args, **kwargs):
+            return self.inner.acquire(*args, **kwargs)
+
+        def release(self):
+            self.inner.release()
+
+    jobs._held_lock = GatedLock(jobs._held_lock)
+    answers, refusals = [], []
+
+    def resume():
+        try:
+            answers.append(jobs.resubmit(submission.job_id))
+        except ResubmitRefused as exc:
+            refusals.append(str(exc))
+
+    threads = [threading.Thread(target=resume) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert len(answers) == 1 and len(refusals) == 1, (answers, refusals)
+    assert "no cancelled part left to resume" in refusals[0]
+    for part in _parts(jobs, submission)[2:]:
+        continuations = [job for job in jobs.list()
+                         if (job.requested_resources or {}).get("resubmitOf")
+                         == part.id]
+        assert len(continuations) == 1, part.id
+    _tick(jobs)
+    assert all(tail.status == "submitted"
+               for tail in _held_tails(jobs, submission))
+
+
 def test_a_resume_within_the_limit_submits_its_first_held_part_at_once(
         tmp_path, monkeypatch, fake_slurm):
     jobs, submission = _cancelled_run_whose_ran_parts_finished(
@@ -598,23 +724,38 @@ def test_the_general_sentence_waits_when_the_same_request_was_accepted(
     assert jobs.is_held(_parts(jobs, submission)[1])
 
 
-def test_the_general_sentence_fails_a_run_none_of_whose_parts_was_accepted(
+def test_the_general_sentence_alone_holds_and_never_stalls_another_run(
         tmp_path, monkeypatch, fake_slurm):
-    """Every part held at the first, by its reason code; later the sentence
-    alone, which may name a limit that never frees: the run fails with the
-    scheduler's words instead of waiting for ever."""
+    """Review round 5 (it failed the run in round 2): every part held at the
+    first, by its reason code; later the sentence alone, for a request no
+    part has had accepted. It may be the job count, which frees, or a limit
+    on this request, which does not: not enough to fail on. The parts stay
+    held, the note says the scheduler gave no reason, and a later run's held
+    parts are still submitted."""
+    from steerlab_server.api.job_status import job_status
+    from steerlab_server.api.jobs import HELD_PART_UNEXPLAINED_NOTE
     _limited(monkeypatch, accepted=0)
     jobs, submission = _submit(tmp_path, monkeypatch, name="heldsentence0",
                                parallel=2)
-    _limited(monkeypatch, accepted=0, message=POLICY)
+    later = _submit_into(jobs, tmp_path, name="heldsentence1", parallel=2)
+    _slot_frees(monkeypatch)
+    first_script = _parts(jobs, submission)[0].requested_resources["scriptPath"]
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", first_script)
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", POLICY)
     _tick(jobs)
     parent = jobs.get(submission.job_id)
-    assert parent.status == "failed"
-    assert "Job violates accounting/QOS policy" in parent.error
-    assert parent.error.endswith(
-        "Correct what the scheduler said, then submit the study again")
-    assert [p.status for p in _parts(jobs, submission)] == ["cancelled",
-                                                            "cancelled"]
+    assert parent.status == "submitted" and parent.error is None
+    assert all(jobs.is_held(p) for p in _parts(jobs, submission))
+    assert fake_slurm.calls("scancel") == []
+    first = _parts(jobs, submission)[0]
+    assert first.result["held"]["lastRefusalUnexplained"] is True
+    assert any("without saying why" in line and "check its walltime" in line
+               for line in first.all_logs())
+    entry = job_status(jobs, parent)["shards"][0]
+    assert entry["heldNote"] == HELD_PART_UNEXPLAINED_NOTE
+    # The later run was not kept waiting behind it.
+    assert [p.status for p in _parts(jobs, later)] == ["submitted",
+                                                       "submitted"]
 
 
 def test_a_maintenance_window_defers_one_run_and_not_the_next(

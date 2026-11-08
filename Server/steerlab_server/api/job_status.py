@@ -284,14 +284,18 @@ def _held_fields(job) -> dict:
     for a part SteerLab holds because the cluster's job limit is reached;
     both None otherwise. Beside the status, never a status value: a held
     part reads ``pending``, which every client already treats as waiting."""
-    from .jobs import HELD_PART_NOTE, JobManager
+    from .jobs import HELD_PART_NOTE, HELD_PART_UNEXPLAINED_NOTE, JobManager
     if not JobManager.is_held(job):
         return {"held": None, "heldNote": None}
     stamp = job.result["held"]
     held = {key: stamp.get(key) for key in
             ("reason", "since", "schedulerMessage", "lastAttemptAt",
-             "lastRefusal") if stamp.get(key) is not None}
-    return {"held": held, "heldNote": HELD_PART_NOTE}
+             "lastRefusal", "lastRefusalUnexplained")
+            if stamp.get(key) is not None}
+    return {"held": held,
+            "heldNote": (HELD_PART_UNEXPLAINED_NOTE
+                         if stamp.get("lastRefusalUnexplained")
+                         else HELD_PART_NOTE)}
 
 
 def held_parts_note(held: int, parts: int) -> str:

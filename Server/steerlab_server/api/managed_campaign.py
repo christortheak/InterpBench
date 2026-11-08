@@ -67,6 +67,13 @@ def require_complete(job_id, jobs, profile):
             try: identity = SlurmExecutor(profile).find_job_by_name(bundle['bundle']['resources']['job_name'], since=float(created))
             except RuntimeError as exc: raise archives.Refusal(str(exc)) from exc
         if identity:
-            state, ok = SlurmExecutor(profile).poll_state_detailed(identity)
-            if not ok or (state and state not in ended):
+            observation = SlurmExecutor(profile).poll_observation(identity)
+            state = observation.state
+            if observation.query_ok and state is None and observation.raw_state:
+                # A state SteerLab has no word for (REQUEUE_HOLD, say) is not
+                # an ending: "cannot say" (review round 5). Only positive
+                # absence, the scheduler knowing no such job, still reads as
+                # ended.
+                raise archives.Refusal(f'A campaign cell\'s job {identity} is in a scheduler state SteerLab cannot read as ended ({observation.raw_state}); retain outputs until termination is established.')
+            if not observation.query_ok or (state and state not in ended):
                 raise archives.Refusal('A campaign cell is still active or scheduler state is uncertain; retain outputs until termination is established.')

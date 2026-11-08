@@ -240,6 +240,20 @@ def test_the_export_check_searches_from_the_cells_creation(
     assert any("-j 9910" in call for call in scheduler.calls("sacct"))
 
 
+def test_the_export_check_reads_an_unknown_state_as_cannot_say(
+        campaign, scheduler, monkeypatch):
+    """Review round 5: a state SteerLab has no word for (REQUEUE_HOLD, a job
+    held to run again) mapped to nothing, with the query answered, and
+    passed as ended. It is "cannot say", and the export is refused."""
+    from steerlab_server.experiment import diagnostic_archives
+    created = _yesterday(3).timestamp()
+    campaign.created_at(created)
+    scheduler.entry("9912", state="REQUEUE_HOLD", name=campaign.job_name())
+    with pytest.raises(diagnostic_archives.Refusal,
+                       match=r"cannot read as ended \(REQUEUE_HOLD\)"):
+        _export_check(campaign, monkeypatch)()
+
+
 def test_the_export_check_without_a_creation_time_refuses(
         campaign, scheduler, monkeypatch):
     from steerlab_server.experiment import diagnostic_archives
