@@ -12,6 +12,59 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A study that cannot run is refused before the queue, not after it**
+  (public issues #9 and #10).
+  - **The temperature-0 seed rule.** At temperature 0 decoding is greedy, so
+    every seed gives the same response. A study that generates text there
+    must list one seed. Before, a study that listed several passed `verify`
+    and `freeze`. The Python engine then refused it only after the cluster
+    queue and the model load, and the Mac engine wrote one identical record
+    per seed, which analysis counted as separate observations. Now a draft
+    with several seeds is refused at `verify` (so `freeze` refuses). A study
+    frozen that way is warned at `verify` (`refusedWhenRun`), and refused
+    when submitted, at a pipeline's start when its run is still ahead, and
+    at run start on both engines.
+  - **Readout-only studies.** A study that only reads answer tokens reads
+    each item once and draws no seed, so its seed list and `samplesPerItem`
+    are never refused, only noted. Such a study now runs on the Python
+    engine, which refused it before.
+  - **The repair.** `steerlab-cli experiment set-sampling --seeds <n>[,…]`
+    is new. The Python client checks `set-protocol --set seeds` the same
+    way.
+  - **Older engines.** Both clients refuse to send such a study to an engine
+    that lacks the rule (`remoteStudy.greedyRulesSampledTextOnly`), so it is
+    never refused after the queue there either.
+  - **Submission now also refuses** several samples per item at temperature
+    0, an ordinal scale with no aggregation, answer-token instruments over
+    items they cannot read, an attention-check rule with no checked items, a
+    `pipeline` submission with no valid pipeline block, and a run with no
+    arm to measure. Each repair is typed.
+  - **Mac drafts.** A Mac draft that generates text at temperature 0 with
+    several seeds can no longer extract, validate, sweep, or analyze until
+    it lists one seed.
+  - **The token check** now measures a scripted transcript whole, under
+    every arm, not by its final question.
+- **A submission never lands twice, and a long one no longer looks like a
+  failure** (public issue #11). Both clients wait up to an hour for a
+  submission, which the server answers only after measuring every task
+  prompt. A submission that was sent but not answered is reported as
+  `submitOutcomeUnknown` (pending, exit 12), with advice to list the jobs
+  before submitting again. A server that advertises `cluster.submissionKey`
+  answers a repeat of the same submission with the job it already made.
+  Prompts are counted once per submission, and faster, with identical
+  counts. The walltime estimate for answer-token readouts now scales with
+  prompt length, and says plainly when its history came from much shorter
+  items.
+- **A split run that meets the cluster's job limit waits instead of
+  cancelling itself** (public issue #12). When the scheduler refuses a part
+  of a `--parallel` run because your job limit is reached, the parts already
+  accepted keep their place. SteerLab holds the rest and submits them, in
+  order, as slots free. `remote status` and `runner status` show each held
+  part. Held parts survive a controller restart, cancelling the run
+  withdraws them, and Resume on a cancelled run holds them again. A part
+  refused for any other reason still cancels the run, and the submission now
+  exits nonzero on both clients.
+
 ## [0.9.21] — 2026-11-06
 
 - **Answer-token readouts read a long prompt the way generation does**
