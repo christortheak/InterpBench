@@ -92,6 +92,11 @@ def study_site(tmp_path, monkeypatch, fake_slurm):
         '{"text":"unfair"}\n')
     es.create("Auto Study", model_id="org/m", revision="abc", root=root)
     es.attach("auto-study", ["fair"], root=root)
+    # An arm, so the study measures something: the submission refuses a run
+    # of a concept study with none, before anything is queued.
+    es.add_condition("auto-study", {
+        "name": "fair-on", "alphaInNormUnits": True,
+        "slots": [{"concept": "fair", "layer": 1, "alpha": 0.1}]}, root=root)
     monkeypatch.setenv("STEERLAB_ROOT", root)
     monkeypatch.setenv("STEERLAB_RUN_ROOT", str(tmp_path / "scratch"))
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))

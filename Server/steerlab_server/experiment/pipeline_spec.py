@@ -148,6 +148,31 @@ def _threshold(gate: dict, key: str, stage: str) -> float | None:
     return threshold
 
 
+def missing_block_problem(name: str) -> str:
+    """Why a study with no ``pipeline`` block cannot run the ``pipeline``
+    verb: the chain is preregistered data, never a default. One sentence for
+    the chain's start (``pipeline_workflow.pipeline``) and the engine's
+    submission preflight (``api.submissions._refuse_pipeline_block``)."""
+    return (f"experiment '{name}' declares no pipeline block — add "
+            '"pipeline": {"stages": [...], "gates": {...}} to the manifest '
+            "(gates optional but strongly recommended) so the chain is a "
+            "declared object, then re-run")
+
+
+def block_repair(name: str, *, frozen: bool = False) -> str:
+    """How the reader declares (or corrects) the chain: the reviewed
+    ``set-pipeline`` verb both clients share, on a duplicate when the study
+    is frozen; or a single step submitted as its own verb."""
+    from . import command_vocabulary as vocabulary
+    target = f"{name}-v2" if frozen else name
+    declare = (f"experiment set-pipeline {target} --file <pipeline.json> "
+               "--manifest-sha256 <digest>")
+    steps = ((f"experiment duplicate {name} {target}", declare) if frozen
+             else (declare,))
+    return (vocabulary.authoring(*steps) + "  (or submit the one step you "
+            "want as its own verb, for example --verb run)")
+
+
 def resolve_pipeline(spec: dict | None) -> PipelineSpec:
     """Resolve and VALIDATE the manifest's ``pipeline`` block at pipeline
     start — before the model loads. Refusals (``ValueError``) name

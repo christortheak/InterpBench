@@ -45,6 +45,11 @@ def _study(root, name="Submit Study"):
     _concept(root)
     es.create(name, model_id="org/m", revision="abc", root=root)
     es.attach("submit-study", ["fair"], root=root)
+    # An arm, so the study measures something: the submission refuses a run
+    # of a concept study with none, before anything is queued.
+    es.add_condition("submit-study", {
+        "name": "fair-on", "alphaInNormUnits": True,
+        "slots": [{"concept": "fair", "layer": 1, "alpha": 0.1}]}, root=root)
 
 
 FAKEBIN_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)),

@@ -99,17 +99,29 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
     from . import promote as promote_lib
     _log = log or print
     manifest = Manifest.load(name, root)
-    verify_or_warn(manifest, root)
     raw_block = manifest.raw.get("pipeline")
+    # A chain that runs the study meets run start's settings refusals HERE,
+    # before the verification below, the model acquisition, and every stage
+    # ahead of `run` (review round 1 of public issue #9: inside a chain they
+    # fired only at the run stage, after extract, validate, sweep, and
+    # promote). The settings cannot change between stages: promote adds
+    # arms, never a temperature or a seed. An unreadable block is refused
+    # below, in its own words.
+    try:
+        declared = (pspec.resolve_pipeline(raw_block).stages
+                    if raw_block is not None else ())
+    except ValueError:
+        declared = ()
+    if "run" in declared:
+        from . import study_admission
+        study_admission.refuse_settings(manifest)
+    verify_or_warn(manifest, root)
     if raw_block is None:
         # The chain is preregistered DATA, not a default (engineer review
         # 2026-07-18, second round): an implicit five-stage chain with no
         # gates is a footgun, and stage 5's abort UI does not exist yet.
-        raise RuntimeError(
-            f"experiment '{name}' declares no pipeline block — add "
-            '"pipeline": {"stages": [...], "gates": {...}} to the manifest '
-            "(gates optional but strongly recommended) so the chain is a "
-            "declared object, then re-run")
+        # The engine's submission preflight refuses with the same sentence.
+        raise RuntimeError(pspec.missing_block_problem(name))
     spec = pspec.resolve_pipeline(raw_block)
     if spec.validate_gate is None and spec.sweep_gate is None:
         # Gates exist for validate and sweep only (pipeline_spec's gate

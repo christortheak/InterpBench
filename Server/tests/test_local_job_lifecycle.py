@@ -58,6 +58,11 @@ def _study(root: str) -> str:
         h.write('{"text":"unfair"}\n')
     es.create("Local Lifecycle", model_id="org/m", revision="abc", root=root)
     es.attach("local-lifecycle", ["fair"], root=root)
+    # An arm, so the study measures something: the submission refuses a run
+    # of a concept study with none, before anything is queued.
+    es.add_condition("local-lifecycle", {
+        "name": "fair-on", "alphaInNormUnits": True,
+        "slots": [{"concept": "fair", "layer": 1, "alpha": 0.1}]}, root=root)
     return "local-lifecycle"
 
 

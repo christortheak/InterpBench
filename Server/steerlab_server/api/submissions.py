@@ -244,6 +244,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     # A study its settings and pinned prompts alone make unrunnable refuses
     # here, before anything is written or queued (public issue #9), as does a
     # declared agent comparison whose arms would not run.
+    _refuse_pipeline_block(manifest, verb)
     _refuse_settings(manifest, verb, stages)
     _refuse_inert_conditions(manifest, verb)
     _refuse_prompt_rules(manifest, verb, stages,
@@ -510,6 +511,7 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # The bundle's settings and pinned prompts, and a declared agent
     # comparison whose arms would not run, refused here before a submission
     # directory exists (public issue #9).
+    _refuse_pipeline_block(manifest, verb)
     _refuse_settings(manifest, verb, _pipeline_stages(manifest))
     _refuse_inert_conditions(manifest, verb)
     _refuse_prompt_rules(manifest, verb, _pipeline_stages(manifest),
@@ -720,13 +722,49 @@ def _refuse_inert_conditions(manifest: Manifest | None, verb: str) -> None:
     burn its whole allocation measuring baseline only — on a fan-out, K
     allocations. Refuse where the researcher is still watching; the shard
     jobs would otherwise each refuse only after their queue wait. Asked
-    before anything is written, so a refusal leaves no submission behind."""
+    before anything is written, so a refusal leaves no submission behind.
+
+    Its sibling, a concept study that declares no arm at all, is refused
+    here too for ``run`` (``run_workflow.run`` refuses it before the model
+    loads, but only after the queue wait). Not for ``pipeline``: a sweep →
+    promote → run chain legitimately has no arm until its promote stage
+    mints one, so there the run stage keeps the check. Nor at ``verify``: a
+    concept study has no arm while it is extracted, validated, and swept."""
     if manifest is None or verb not in ("run", "pipeline"):
         return
-    from ..experiment.manifest import inert_conditions_problem
+    from ..experiment.manifest import (inert_conditions_problem,
+                                       no_measured_conditions_problem)
     problem = inert_conditions_problem(manifest.raw)
+    if problem is None and verb == "run":
+        problem = no_measured_conditions_problem(manifest.raw)
     if problem:
         raise ValueError(f"submission refused: {problem}")
+
+
+def _refuse_pipeline_block(manifest: Manifest | None, verb: str) -> None:
+    """Submission-preflight twin of the chain's start
+    (``pipeline_workflow.pipeline``): the ``pipeline`` verb needs a declared,
+    readable ``pipeline`` block. Without one the chain refused only once its
+    job had waited in the queue, and the settings refusals below could not
+    tell which steps it would run, so a study they refuse reached the queue
+    too (review round 1 of public issue #9). Same sentences as the chain."""
+    if manifest is None or verb != "pipeline":
+        return
+    from ..experiment import lifecycle_gates, pipeline_spec
+    raw_block = manifest.raw.get("pipeline")
+    if raw_block is None:
+        problem = pipeline_spec.missing_block_problem(manifest.name)
+    else:
+        try:
+            pipeline_spec.resolve_pipeline(raw_block)
+            return
+        except ValueError as exc:
+            problem = str(exc)
+    repair = pipeline_spec.block_repair(
+        manifest.name, frozen=manifest.status != "draft")
+    raise SubmissionRefusal(
+        _refused_before_the_queue(problem, repair),
+        code=lifecycle_gates.STUDY_DECLARATION, repair_action=repair)
 
 
 def _runs_the_study(verb: str, stages: list[str] | None) -> bool:

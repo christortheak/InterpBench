@@ -4,16 +4,23 @@ Public issue #9: a temperature-0 study that kept a list of several seeds
 passed verify and freeze, waited for a GPU, loaded its model, and only then
 refused at run start, because at temperature 0 every seed gives the same
 greedy response. The rule now has one sentence on both engines
-(``sampling.greedy_seed_list_problem``), and it fires at verify on a draft (so
-freeze refuses), at the engine's submission preflight before anything is
-written or queued (a study frozen under an older release meets it there), and
-at run start before the model loads.
+(``sampling.greedy_seed_list_problem``) and applies only to a study that
+generates sampled text: an answer-token readout reads each item once
+whatever the seeds, so a readout-only study runs and is told its list is not
+used. The rule fires at verify on a draft (so freeze refuses), at the engine's
+submission preflight before anything is written or queued (a study frozen
+under an older release meets it there, and verify warns of it with
+``refusedWhenRun``), at a chain's start when the chain runs the study, and at
+run start before the model loads.
 
 The other refusals of run start that depend on the settings alone are asked
-at the same two places through the same function
+at the same places through the same function
 (``study_admission.settings_refusal``): several samples per item at
-temperature 0, and an ordinal scale with no declared aggregation. A concept
-study that declares no arm at all is now refused at submission too.
+temperature 0, and an ordinal scale with no declared aggregation. The
+submission also asks run start's pinned-prompt rules (an answer-token
+instrument over items it cannot read, an attention-check exclusion with no
+checked item), a ``pipeline`` submission's block, and, for ``run`` only, a
+concept study that declares no arm at all (a chain mints its arm at promote).
 """
 
 import hashlib
@@ -394,6 +401,31 @@ def test_the_other_settings_refusals_reach_the_submission_too(server, fields,
     assert _submissions_written(root) == []
 
 
+def test_a_concept_study_with_no_arm_is_refused_at_submission(
+        server, monkeypatch):
+    """Run start refused it before the model loaded, but only after the queue
+    wait. A chain is not refused for it: its promote stage mints the arm."""
+    monkeypatch.setenv("STEERLAB_SLURM_GPU_TYPES", "L4,A100,H100")
+    root, jobs = server
+    _study(root, "no-arm", conditions=[],
+           pipeline={"stages": ["extract", "validate", "sweep", "promote",
+                                "run"]})
+    with pytest.raises(ValueError) as refused:
+        submissions.submit_study("no-arm", verb="run", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+    assert "measure nothing" in str(refused.value)
+    assert _submissions_written(root) == []
+    # Steps that do not run the study, and a chain that mints its arm, are
+    # not refused for it.
+    for verb in ("verify", "pipeline"):
+        submissions.submit_study("no-arm", verb=verb, jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+
+
 def test_steps_that_do_not_run_the_study_are_not_refused(server, monkeypatch):
     """A frozen study's existing evidence can still be analysed, and a
     pipeline that does not run it is not refused for its seeds."""
@@ -600,3 +632,84 @@ def test_verify_warns_of_a_frozen_study_the_seed_rule_refuses(
         _manifest(temperature=0.0, seeds=[11, 22, 33])) is None
     assert sampling.frozen_greedy_seed_list_advisory(
         _manifest(temperature=0.0, seeds=[11], status="frozen")) is None
+
+
+# --- the pipeline holes (review round 1) ------------------------------------------
+
+def test_a_pipeline_with_no_block_is_refused_at_submission(server, monkeypatch):
+    """The reviewer's probe: with no pipeline block the submission could not
+    tell which steps the chain runs, so a frozen study the seed rule refuses
+    reached the queue and was refused at the chain's start."""
+    from steerlab_server.experiment import pipeline_spec
+    monkeypatch.setenv("STEERLAB_SLURM_GPU_TYPES", "L4,A100,H100")
+    root, jobs = server
+    _frozen_under_an_older_release(root, "greedy", monkeypatch,
+                                   temperature=0.0, seeds=[11, 22, 33])
+    with pytest.raises(submissions.SubmissionRefusal) as refused:
+        submissions.submit_study("greedy", verb="pipeline", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+    assert pipeline_spec.missing_block_problem("greedy") in str(refused.value)
+    assert refused.value.code == "studyDeclaration"
+    assert refused.value.repair_action.startswith(
+        "on your authoring client: steerlab-cli experiment duplicate greedy "
+        "greedy-v2 && steerlab-cli experiment set-pipeline greedy-v2 --file")
+    assert _submissions_written(root) == []
+
+
+def test_a_pipeline_block_that_does_not_resolve_is_refused_at_submission(
+        server, monkeypatch):
+    monkeypatch.setenv("STEERLAB_SLURM_GPU_TYPES", "L4,A100,H100")
+    root, jobs = server
+    _study(root, "chain", pipeline={"stages": ["run", "extract"]})
+    with pytest.raises(submissions.SubmissionRefusal) as refused:
+        submissions.submit_study("chain", verb="pipeline", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+    from steerlab_server.experiment import pipeline_spec
+    with pytest.raises(ValueError) as chain_says:
+        pipeline_spec.resolve_pipeline({"stages": ["run", "extract"]})
+    assert str(chain_says.value) in str(refused.value)
+    assert _submissions_written(root) == []
+
+
+def test_a_declared_chain_that_runs_the_study_is_refused_at_submission(
+        server, monkeypatch):
+    monkeypatch.setenv("STEERLAB_SLURM_GPU_TYPES", "L4,A100,H100")
+    root, jobs = server
+    _frozen_under_an_older_release(
+        root, "greedy", monkeypatch, temperature=0.0, seeds=[11, 22, 33],
+        pipeline={"stages": ["run", "analyze"]})
+    with pytest.raises(submissions.SubmissionRefusal) as refused:
+        submissions.submit_study("greedy", verb="pipeline", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+    assert GREEDY_THREE in str(refused.value)
+    assert _submissions_written(root) == []
+
+
+def test_a_chain_meets_the_settings_refusals_before_any_stage_or_model(
+        tmp_path, monkeypatch):
+    """Inside a chain the refusal fired only at the run stage, after the
+    model was acquired and extract, validate, sweep, and promote had run."""
+    root = str(tmp_path)
+    _frozen_under_an_older_release(
+        root, "greedy", monkeypatch, temperature=0.0, seeds=[11, 22, 33],
+        pipeline={"stages": ["extract", "validate", "sweep", "promote", "run"]})
+    loads = []
+
+    @contextmanager
+    def counting_model(model_id, revision=None):
+        loads.append(model_id)
+        yield SimpleNamespace(model_id=model_id, revision=revision or "abc")
+
+    with pytest.raises(lifecycle_gates.LifecycleError) as refused:
+        tasks.pipeline("greedy", root, model_provider=counting_model,
+                       log=lambda *_: None)
+    assert str(refused.value) == GREEDY_THREE
+    assert refused.value.gate == "studyDeclaration"
+    assert "duplicate greedy greedy-v2" in refused.value.repair_action
+    assert loads == []
