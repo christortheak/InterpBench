@@ -118,11 +118,12 @@ the researcher how many parts are held; that is not a failure. The merge
 waits for every part, cancelling the run withdraws its held parts, and Resume
 on a cancelled run holds them again. A part refused for any other reason
 cancels the parts already submitted, fails the run, and the submit exits
-nonzero with the scheduler's own words. A held part that the scheduler later
-refuses for a limit that never frees (a `--walltime` above the cluster's
-maximum for one job, given to Resume, is the usual one) fails its run the
-same way, with the scheduler's words and the repair in the run's error;
-report it, and do not wait for it. An engine older than this answers a
+nonzero with the scheduler's own words. A Resume whose `--walltime` the
+scheduler refuses for a limit that never frees (above the cluster's maximum
+for one job) is refused at once, with the scheduler's words and the repair;
+the run stays cancelled, so resume it again within the limit. A held part
+the scheduler refuses that way later fails its run with the same words and
+repair in the run's error; report it, and do not wait for it. An engine older than this answers a
 refused fan-out as a success, so on one, check `steerlab-cli remote jobs`
 and count the parts. **And stagger submissions where the site caps queued jobs per user:**
 K shards are K independent scheduler submissions, so a fan-out that crosses

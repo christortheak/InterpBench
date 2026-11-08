@@ -47,16 +47,26 @@ def require_complete(job_id, jobs, profile):
         raise archives.Refusal('Campaign evidence export requires every cell to complete; retain partial results on the runner.')
     from .executors import SlurmExecutor
     from .job_ownership import TERMINAL_ALLOCATION_STATES
+    from .jobs import TERMINAL
+    # ``poll_state_detailed`` answers in SteerLab's words (a completed job
+    # reads "succeeded"), not the scheduler's: both mean the job has ended.
+    ended = TERMINAL_ALLOCATION_STATES | TERMINAL | {'checkpointed'}
     directory, _, _ = context(job_id, jobs, profile)
     for cell in report['cells']:
         identity = cell['jobID']
         if not identity:
             # A worker may complete after the submit response was lost. Check
             # its exact name before treating the absent local ID as termination.
+            # The accounting search runs from the cell's own creation, before
+            # any submission of it: sacct's default window starts at today's
+            # midnight (issue #12, review round 3).
             bundle = json.loads((directory/'cells'/cell['cellID']/'managed-job/bundle.json').read_bytes())
-            try: identity = SlurmExecutor(profile).find_job_by_name(bundle['bundle']['resources']['job_name'])
+            created = bundle.get('createdAt')
+            if not isinstance(created, (int, float)) or isinstance(created, bool):
+                raise archives.Refusal('A campaign cell has no recorded job ID and no recorded creation time to search the scheduler from; retain outputs until termination is established.')
+            try: identity = SlurmExecutor(profile).find_job_by_name(bundle['bundle']['resources']['job_name'], since=float(created))
             except RuntimeError as exc: raise archives.Refusal(str(exc)) from exc
         if identity:
             state, ok = SlurmExecutor(profile).poll_state_detailed(identity)
-            if not ok or (state and state not in TERMINAL_ALLOCATION_STATES):
+            if not ok or (state and state not in ended):
                 raise archives.Refusal('A campaign cell is still active or scheduler state is uncertain; retain outputs until termination is established.')

@@ -419,15 +419,11 @@ def test_a_walltime_above_the_maximum_fails_its_run_and_never_stalls_the_next(
     assert jobs.get(second.job_id).status == "submitted"
 
 
-def test_resuming_with_a_walltime_above_the_maximum_fails_rather_than_waits(
-        tmp_path, monkeypatch, fake_slurm):
-    """The case review round 2 found: Resume of a cancelled run with a
-    --walltime above the QOS maximum. The parts that ran had finished, so
-    only the never-submitted parts continue, held again; the scheduler
-    refuses them on the next tick, and the run fails with the scheduler's
-    words and a repair, rather than waiting for ever."""
+def _cancelled_run_whose_ran_parts_finished(tmp_path, monkeypatch, name):
+    """A split run with two finished parts and two held ones, cancelled:
+    Resume continues only the held parts."""
     _limited(monkeypatch, accepted=2)
-    jobs, submission = _submit(tmp_path, monkeypatch, name="heldresumewall")
+    jobs, submission = _submit(tmp_path, monkeypatch, name=name)
     for part in _parts(jobs, submission)[:2]:
         part.status = "succeeded"
         part.finished_at = 1.0
@@ -436,28 +432,84 @@ def test_resuming_with_a_walltime_above_the_maximum_fails_rather_than_waits(
     assert jobs.cancel(submission.job_id) is True
     assert jobs.get(submission.job_id).status == "cancelled"
     _slot_frees(monkeypatch)
+    return jobs, submission
+
+
+def _held_tails(jobs, submission):
+    return [jobs._shard_chain_tail(part) for part in _parts(jobs, submission)[2:]]
+
+
+def test_resuming_with_a_walltime_above_the_maximum_is_refused_at_once(
+        tmp_path, monkeypatch, fake_slurm):
+    """Review rounds 2 and 3: a Resume with a --walltime above the QOS
+    maximum, where only never-submitted parts continue. The first of them is
+    handed to the scheduler in the request itself, and its refusal refuses
+    the Resume there, with the repair, instead of failing the run on the
+    next tick. The run stays cancelled and can be resumed again."""
+    jobs, submission = _cancelled_run_whose_ran_parts_finished(
+        tmp_path, monkeypatch, "heldresumewall")
     monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=48:00:00")
     monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", MAX_WALL)
-    answer = jobs.resubmit(submission.job_id, walltime="48:00:00")
-    assert answer["ok"] is True
-    held = [entry["jobId"] for entry in answer["resumedShards"]
-            if entry.get("held")]
-    assert len(held) == 2
-    for job_id in held:
-        assert jobs.get(job_id).requested_resources["walltimeOverride"] == \
-            "48:00:00"
-
-    _tick(jobs)
+    with pytest.raises(ResubmitRefused) as refused:
+        jobs.resubmit(submission.job_id, walltime="48:00:00")
+    message = str(refused.value)
+    assert "QOSMaxWallDurationPerJobLimit" in message
+    assert ("Request a walltime within the cluster's limit for one job "
+            "(--walltime), then resume the run again") in message
+    assert "the run stays cancelled" in message
     assert any("--time=48:00:00" in call
                for call in fake_slurm.calls("sbatch"))
     parent = jobs.get(submission.job_id)
-    assert parent.status == "failed"
-    assert "QOSMaxWallDurationPerJobLimit" in parent.error
-    assert "request a walltime within the cluster's limit" in \
-        parent.error.lower()
-    assert not any(jobs.is_held(jobs.get(job_id)) for job_id in held)
-    # Nothing waits behind it.
-    assert jobs._held_retry_after == 0.0
+    assert parent.status == "cancelled" and parent.cancelled
+    assert not any(jobs.is_held(tail) for tail in _held_tails(jobs, submission))
+
+    # Resumed again within the limit, the parts continue.
+    answer = jobs.resubmit(submission.job_id)
+    assert answer["ok"] is True
+    assert jobs.get(submission.job_id).status == "running"
+    _tick(jobs)
+    assert [tail.status for tail in _held_tails(jobs, submission)] == [
+        "submitted", "submitted"]
+
+
+def test_a_resume_within_the_limit_submits_its_first_held_part_at_once(
+        tmp_path, monkeypatch, fake_slurm):
+    jobs, submission = _cancelled_run_whose_ran_parts_finished(
+        tmp_path, monkeypatch, "heldresumeok")
+    answer = jobs.resubmit(submission.job_id, walltime="02:00:00")
+    assert answer["ok"] is True
+    first, second = answer["resumedShards"]
+    assert first["held"] is False and first["slurmJobID"]
+    assert second["held"] is True
+    assert jobs.get(first["jobId"]).status == "submitted"
+    assert jobs.is_held(jobs.get(second["jobId"]))
+    assert "--time=02:00:00" in fake_slurm.calls("sbatch")[-1]
+
+
+def test_a_resume_refused_for_a_part_that_ran_holds_nothing_again(
+        tmp_path, monkeypatch, fake_slurm):
+    """The scheduler refuses this Resume's walltime for a part that had run:
+    the held parts, which ask for the same, are not held again only to meet
+    the same refusal, and the Resume is refused with the repair."""
+    _limited(monkeypatch, accepted=2)
+    jobs, submission = _submit(tmp_path, monkeypatch, name="heldresumeran")
+    assert jobs.cancel(submission.job_id) is True
+    for slurm_id in ("7001", "7002"):
+        fake_slurm.set_state(slurm_id, "CANCELLED", exit_code="0:15")
+    _slot_frees(monkeypatch)
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_IF_ARG", "--time=48:00:00")
+    monkeypatch.setenv("FAKE_SBATCH_FAIL_MESSAGE", MAX_WALL)
+    calls = len(fake_slurm.calls("sbatch"))
+    with pytest.raises(ResubmitRefused,
+                       match="then resume the run again") as refused:
+        jobs.resubmit(submission.job_id, walltime="48:00:00")
+    assert "QOSMaxWallDurationPerJobLimit" in str(refused.value)
+    # Only the two parts that had run were asked about.
+    assert len(fake_slurm.calls("sbatch")) == calls + 2
+    held_ids = {part.id for part in _parts(jobs, submission)[2:]}
+    assert not [job for job in jobs.list()
+                if (job.requested_resources or {}).get("resubmitOf") in held_ids]
+    assert jobs.get(submission.job_id).status == "cancelled"
 
 
 def test_the_general_sentence_waits_when_the_same_request_was_accepted(

@@ -231,17 +231,19 @@ def submit_refusal_kind(message: str | None) -> str | None:
     return None
 
 
-def refusal_repair(message: str | None) -> str:
+def refusal_repair(message: str | None, *,
+                   then: str = "submit the study again") -> str:
     """The repair for a refusal waiting would not fix, in a person's words,
-    from the limit the scheduler named."""
+    from the limit the scheduler named; ``then`` is what the person does
+    after (a refused Resume is resumed again)."""
     codes = " ".join(other_limit_codes(message))
     if "Wall" in codes or "Time" in codes:
         return ("request a walltime within the cluster's limit for one job "
-                "(--walltime), then submit the study again")
+                f"(--walltime), then {then}")
     if any(word in codes for word in ("GRES", "TRES", "Cpu", "Mem", "Node")):
         return ("request resources within the cluster's limit for one job, "
-                "then submit the study again")
-    return "correct what the scheduler said, then submit the study again"
+                f"then {then}")
+    return f"correct what the scheduler said, then {then}"
 
 
 def is_job_limit_refusal(message: str | None, *,
