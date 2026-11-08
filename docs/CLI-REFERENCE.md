@@ -482,7 +482,7 @@ is authoritative.
 | 2 | `package` | packages the run bundle locally, records its sha256 | `bundleRefused` (65) |
 | 3 | `capabilities` | asks the runner whether it can execute **this verb on this executor** — *before* anything is uploaded | `runnerCannotExecute` (65), with `result.runnerOffers` |
 | 4 | `upload` | streams the archive; the digest must agree across the socket | `uploadDigestMismatch` (65) |
-| 5 | `submit` | submits with `--verb` / `--executor` and the submit endpoint's pass-throughs | `submitOutcomeUnknown` (70) |
+| 5 | `submit` | submits with `--verb` / `--executor` and the submit endpoint's pass-throughs, and a submission key | `submitOutcomeUnknown` (`pending`, 12) |
 | 6 | `wait` | polls `GET /api/jobs/{id}` to a terminal status | `waitDeadlineExceeded` (70) · `remoteJobFailed` (70) |
 | 7 | `evidence` | downloads the job's bundle and verifies its outer digest | `evidenceNotPackaged` (65) · `evidenceDigestMismatch` (65) |
 | 8 | `import` | verify-and-extract into your workspace with the out-of-band pin | `bundleRefused` (65) |
@@ -504,7 +504,7 @@ prints one `run[<stage>]: …` line on **stderr**.
 | `--no-evidence` | do not package or fetch evidence (stages 7–9 `skipped`) |
 | `--no-wait` | detach right after submit |
 | `--timeout <seconds>` | **the WAIT deadline**, default 24 h — see the trap below |
-| `--request-timeout <seconds>` | the per-HTTP-request budget (what `--timeout` means on the `runner` verbs) |
+| `--request-timeout <seconds>` | the per-HTTP-request budget (what `--timeout` means on the `runner` verbs). Absent, an ordinary request gets a minute and the submit an hour, because the runner answers it only after measuring every task prompt |
 | `--evidence-out <file.tar.gz>` | keep the downloaded archive at this path. Without it the archive is a courier: temp directory, imported, removed |
 | `--max-bytes <n>` | the download size cap |
 
@@ -543,8 +543,13 @@ Three traps specific to this verb:
   keeps its own spelling, `--request-timeout`, so neither has to be guessed.
 - **`submit` is never retried, and only `submit`.** Upload and evidence
   download each get one automatic retry on a transport error (both are
-  idempotent). A transport failure at submit leaves `submitOutcomeUnknown` and
-  a repair that says to run `runner jobs` — the job may exist.
+  idempotent). A submit that was sent and never answered leaves
+  `submitOutcomeUnknown` — `pending`, exit 12, not a failure (public issue
+  #11): the runner may still be preparing the job. The repair says to run
+  `runner jobs`, and whether a repeat is safe on this runner
+  (`result.repeatIsSafe`, from `cluster.submissionKey`): every submit carries
+  a submission key, and a runner that recognises it answers a repeat with the
+  job the first request created.
 - **`--verb verify` legitimately brings nothing home.** `verify` writes no run
   directory, so it packages no evidence, and the machine ends at a typed
   `evidenceNotPackaged` (65) rather than pretending. Same for `--dry-run`,
@@ -2619,7 +2624,7 @@ id fails with the stable code `unknownSite`.
 | `capabilities` | Server capability snapshot. |
 | `package` | Builds a hash-pinned run bundle locally; prints its path. |
 | `upload` | Uploads a bundle. |
-| `submit-bundle` | **`--verb` is required**. Without `--executor`, a verb that loads a model gets the server's own executor (`capabilities.profile.executor`: `slurm` on a cluster, `local` on a workstation), and `analyze` and `verify`, which load none, get `local` (the controller). Until 2026-10-20 the default was always `local`, which ran model verbs inside a cluster controller's CPU allocation. `--executor local` for a model verb on a Slurm server warns on stderr. When the server's executor cannot be read, the verb refuses and says to pass `--executor`. The envelope echoes `result.executorSource`: `flag`, `serverProfile`, `loadsNoModel`, or `fallback` (the server declares none). Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
+| `submit-bundle` | **`--verb` is required**. The request waits up to an hour for the server's answer, which comes only after it has measured every task prompt; a submission that was sent and never answered is `submitOutcomeUnknown` (`pending`, exit 12), never a failure, with the repair to look with `remote jobs` (`result.repeatIsSafe` says whether this server answers a repeat with the job the first request created, `cluster.submissionKey`). An `alreadySubmitted` answer says so (`result.alreadySubmitted`, `changed: false`). Without `--executor`, a verb that loads a model gets the server's own executor (`capabilities.profile.executor`: `slurm` on a cluster, `local` on a workstation), and `analyze` and `verify`, which load none, get `local` (the controller). Until 2026-10-20 the default was always `local`, which ran model verbs inside a cluster controller's CPU allocation. `--executor local` for a model verb on a Slurm server warns on stderr. When the server's executor cannot be read, the verb refuses and says to pass `--executor`. The envelope echoes `result.executorSource`: `flag`, `serverProfile`, `loadsNoModel`, or `fallback` (the server declares none). Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
 | `jobs` | Job list as JSON. |
 | `status` | `GET /api/jobs/{id}/status` (capability `cluster.jobStatus`): one read that returns. `result.response.scheduler` is the scheduler's view in fixed fields, read through the site's configured `sacct`/`squeue` names — for a waiting job its `reason` and `expectedStartAt`; for a running or ended one `startedAt`, `nodeList`, `elapsed`, `timeLimit`, `walltimeRemainingSeconds`, `endedAt`, `exitCode`. `progress` counts records written the way a resume counts them (`recordsWritten`, `lastRecordAt`) out of `recordsExpected`, exact from a shard's stamp (`shardStamp`) or the submission's planning figure (`preflightEstimate`). `schedulerOutcome` is the scheduler's own word for an ending or interruption that came from outside the job's code (`TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`, `NODE_FAIL`, `CANCELLED` — by a person, SteerLab, or an administrator — `BOOT_FAIL`, `DEADLINE`), beside the unchanged `status` and never on a success; `schedulerOutcomeNote` says it as "The scheduler recorded …", names a cancel SteerLab asked for, and does not call a requeued job ended. `deathDetail` is the scheduler's sentence for a job that ended, from the same accounting row. A split run's parent answers each part under `shards`, asked about at once; the read answers within about 30 seconds, and a part the scheduler did not answer for in time carries `scheduler.timedOut`. CONFIGURING reads as starting (its start is real); SUSPENDED shows no remaining time. Only jobs in the server's store: an unknown id is `notFound`/66, an id that could name anything but a job is `usage`/64 before any request, and an engine without the read is `jobStatusUnsupported`/65. |
 | `logs` | Streams the job log until the job ends. `--tail N` (1–1000) instead prints the last N controller lines and the tails of the job's own `slurm-<id>.out` and `.err` (each read from at most 256 KiB at the end of the file; a missing file says so) and exits — `GET /api/jobs/{id}/log-tail`, capability `cluster.jobLogTail`, same refusals as `status`. |
@@ -4156,6 +4161,22 @@ priority, under-asking kills the job at the wall. The classification is
 recorded in the check's `data` (`instrumentFamily`, `rateSource`), and the
 housekeeping fold learns per family as jobs complete — the global entry keeps
 its historical meaning.
+
+**Prompt length** (public issue #11). The submission counts its task prompts
+once — every prompt under every arm's rendering, shared by `memoryFit` (the
+longest) and `walltime` (the average, stamped as `data.promptTokensPerRecord`)
+— and the fold records each family entry's prompt basis
+(`promptTokens: {basis, recordsPerHour, samples}`). A `deterministicLogprob`
+record is one forward pass over its prompt, so that family's estimate is
+scaled by this submission's prompt tokens per record over the basis; a
+generating family keeps its generated-token pricing. When the history's items
+were at least four times shorter than this submission's, or the history does
+not record their length and these average 8,192 tokens or more, the check
+says so in plain words (`data.promptLengthNotice`, also on both clients'
+stderr and in the submission envelope's `result.walltimeNotice`) and is at
+least a `warn`. The estimate never sets the job's time limit: the requested
+`--walltime` (or the site's default) does, and the check refuses one the
+estimate exceeds.
 
 **GPU type and count.** There is no `--gpu`, `--gpu-type` or `--accelerator`
 flag, and none is needed: the GPU type IS `--gres`. `--gres A100` is expanded
