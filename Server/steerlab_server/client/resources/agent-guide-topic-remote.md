@@ -43,18 +43,25 @@ finished measuring, run the same command again with the same flags. A
 command with any setting changed, or the same study sent from the other
 client, is a new submission. On an older server, submit again only if no job
 appears.
+A resume (resubmitting a checkpointed or cancelled job) waits as long, and
+one that was sent and never answered is `resumeOutcomeUnknown` (exit 12):
+check the job's status before resuming again.
 
-**A walltime estimate for long prompts.** The submission estimates the time
-its job needs from the cluster's own history for this kind of study, from the
-past jobs whose items were nearest this study's length. When no past job's
-items were within four times this length, or the history does not record how
-long its items were and these are long, the estimate says so in a plain
-warning (`promptLengthNotice`, echoed as `result.walltimeNotice`) and says
-which way it errs (`estimateBound`). A lower bound over the requested
-walltime is still refused before the queue, because the job needs at least
-that long; an upper bound over it is a warning. Tell the researcher, and ask
-for more time than the estimate or split the study; a short pilot of a few
-items measures the real pace.
+**What the walltime check refuses, and what it only advises.** The
+submission estimates the time its job needs from the cluster's own history
+for this kind of study, from the past jobs whose items were nearest this
+study's length. The estimate is advice: when it exceeds the requested
+walltime, the check warns and names the walltime to ask for (or splitting the
+study), and says that a run which reaches its walltime keeps its finished
+records and can be resumed. It refuses only when even the pace of a
+comparable past job with shorter items (the same kind of study, model and
+GPU, timed from its own records, without the model load) cannot fit the
+records in the requested walltime. When no past job's items were near this
+length, or the history does not record how long its items were and these are
+long, the estimate says so in a plain warning (`promptLengthNotice`, echoed
+as `result.walltimeNotice`). Tell the researcher, and ask for more time than
+the estimate or split the study; a short pilot of a few items measures the
+real pace.
 
 ## Runners
 
