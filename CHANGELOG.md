@@ -55,15 +55,19 @@ migration that rewrites frozen bytes.
   the job it already made, however often the study is repackaged, and
   reports the job as it is now. A repeat from the other client is not
   recognised. Prompts are counted once per submission, and faster, with
-  identical counts. The walltime check refuses a submission only when even
-  the pace of a comparable past job with shorter items (the same kind of
-  study, model, and GPU, timed from its own records) cannot fit its records
-  in the requested walltime. Otherwise it gives an estimate from past jobs
-  of similar length, and when that is over the walltime it warns, naming
-  the walltime to ask for. A run that reaches its walltime keeps its
-  finished records and can be resumed. Both clients also wait up to an hour
-  for a resume, and report one that goes unanswered as an unknown outcome
-  to check.
+  identical counts. The walltime check is advice and never refuses a
+  submission, because a past job can be slow or fast for reasons that are
+  not this study's. When its estimate, priced from past jobs of similar item
+  length on the same model and GPU and timed without the model load, is
+  over the requested walltime, both clients print a plain warning. The
+  warning gives the estimate, the walltime to ask for (rounded up to the
+  hour), and splitting the study as the alternative; past twice the request
+  it says the job is very likely to run out of time. It also says what
+  happens at the walltime: a run keeps its finished records and a sweep its
+  finished cells, and either can be resumed; a pipeline can be resumed only
+  from its run stage; other steps stop and must be submitted again. Both
+  clients also wait up to an hour for a resume, and report one that goes
+  unanswered as an unknown outcome to check.
 - **A split run that meets the cluster's job limit waits instead of
   cancelling itself** (public issue #12). When the scheduler refuses a part
   of a `--parallel` run because your job limit is reached (submitted jobs,
@@ -76,8 +80,11 @@ migration that rewrites frozen bytes.
   a limit that never frees, such as a walltime above the cluster's maximum
   for one job, fails its run with the scheduler's words and a repair. It
   never holds up another run's parts. A Resume refused for a named limit
-  is refused at once. A refusal that gives no reason holds the parts, and
-  says so. A maintenance window delays only its own run. The searches that keep a part from being
+  is refused at once. A refusal that gives no reason holds the parts, says
+  so, and is retried less and less often (up to every 30 minutes); after a
+  day of such refusals the run fails with the walltime repair and can still
+  be resumed. A Resume whose parts end up held says so and is reported as
+  pending (exit 12). A maintenance window delays only its own run. The searches that keep a part from being
   submitted twice now reach back to their own record's time, across
   midnight, and an inconclusive search is never read as absence.
 
