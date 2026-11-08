@@ -691,6 +691,28 @@ public struct ExperimentCLIRunner: Sendable {
         }
     }
 
+    /// The stop for a study submission that was sent and never answered
+    /// (issue #11): `pending`, exit 12 in both modes, with the repair to look
+    /// with `remote jobs` and whether a repeat is safe on this server. Said
+    /// on stderr too, because a stop prints nothing further.
+    static func submissionOutcomeUnknownStop(
+        _ unknown: SubmissionOutcomeUnknown, jobsCommand: String,
+        sink: ExperimentCLISink
+    ) -> ExperimentCLIStop {
+        let repair = unknown.repair(jobsCommand: jobsCommand)
+        sink.err("submission outcome unknown: \(unknown.reason)\n  \(repair)\n")
+        return ExperimentCLIStop(
+            exitCode: SteerLabCLIState.pending.exitCode, state: .pending,
+            code: SubmissionOutcomeUnknown.code, reason: unknown.reason,
+            repairAction: repair,
+            payload: [
+                "endpoint": .string(unknown.endpoint),
+                "repeatIsSafe": .bool(unknown.repeatIsSafe),
+                "waitedSeconds": .number(unknown.waitedSeconds),
+                "retried": .bool(false),
+            ])
+    }
+
     static func usageShape(of reason: String) -> String? {
         if reason.hasPrefix("usage:") { return "usage" }
         if reason.hasPrefix("verbs:") || reason.hasPrefix("remote verbs:") {
@@ -2941,26 +2963,53 @@ public struct ExperimentCLIRunner: Sendable {
             if let warning = await Self.engineLagWarning(forSite: siteID) {
                 sink.err("warning: \(warning)\n")
             }
-            let submission = try await client.submitBundle(
-                path: path,
-                verb: submitVerb,
-                executor: submitExecutor,
-                dryRun: args.contains("--dry-run"),
-                resources: [
-                    "gres": flag("--gres") ?? "",
-                    "walltime": flag("--walltime") ?? "",
-                ].filter { !$0.value.isEmpty },
-                parallelJobs: parallelJobs,
-                sourceRun: submitSourceRun,
-                samplePerCondition: submitSubsample?.samplePerCondition,
-                sampleSeed: submitSubsample?.seedText,
-                rereadChoices: submitReread)
+            let submission: RemoteStudySubmission
+            do {
+                submission = try await client.submitBundle(
+                    path: path,
+                    verb: submitVerb,
+                    executor: submitExecutor,
+                    dryRun: args.contains("--dry-run"),
+                    resources: [
+                        "gres": flag("--gres") ?? "",
+                        "walltime": flag("--walltime") ?? "",
+                    ].filter { !$0.value.isEmpty },
+                    parallelJobs: parallelJobs,
+                    sourceRun: submitSourceRun,
+                    samplePerCondition: submitSubsample?.samplePerCondition,
+                    sampleSeed: submitSubsample?.seedText,
+                    rereadChoices: submitReread)
+            } catch let unknown as SubmissionOutcomeUnknown {
+                // Issue #11: sent and never answered is not a failure. The
+                // server is most likely still preparing the job; `pending`
+                // (12), and the repair is to look.
+                throw Self.submissionOutcomeUnknownStop(
+                    unknown, jobsCommand: "steerlab-cli remote jobs "
+                        + (siteID.map { "--site \($0)" } ?? "--url \(url.absoluteString)")
+                        + " --json",
+                    sink: sink)
+            }
             await recordJobOrigin(
                 submission.jobId, experiment: submission.experiment, verb: submission.verb,
                 operation: "submit-bundle")
-            return try respond(
-                submission, message: "submitted \(path)",
+            let alreadySubmitted = submission.alreadySubmitted == true
+            if alreadySubmitted, let note = submission.alreadySubmittedNote {
+                sink.err("note: \(note)\n")
+            }
+            if let notice = submission.walltimeNotice {
+                sink.err("warning: \(notice)\n")
+            }
+            var submitted = try respond(
+                submission,
+                message: alreadySubmitted
+                    ? "already submitted as job \(submission.jobId); nothing was "
+                        + "submitted again"
+                    : "submitted \(path)",
                 extra: [
+                    "alreadySubmitted": .bool(alreadySubmitted),
+                    "walltimeNotice": submission.walltimeNotice.map {
+                        JSONValue.string($0)
+                    } ?? .null,
                     // Where the executor came from: the flag, the server's
                     // own, analyze's controller default, or the fallback.
                     "executorSource": .string(executorSource.rawValue),
@@ -2992,6 +3041,8 @@ public struct ExperimentCLIRunner: Sendable {
                         JSONValue.string($0)
                     } ?? .null,
                 ])
+            submitted.changed = !alreadySubmitted
+            return submitted
         case "jobs":
             let jobs = try await client.jobs()
             return try respond(jobs, message: "\(jobs.count) job(s)")
