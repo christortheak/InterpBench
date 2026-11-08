@@ -60,6 +60,10 @@ def test_the_key_matches_its_hand_written_derivation():
                  '"submissionKeyVersion":1,"verb":"run"}')
     assert runner_api.submission_key(body, "f" * 64) == \
         hashlib.sha256(canonical.encode()).hexdigest()
+    # The same digest the Swift client's derivation is pinned to
+    # (SubmissionRepeatCLITests.theKeyMatchesItsHandWrittenDerivation).
+    assert runner_api.submission_key(body, "f" * 64) == (
+        "7d123640164d76866a737e457c97322da19275130de077cab5230977acfec7f2")
 
 
 class _SlowRunner(http.server.BaseHTTPRequestHandler):

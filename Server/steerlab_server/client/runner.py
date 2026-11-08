@@ -1083,12 +1083,6 @@ class RunnerClient:
         # Issue #11: the key that makes a repeat of this request harmless on
         # a runner that understands it (an older runner ignores the key).
         body["submissionKey"] = submission_key(body, staged.get("bundleSha256"))
-        # Read before the submit, while reading is free: whether a repeat of
-        # this request would be answered with the job it creates.
-        try:
-            repeat_is_safe = submits_once(self.capabilities())
-        except RunnerError:
-            repeat_is_safe = False
         try:
             # The submit's own read budget, on the client this adapter built;
             # an injected client keeps the budget it carries (see __init__).
@@ -1097,8 +1091,7 @@ class RunnerClient:
                 timeout=self._submit_timeout if self._owns_client else None)
         except RunnerUnreachable as exc:
             raise self._outcome_unknown(
-                exc.reason, remote_path=remote_path, verb=verb,
-                repeat_is_safe=repeat_is_safe) from exc
+                exc.reason, remote_path=remote_path, verb=verb) from exc
         except RunnerHTTPError as exc:
             if exc.status not in GATEWAY_STATUSES:
                 raise
@@ -1106,8 +1099,7 @@ class RunnerClient:
             # behind it may still be preparing the job.
             raise self._outcome_unknown(
                 f"a proxy answered {exc.status}: {exc.reason}",
-                remote_path=remote_path, verb=verb,
-                repeat_is_safe=repeat_is_safe) from exc
+                remote_path=remote_path, verb=verb) from exc
         if reread_choices:
             confirm_reread(submission, self.base_url)
         return submission
@@ -1118,10 +1110,16 @@ class RunnerClient:
         unless the caller set ``timeout=``)."""
         return self._submit_timeout
 
-    def _outcome_unknown(self, why: str, *, remote_path: str, verb: str,
-                         repeat_is_safe: bool) -> SubmitOutcomeUnknown:
-        """The typed answer for a submit that was sent and never answered."""
-        safe = repeat_is_safe
+    def _outcome_unknown(self, why: str, *, remote_path: str,
+                         verb: str) -> SubmitOutcomeUnknown:
+        """The typed answer for a submit that was sent and never answered,
+        saying whether this runner would answer a repeat with the job the
+        first request created (read only now, so a submit that is answered
+        costs no extra request)."""
+        try:
+            safe = submits_once(self.capabilities())
+        except RunnerError:
+            safe = False
         if safe:
             repair = (
                 f"steerlab runner jobs --runner {self.base_url}  (the runner "
