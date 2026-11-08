@@ -19,20 +19,21 @@ def token_preflight_or_warn(manifest, prompts_file, root, _log) -> None:
     Never drops or truncates: silently excluding items would change the
     measured sample without recording it. A preflight that cannot run (no
     cached tokenizer, unreadable config) warns and yields to the
-    in-generation check rather than blocking the run."""
-    from . import token_preflight
+    in-generation check rather than blocking the run.
+
+    Every item is measured as generation renders it under every arm's
+    settings, a scripted transcript whole (public issue #10), by the counter
+    the run's prompt-reading record and the submission's memory check use."""
+    from . import condition_execution, token_preflight
     try:
         prompts = task_inputs.load_prompts(manifest, prompts_file, root)
         report = token_preflight.preflight(
             prompts,
             model_id=manifest.model_id,
             revision=manifest.model_revision,
-            prompt_mode=manifest.prompt_mode,
-            system_prompt=manifest.system_prompt,
-            qwen_thinking_enabled=manifest.qwen_thinking_enabled,
             max_tokens=manifest.max_tokens,
-            reasoning_effort=manifest.reasoning_effort,
-            reasoning_max_tokens=manifest.reasoning_max_tokens)
+            reasoning_max_tokens=manifest.reasoning_max_tokens,
+            settings=condition_execution.run_arm_render_settings(manifest, root))
     except token_preflight.PreflightError as exc:
         _log(f"token preflight unavailable ({exc}) — the in-generation "
              "context check remains the backstop")

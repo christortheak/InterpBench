@@ -87,7 +87,8 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
               max_tokens: int = 0,
               reasoning_effort: str | None = None,
               reasoning_max_tokens: int | None = None,
-              local_files_only: bool = False) -> dict:
+              local_files_only: bool = False,
+              settings: list[dict] | None = None) -> dict:
     """Exact per-item token counts and the context verdict.
 
     Returns a report dict; it never raises for oversized items (that is the
@@ -99,14 +100,21 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
     context window (matches ``generate._stream_rendered``'s outer bound).
 
     ``local_files_only`` reads the tokenizer and config from the model cache
-    alone, never the network. The counts here are the study's own rendering
-    only (its prompt mode, system prompt, and thinking setting), for the
-    context verdict. The submission's memory check does not use them: it
-    counts every arm's rendering as the run's prompt-reading record does
-    (``submissions._measure_prompts``, through
-    ``condition_execution.run_arm_render_settings`` and
-    ``prompt_reading.rendered_token_counts``), so an agent with its own
-    system prompt is sized by its own, longer, rendering.
+    alone, never the network.
+
+    Each item is counted as generation renders it, by the function the run's
+    prompt-reading record and the submission's memory check count with
+    (``prompt_reading.rendered_token_counts``, through
+    ``prompt_render.render_for_generation``): a scripted transcript is its
+    whole conversation, never its display text (public issue #10: the
+    loader fills a transcript item's ``prompt`` with its final user turn, and
+    this check used to measure that one turn). ``settings`` are the render
+    settings of every arm of the run
+    (``condition_execution.run_arm_render_settings``), and an item's count is
+    its longest rendering, so an agent with its own system prompt is checked
+    by its own, longer, rendering. Without ``settings`` the study's own
+    rendering is the one setting: its prompt mode, system prompt, and
+    thinking setting, as the keywords give them.
     """
     if local_files_only:
         tokenizer = _tokenizer(model_id, revision, local_files_only=True)
@@ -118,22 +126,21 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
     budget = (window - max_tokens - reasoning_reserve - CONTEXT_BUDGET_RESERVE
               if window else None)
 
+    from . import prompt_reading
+    if settings is None:
+        settings = [{"prompt_mode": prompt_mode, "system_prompt": system_prompt,
+                     "qwen_thinking_enabled": qwen_thinking_enabled,
+                     "reasoning_effort": reasoning_effort}]
+    # A caller's raw item may spell its text `text`; the loader's always say
+    # `prompt` (``task_inputs.load_prompts``).
+    readable = [{**prompt, "prompt": prompt.get("prompt") or prompt.get("text")
+                 or ""} for prompt in prompts]
+    counts = prompt_reading.rendered_token_counts(
+        tokenizer, model_id, readable, settings)
+
     items: list[dict] = []
-    for index, prompt in enumerate(prompts):
-        text = prompt.get("prompt") or prompt.get("text") or ""
-        if not text and prompt.get("transcript"):
-            rendered = prompt_render.render_transcript(
-                tokenizer, prompt["transcript"], model_id=model_id,
-                prompt_mode=prompt_mode, system_prompt=system_prompt,
-                qwen_thinking_enabled=qwen_thinking_enabled,
-                reasoning_effort=reasoning_effort)
-        else:
-            rendered = prompt_render.render(
-                tokenizer, text, model_id=model_id, prompt_mode=prompt_mode,
-                system_prompt=system_prompt,
-                qwen_thinking_enabled=qwen_thinking_enabled,
-                reasoning_effort=reasoning_effort)
-        count = rendered.prompt_token_count
+    for index, (prompt, row) in enumerate(zip(prompts, counts)):
+        count = max(row) if row else 0
         entry = {"id": prompt.get("id") or f"prompt-{index}",
                  "promptTokens": count}
         if budget is not None:

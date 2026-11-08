@@ -3393,7 +3393,7 @@ def build_router(state: ServiceState) -> APIRouter:
         POST under /api/experiment/ so the auth middleware treats it as
         privileged (it reads caller-named workspace files).
         """
-        from ..experiment import token_preflight, task_inputs
+        from ..experiment import condition_execution, token_preflight, task_inputs
         _safe_name(name)
         body = body or {}
         try:
@@ -3403,16 +3403,17 @@ def build_router(state: ServiceState) -> APIRouter:
         try:
             prompts = task_inputs.load_prompts(
                 manifest, body.get("promptsFile"), None)
+            # Every item as generation renders it under every arm's settings,
+            # a scripted transcript whole (public issue #10), as the run's
+            # own preflight counts it.
             report = token_preflight.preflight(
                 prompts,
                 model_id=manifest.model_id,
                 revision=manifest.model_revision,
-                prompt_mode=manifest.prompt_mode,
-                system_prompt=manifest.system_prompt,
-                qwen_thinking_enabled=manifest.qwen_thinking_enabled,
                 max_tokens=int(body.get("maxTokens") or manifest.max_tokens or 0),
-                reasoning_effort=manifest.reasoning_effort,
-                reasoning_max_tokens=manifest.reasoning_max_tokens)
+                reasoning_max_tokens=manifest.reasoning_max_tokens,
+                settings=condition_execution.run_arm_render_settings(
+                    manifest, None))
         except token_preflight.PreflightError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except (OSError, ValueError, RuntimeError) as exc:
