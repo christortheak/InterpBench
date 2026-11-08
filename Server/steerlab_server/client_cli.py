@@ -4050,6 +4050,10 @@ def _same_command(invocation: Invocation) -> str:
             words += [flag, str(value)]
     if invocation.json:
         words.append(JSON_FLAG)
+    if invocation.out_path:
+        # Where the document goes: kept, so the repeat writes where the first
+        # did. It is not sent to the runner, so the key does not see it.
+        words += [OUT_FLAG, invocation.out_path]
     return " ".join(shlex.quote(word) for word in words)
 
 
