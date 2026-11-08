@@ -393,23 +393,6 @@ def test_the_other_settings_refusals_reach_the_submission_too(server, fields,
     assert _submissions_written(root) == []
 
 
-def test_a_concept_study_with_no_arm_is_refused_at_submission(server):
-    """Run start refused it; the submission let it reach the queue first."""
-    root, jobs = server
-    _study(root, "no-arm", conditions=[])
-    with pytest.raises(ValueError) as refused:
-        submissions.submit_study("no-arm", verb="run", jobs=jobs,
-                                 executor="slurm", dry_run=True,
-                                 resources={"gres": "A100",
-                                            "walltime": "00:30:00"})
-    assert "measure nothing" in str(refused.value)
-    assert _submissions_written(root) == []
-    # A step that does not run the study is not refused for it.
-    submissions.submit_study("no-arm", verb="verify", jobs=jobs,
-                             executor="slurm", dry_run=True,
-                             resources={"gres": "A100", "walltime": "00:30:00"})
-
-
 def test_steps_that_do_not_run_the_study_are_not_refused(server, monkeypatch):
     """A frozen study's existing evidence can still be analysed, and a
     pipeline that does not run it is not refused for its seeds."""
@@ -421,3 +404,55 @@ def test_steps_that_do_not_run_the_study_are_not_refused(server, monkeypatch):
     submissions._refuse_settings(manifest, "pipeline", ["evaluate", "analyze"])
     with pytest.raises(submissions.SubmissionRefusal):
         submissions._refuse_settings(manifest, "pipeline", ["run", "analyze"])
+
+
+# --- the pinned task prompts' rules, before the queue too -------------------------
+
+def test_an_instrument_that_cannot_read_its_items_is_refused_at_submission(
+        server):
+    """Run start refused it before the model loaded
+    (``run_preflight.instrument_preflight``), but only after the queue wait:
+    an answer-token instrument over items that carry no options."""
+    root, jobs = server
+    prompts = _study(root, "formats",
+                     outcomeInstruments=["answerTokenLogprob"])
+    with pytest.raises(submissions.SubmissionRefusal) as refused:
+        submissions.submit_study("formats", verb="run", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 prompts_path=prompts,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+    assert refused.value.code == "responseFormat"
+    assert "none of the 1 task item carries options" in str(refused.value)
+    assert refused.value.repair_action in str(refused.value)
+    assert _submissions_written(root) == []
+    # Items the instrument can read submit.
+    _write(prompts, json.dumps({"id": "item-1", "prompt": "Pick one.",
+                                "options": ["A", "B"], "target": "A",
+                                "responseFormat": "label"}) + "\n")
+    submissions.submit_study("formats", verb="run", jobs=jobs,
+                             executor="slurm", dry_run=True,
+                             prompts_path=prompts,
+                             resources={"gres": "A100", "walltime": "00:30:00"})
+
+
+def test_an_attention_check_rule_with_no_checked_item_is_refused_at_submission(
+        server):
+    root, jobs = server
+    prompts = _study(root, "checks",
+                     exclusionRules=[{"rule": "failedAttentionCheck"}])
+    with pytest.raises(submissions.SubmissionRefusal) as refused:
+        submissions.submit_study("checks", verb="run", jobs=jobs,
+                                 executor="slurm", dry_run=True,
+                                 prompts_path=prompts,
+                                 resources={"gres": "A100",
+                                            "walltime": "00:30:00"})
+    assert "no task-prompt item declares an attentionCheck" in str(
+        refused.value)
+    assert refused.value.code == "studyDeclaration"
+    assert _submissions_written(root) == []
+    # A step that does not run the study is not refused for it.
+    submissions.submit_study("checks", verb="analyze", jobs=jobs,
+                             executor="slurm", dry_run=True,
+                             prompts_path=prompts,
+                             resources={"gres": "A100", "walltime": "00:30:00"})

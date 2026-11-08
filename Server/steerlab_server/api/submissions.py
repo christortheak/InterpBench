@@ -241,11 +241,13 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
     _require_reread_verb(reread_choices, verb=verb)
-    # A study its settings alone make unrunnable refuses here, before anything
-    # is written or queued (public issue #9), as does one that would measure
-    # nothing.
+    # A study its settings and pinned prompts alone make unrunnable refuses
+    # here, before anything is written or queued (public issue #9), as does a
+    # declared agent comparison whose arms would not run.
     _refuse_settings(manifest, verb, stages)
     _refuse_inert_conditions(manifest, verb)
+    _refuse_prompt_rules(manifest, verb, stages,
+                         _prompts_text_for_study(manifest, prompts_path, root))
     # A malformed promptReading declaration refuses here, before anything is
     # written; the engine would otherwise refuse it after the queue wait.
     declared_plan = _declared_reading_plan(manifest, verb)
@@ -505,10 +507,14 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
     _require_reread_verb(reread_choices, verb=verb)
-    # The bundle's settings, and whether it measures anything, refused here
-    # before a submission directory exists (public issue #9).
+    # The bundle's settings and pinned prompts, and a declared agent
+    # comparison whose arms would not run, refused here before a submission
+    # directory exists (public issue #9).
     _refuse_settings(manifest, verb, _pipeline_stages(manifest))
     _refuse_inert_conditions(manifest, verb)
+    _refuse_prompt_rules(manifest, verb, _pipeline_stages(manifest),
+                         _prompts_text_for_bundle(bundle_path, manifest,
+                                                  prompts_path))
     # The bundle's own declaration, refused here when malformed (issue #6).
     declared_plan = _declared_reading_plan(manifest, verb)
 
@@ -713,20 +719,71 @@ def _refuse_inert_conditions(manifest: Manifest | None, verb: str) -> None:
     declared-but-empty agent comparison carrying injection conditions would
     burn its whole allocation measuring baseline only — on a fan-out, K
     allocations. Refuse where the researcher is still watching; the shard
-    jobs would otherwise each refuse only after their queue wait.
-
-    Its sibling, a concept study that declares no arm at all, is refused here
-    too: run start refuses it (``run_workflow.run``), but it reached the queue
-    first. It is no ``verify`` violation, because a concept study legitimately
-    has no arm while it is extracted, validated, and swept."""
+    jobs would otherwise each refuse only after their queue wait. Asked
+    before anything is written, so a refusal leaves no submission behind."""
     if manifest is None or verb not in ("run", "pipeline"):
         return
-    from ..experiment.manifest import (inert_conditions_problem,
-                                       no_measured_conditions_problem)
-    problem = (inert_conditions_problem(manifest.raw)
-               or no_measured_conditions_problem(manifest.raw))
+    from ..experiment.manifest import inert_conditions_problem
+    problem = inert_conditions_problem(manifest.raw)
     if problem:
         raise ValueError(f"submission refused: {problem}")
+
+
+def _runs_the_study(verb: str, stages: list[str] | None) -> bool:
+    """``run``, or a pipeline whose declared stages include it."""
+    return verb == "run" or (verb == "pipeline" and bool(stages)
+                             and "run" in stages)
+
+
+def _refuse_prompt_rules(manifest: Manifest | None, verb: str,
+                         stages: list[str] | None,
+                         prompts_text: str | None) -> None:
+    """Submission-preflight twin of run start's instrument preflight
+    (``run_preflight.instrument_preflight``): the declared answer-token
+    instruments must be able to read the items they are pointed at, a
+    declared instrument scope must still select its items, and a declared
+    attention-check exclusion needs checked items. Each depends on the
+    study's settings and its pinned task prompts alone, which the submission
+    already reads to size the job, so a study that would refuse at run start
+    is refused here, before anything is written or queued.
+
+    Never refuses on what it cannot read: a prompt file the parser refuses,
+    or none here at all, is left to the run's own loader, which refuses
+    loudly."""
+    if (manifest is None or manifest.study_kind == "multiAgent"
+            or prompts_text is None or not _runs_the_study(verb, stages)):
+        return
+    from ..experiment import exclusions, lifecycle_gates, task_inputs
+    try:
+        prompts = task_inputs.parse_prompts(prompts_text)
+    except Exception:  # noqa: BLE001 - the run's loader refuses loudly
+        return
+    try:
+        task_inputs.check_response_formats(manifest, prompts)
+        exclusions.preflight(manifest.raw, prompts)
+    except RuntimeError as exc:
+        repair = (lifecycle_gates.repair_of(exc)
+                  or ("correct the declaration named above "
+                      + _authoring_place() + ", then submit again"))
+        raise SubmissionRefusal(
+            _refused_before_the_queue(str(exc), repair),
+            code=(lifecycle_gates.gate_of(exc)
+                  or lifecycle_gates.STUDY_DECLARATION),
+            repair_action=repair) from None
+
+
+def _refused_before_the_queue(reason: str, repair: str) -> str:
+    """A submission refusal's message: what is wrong, that nothing was
+    submitted, and the repair, in the 400's own words (the route answers
+    with the message alone)."""
+    return (f"submission refused: {reason.rstrip().rstrip('.')}. Nothing was "
+            f"submitted. To repair: {repair}")
+
+
+def _authoring_place() -> str:
+    """Where an authoring repair happens, in the engine's words."""
+    from ..experiment import command_vocabulary
+    return command_vocabulary.authoring_place()
 
 
 def _refuse_settings(manifest: Manifest | None, verb: str,
@@ -740,18 +797,14 @@ def _refuse_settings(manifest: Manifest | None, verb: str,
     here, before anything is written or queued, rather than after the queue
     wait and the model load. Asked for the steps that run the study: ``run``,
     and a pipeline whose declared stages include it."""
-    if manifest is None:
-        return
-    if verb != "run" and not (verb == "pipeline" and stages
-                              and "run" in stages):
+    if manifest is None or not _runs_the_study(verb, stages):
         return
     from ..experiment import study_admission
     refusal = study_admission.settings_refusal(manifest)
     if refusal is None:
         return
     raise SubmissionRefusal(
-        f"submission refused: {refusal}. Nothing was submitted. To repair: "
-        f"{refusal.repair_action}",
+        _refused_before_the_queue(str(refusal), refusal.repair_action),
         code=refusal.gate, repair_action=refusal.repair_action)
 
 

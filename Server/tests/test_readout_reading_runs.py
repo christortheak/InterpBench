@@ -296,10 +296,24 @@ def test_a_study_without_readouts_is_not_compared_on_them(tmp_path, monkeypatch)
 
 # --- the memory check ----------------------------------------------------------------
 
+def _readout_only(site):
+    """The site's study, read out only, with items the readout can score:
+    a readout over items that carry no options is refused at submission
+    (``submissions._refuse_prompt_rules``), as run start refuses it. The
+    options do not change any prompt's rendering, so its length stands."""
+    _edit(site, outcomeInstruments=["answerTokenLogprob"])
+    items = site["root"] / "prompts" / "tasks" / "t.jsonl"
+    rows = [json.loads(line) for line in
+            items.read_text(encoding="utf-8").splitlines() if line.strip()]
+    items.write_text("".join(
+        json.dumps({**row, "options": ["A", "B"], "target": "A"}) + "\n"
+        for row in rows), encoding="utf-8")
+
+
 def test_a_readout_only_study_is_priced_by_the_chunked_reading_it_will_use(site):
     """The readouts now read as generation does, so the job's chunked
     reading prices them: a 217,230-token readout fits one 80 GB card."""
-    _edit(site, outcomeInstruments=["answerTokenLogprob"])
+    _readout_only(site)
     memory = _memory(_submit(site))
     assert memory["status"] == "ok"
     assert memory["data"]["memoryFit"] == "fits"
@@ -315,7 +329,7 @@ def _recorded(**marker):
 
 
 def test_a_resumed_run_without_the_key_is_advised_its_single_pass_readouts(site):
-    _edit(site, outcomeInstruments=["answerTokenLogprob"])
+    _readout_only(site)
     run = _parked_run(site, "parked-old", record=_recorded())
     memory = _memory(_submit(site, resume_directory=run,
                              target_root=str(site["root"])))
@@ -337,7 +351,7 @@ def test_a_resumed_run_without_the_key_is_advised_its_single_pass_readouts(site)
 
 
 def test_a_resumed_run_with_the_key_is_priced_as_a_fresh_one(site):
-    _edit(site, outcomeInstruments=["answerTokenLogprob"])
+    _readout_only(site)
     run = _parked_run(site, "parked-new", record=_recorded(**{KEY: True}))
     memory = _memory(_submit(site, resume_directory=run,
                              target_root=str(site["root"])))
