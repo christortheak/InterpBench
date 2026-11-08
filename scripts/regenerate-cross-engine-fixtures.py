@@ -1607,6 +1607,12 @@ STUDY_SAMPLING_CASES = [
     ("readout only, greedy, three samples per item",
      {"temperature": 0.0, "samplesPerItem": 3, "seeds": [11],
       "outcomeInstruments": ["answerTokenLogprob"]}),
+    # A declared chain that does not run the study: a run submitted on its
+    # own is refused the same way, so the frozen advisory says it, worded
+    # for that run (review round 4).
+    ("undeclared, greedy, seed list, chain without run",
+     {"temperature": 0.0, "seeds": [11, 22, 33],
+      "pipeline": {"stages": ["extract", "validate"]}}),
 ]
 
 

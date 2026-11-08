@@ -185,6 +185,32 @@ def greedy_rules_engine_reason(where: str) -> str:
             "Nothing was submitted.")
 
 
+def greedy_rules_submission_refusal(manifest, where: str) -> tuple[str, str, str]:
+    """``(code, reason, repair)`` for a study
+    :func:`submission_needs_greedy_rules` names, sent to an engine without
+    :data:`GREEDY_RULES_CAPABILITY`, chosen by the study (round 4). One that
+    generates sampled text is refused by every engine, this release's
+    included, so it gets the rule's own sentence and repair: updating the
+    engine would not help. A readout-only study is refused only by an older
+    engine, so it gets the old-engine sentence. Either way it is refused
+    before the queue. Swift twin:
+    ``SubstrateRouting.greedyRulesSubmissionRefusal``."""
+    from . import lifecycle_gates
+    frozen = manifest.status != "draft"
+    problem = manifest_greedy_seed_list_problem(manifest)
+    if problem:
+        return (lifecycle_gates.STUDY_DECLARATION, problem,
+                greedy_seed_list_repair(manifest.name, frozen=frozen))
+    problem = greedy_samples_problem(
+        manifest.temperature, manifest.samples_per_item, manifest.study_kind,
+        manifest.outcome_instruments)
+    if problem:
+        return (lifecycle_gates.STUDY_DECLARATION, problem,
+                greedy_samples_repair(manifest.name, frozen=frozen))
+    return (GREEDY_RULES_UNSUPPORTED_CODE, greedy_rules_engine_reason(where),
+            greedy_rules_engine_repair(manifest.name, frozen=frozen))
+
+
 def greedy_rules_engine_repair(name: str, *, frozen: bool = False) -> str:
     """Update the engine, or give the study one seed and one sample per
     item, on a duplicate when it is frozen."""
@@ -336,13 +362,18 @@ def frozen_greedy_seed_list_advisory(manifest) -> str | None:
     """What ``verify`` says of a study frozen under an older release that the
     seed rule refuses, or None: it still verifies (its runs stay readable),
     so the reader learns here, not at submission, that running it needs a
-    duplicate with one seed. Advisory code ``refusedWhenRun``. Never for a
-    study whose declared chain has no run stage. Swift twin
-    ``StudySampling.frozenGreedySeedListAdvisory``; the shared fixture pins
-    its text as the Mac command line spells the repair, and each client
-    spells the repair for itself."""
+    duplicate with one seed. Advisory code ``refusedWhenRun``. A study whose
+    declared chain has no run stage is told too, worded for a run submitted
+    on its own (``--verb run``), which is refused the same way (round 4).
+    Swift twin ``StudySampling.frozenGreedySeedListAdvisory``; the shared
+    fixture pins its text as the Mac command line spells the repair, and
+    each client spells the repair for itself."""
     if manifest.status == "draft":
         return None
+    problem = manifest_greedy_seed_list_problem(manifest)
+    if problem is None:
+        return None
+    when = "when its run is submitted or started"
     block = manifest.raw.get("pipeline")
     if block is not None:
         from . import pipeline_spec
@@ -351,13 +382,10 @@ def frozen_greedy_seed_list_advisory(manifest) -> str | None:
         except ValueError:
             stages = ()
         if "run" not in stages:
-            return None
-    problem = manifest_greedy_seed_list_problem(manifest)
-    if problem is None:
-        return None
-    return (f"this study will be refused when its run is submitted or "
-            f"started, because {problem}. To run it: "
-            + greedy_seed_list_repair(manifest.name, frozen=True))
+            when = ("when a run of it is submitted or started (its declared "
+                    "pipeline does not run it)")
+    return (f"this study will be refused {when}, because {problem}. To run "
+            "it: " + greedy_seed_list_repair(manifest.name, frozen=True))
 
 
 def greedy_seed_list_repair(name: str, *, frozen: bool = False) -> str:

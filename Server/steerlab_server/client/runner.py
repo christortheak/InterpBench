@@ -324,11 +324,11 @@ def require_greedy_rules(staged, verb, capabilities, where: str,
             or not sampling.submission_needs_greedy_rules(manifest, verb)
             or sampling.remote_has_greedy_rules(capabilities)):
         return
-    raise RunnerRefusal(
-        sampling.greedy_rules_engine_reason(where),
-        code=sampling.GREEDY_RULES_UNSUPPORTED_CODE,
-        repair_action=sampling.greedy_rules_engine_repair(
-            name, frozen=manifest.status != "draft"))
+    # Worded by the study (round 4): the old-engine sentence for a
+    # readout-only study, the rule's own for one every engine refuses.
+    code, reason, repair = sampling.greedy_rules_submission_refusal(
+        manifest, where)
+    raise RunnerRefusal(reason, code=code, repair_action=repair)
 
 
 def require_prompt_reading(staged, verb, capabilities, where: str,

@@ -1038,6 +1038,106 @@
       "sampleCount": 0,
       "samplesPerItemProblems": [],
       "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "frozenAdvisory": "this study will be refused when a run of it is submitted or started (its declared pipeline does not run it), because at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample. To run it: steerlab-cli experiment duplicate seeds seeds-v2 && steerlab-cli experiment set-sampling seeds-v2 --seeds <n>  (one seed; or raise the temperature above 0 to sample)",
+      "generatesSampledText": true,
+      "inertSamplingAdvisory": null,
+      "label": "undeclared, greedy, seed list, chain without run",
+      "manifest": {
+        "pipeline": {
+          "stages": [
+            "extract",
+            "validate"
+          ]
+        },
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "refusal": "at temperature 0 decoding is greedy, so every seed gives the same response, and the study's 3 seeds would write 3 identical records per item. Set one seed, or raise the temperature above 0 to sample",
+      "sampleCount": 3,
+      "samplesPerItemProblems": [],
+      "seedPolicy": "manifestSeeds"
     }
   ],
   "conditions": [

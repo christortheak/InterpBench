@@ -117,8 +117,7 @@ extension ClusterClient {
             server: profile.baseURL.absoluteString)
         {
             throw ExperimentError.refusing(
-                .missingPrerequisite, refusal,
-                repair: SubstrateRouting.greedyRulesRepair(manifest: manifest))
+                refusal.gate, refusal.reason, repair: refusal.repair)
         }
     }
 

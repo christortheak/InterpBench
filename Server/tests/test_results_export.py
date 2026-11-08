@@ -1180,6 +1180,34 @@ def test_a_mac_panel_at_temperature_zero_agrees_with_its_settings(root):
         == "seed policy `manifestSeeds`"
 
 
+def test_a_readout_only_study_says_its_readout_reads_each_item_once(root):
+    """A study of answer-token readouts alone writes one readout per item
+    whatever its declared samplesPerItem (review round 4 of public issue #9),
+    so its methods line says so beside the declared count; a study that
+    samples text keeps the plain count."""
+    manifest = _manifest(samplesPerItem=3, temperature=0,
+                         outcomeInstruments=["answerTokenLogprob"])
+    _write_study(root, manifest)
+    _write_run(root, manifest,
+               _python_records(Manifest.from_dict(manifest).content_hash()))
+    methods = _read(_export(root), "methods.md")
+    assert ("3 samples for each item declared (the answer-token readout reads "
+            "each item once)") in methods
+    page = html.unescape(
+        study_results.render(results_export.read_results(str(root), STUDY)))
+    assert ("3 samples for each item declared (the answer-token readout reads "
+            "each item once)") in page
+    # The helper on the other shapes: sampled text, and the default.
+    assert results_export._samples_text(
+        3, {"outcomeInstruments": ["answerTokenLogprob", "sampledText"]}) \
+        == "3 samples for each item"
+    assert results_export._samples_text(1, {}) == "1 sample for each item"
+    assert results_export._samples_text(
+        2, {"studyKind": "multiAgent",
+            "outcomeInstruments": ["answerTokenLogprob"]}) \
+        == "2 samples for each item"
+
+
 def test_a_run_whose_records_mix_seed_policies_says_so(root):
     """A run resumed across a change of seed rule could hold both; the
     summary names both rather than one."""

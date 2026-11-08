@@ -124,7 +124,8 @@ def test_temperature_zero_with_several_seeds_is_refused_and_never_advised():
     assert {c["label"] for c in refused} == {
         "manifestSeeds, greedy, seed list", "derivedSHA256, greedy, seed list",
         "undeclared, greedy, seed list",
-        "readout and sampled text, greedy, seed list"}
+        "readout and sampled text, greedy, seed list",
+        "undeclared, greedy, seed list, chain without run"}
     for case in refused:
         assert case["advisories"] == []
         assert case["generatesSampledText"]
@@ -183,20 +184,21 @@ def test_the_frozen_advisory_says_when_a_run_will_be_refused():
     refused = [c for c in _fixture()["cases"] if c["frozenAdvisory"]]
     assert {c["label"] for c in refused} == {
         c["label"] for c in _fixture()["cases"] if c["refusal"]}
+    repair = ("To run it: steerlab-cli experiment duplicate seeds seeds-v2 && "
+              "steerlab-cli experiment set-sampling seeds-v2 --seeds <n>  (one "
+              "seed; or raise the temperature above 0 to sample)")
     for case in refused:
+        # A study whose declared chain does not run it is told too, worded
+        # for a run submitted on its own (round 4): that run is refused.
+        when = ("when a run of it is submitted or started (its declared "
+                "pipeline does not run it)"
+                if case["label"].endswith("chain without run")
+                else "when its run is submitted or started")
         assert case["frozenAdvisory"] == (
-            "this study will be refused when its run is submitted or "
-            f"started, because {case['refusal']}. To run it: steerlab-cli "
-            "experiment duplicate seeds seeds-v2 && steerlab-cli experiment "
-            "set-sampling seeds-v2 --seeds <n>  (one seed; or raise the "
-            "temperature above 0 to sample)")
-    # Not for a frozen study whose declared chain has no run stage.
-    fields = _case("undeclared, greedy, seed list")["manifest"]
-    for stages, said in ((["extract", "validate"], False),
-                         (["run", "analyze"], True)):
-        frozen = _manifest({**fields, "status": "frozen",
-                            "pipeline": {"stages": stages}})
-        assert bool(sampling.frozen_greedy_seed_list_advisory(frozen)) is said
+            f"this study will be refused {when}, because {case['refusal']}. "
+            + repair)
+    assert _case("undeclared, greedy, seed list, chain without run")[
+        "frozenAdvisory"]
 
 
 def test_the_two_items_share_their_text_and_differ_by_id():

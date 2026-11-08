@@ -142,6 +142,21 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
             raise ValueError(
                 "pipeline resume refused: the declared stage list changed "
                 "since this pipeline started — start a fresh pipeline")
+    # A chain whose run is still AHEAD meets run start's settings refusals
+    # here: after the completed/aborted idempotent return and the stage-list
+    # check, and before anything below writes (the restored revision pin,
+    # the drift stamp, the parked stamp's clearing), the model acquisition,
+    # and every stage before `run` (review round 1 of public issue #9:
+    # inside a chain they fired only at the run stage). Asked of the stages
+    # still to run, never of the declared list (round 3): a chain parked in
+    # evaluate or analyze after its run completed has nothing left that the
+    # rules govern. A refused resume leaves its ledger and manifest as they
+    # were (round 4). The settings cannot change between stages: promote
+    # adds arms, never a temperature or a seed.
+    if "run" in stages_to_run(spec.stages, ledger):
+        from . import study_admission
+        study_admission.refuse_settings(manifest)
+    if pipeline_run_directory is not None:
         # Epoch guard, PRE-model. The commonest "drift" here is SELF-INFLICTED
         # (a 2026-08-05 replication run): the run stage pins the resolved
         # model revision into the live manifest, but every `bundle execute`
@@ -181,18 +196,6 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                  "is live again")
 
     remaining = stages_to_run(spec.stages, ledger)
-    # A chain whose run is still AHEAD meets run start's settings refusals
-    # here, before the model acquisition and every stage before `run`
-    # (review round 1 of public issue #9: inside a chain they fired only at
-    # the run stage, after extract, validate, sweep, and promote). Asked of
-    # the stages still to run, never of the declared list (round 3): a chain
-    # parked in evaluate or analyze after its run completed has nothing left
-    # that the rules govern, and refusing its continuation would strand the
-    # finished run's evidence. The settings cannot change between stages:
-    # promote adds arms, never a temperature or a seed.
-    if "run" in remaining:
-        from . import study_admission
-        study_admission.refuse_settings(manifest)
     # Preflight ONLY the remaining stages: a resumed chain whose judged
     # sweep already completed must not refuse for a since-cleared key.
     pipeline_inline_judging_preflight(manifest, remaining)

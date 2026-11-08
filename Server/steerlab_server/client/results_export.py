@@ -1432,6 +1432,23 @@ def _code(value):
     return f"`{value}`"
 
 
+def _samples_text(samples, snapshot) -> str:
+    """The sampling settings' per-item count, as stated. A study of
+    answer-token readouts alone writes one readout per item whatever its
+    declared samplesPerItem, so its methods line says so beside the declared
+    count rather than implying samples were drawn (review round 4 of public
+    issue #9). Read from the run's settings snapshot (its instruments), the
+    stored fact; nothing is recomputed."""
+    from ..experiment import execution_plan
+    text = f"{samples} sample{'s' if samples != 1 else ''} for each item"
+    readout_only = (snapshot.get("studyKind") != "multiAgent"
+                    and not execution_plan.resolve(
+                        snapshot.get("outcomeInstruments")).generates_sampled_text)
+    if readout_only and snapshot.get("outcomeInstruments"):
+        text += " declared (the answer-token readout reads each item once)"
+    return text
+
+
 def _seed_policy_text(config, snapshot, observed, code=_code):
     """The seed policy the responses were generated with, for the sampling
     summary of methods.md and the results page.
@@ -1886,7 +1903,7 @@ def _methods(context):
         sampling.append(f"at most {snapshot['maxTokens']} new tokens for each response")
     samples = config.get("samplesPerItem") or snapshot.get("samplesPerItem")
     if samples:
-        sampling.append(f"{samples} sample{'s' if samples != 1 else ''} for each item")
+        sampling.append(_samples_text(samples, snapshot))
     policy = _seed_policy_text(config, snapshot, observed)
     if policy:
         sampling.append(policy)

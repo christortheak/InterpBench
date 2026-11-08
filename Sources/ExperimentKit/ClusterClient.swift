@@ -3187,8 +3187,7 @@ public struct ClusterClient: Sendable {
                 server: profile.baseURL.absoluteString)
         {
             throw ExperimentError.refusing(
-                .missingPrerequisite, refusal,
-                repair: SubstrateRouting.greedyRulesRepair(manifest: manifest))
+                refusal.gate, refusal.reason, repair: refusal.repair)
         }
         // A server-resident study an older engine would seed with the fixed
         // list (issue #3) is refused here, from the server's own manifest.

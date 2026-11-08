@@ -465,7 +465,9 @@ class Page:
             sampling.append(f'at most {snapshot["maxTokens"]} new tokens for each response')
         samples = self.config.get('samplesPerItem') or snapshot.get('samplesPerItem')
         if samples:
-            sampling.append(f'{_plural(samples, "sample")} for each item')
+            # The methods summary's own words (`results_export._samples_text`):
+            # a readout-only study is told its readout reads each item once.
+            sampling.append(source._samples_text(samples, snapshot))
         # The responses' records, not the settings, say which seeds they used.
         policy = source._seed_policy_text(self.config, snapshot, observed, code=str)
         if policy:

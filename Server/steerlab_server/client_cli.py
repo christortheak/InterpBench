@@ -4631,8 +4631,10 @@ def _run(invocation: Invocation) -> CLIResult:
         manifest, study_verb)
     # A study an engine from before review round 3 of issue #9 would refuse
     # after its model load: refused at the same stage, for the same reason.
-    greedy_rules_needed = sampling.submission_needs_greedy_rules(
-        manifest, study_verb)
+    greedy_rules_refusal = (
+        sampling.greedy_rules_submission_refusal(manifest, base_url)
+        if sampling.submission_needs_greedy_rules(manifest, study_verb)
+        else None)
     # A declared prompt reading an older engine would ignore (issue #6):
     # refused at the same stage, for the same reason.
     reading_declared = prompt_reading.submission_needs_capability(
@@ -4647,7 +4649,7 @@ def _run(invocation: Invocation) -> CLIResult:
             max_bytes=max_bytes, evidence_out=evidence_out,
             started_at=started_at, runner_api=runner_api, bundles=bundles,
             seed_rule_changed=seed_rule_changed,
-            greedy_rules_needed=greedy_rules_needed,
+            greedy_rules_refusal=greedy_rules_refusal,
             reading_declared=reading_declared)
     except ClientRefusal:
         raise
@@ -4677,7 +4679,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
                  evidence_out: str | None, started_at: float,
                  runner_api, bundles,
                  seed_rule_changed: bool = False,
-                 greedy_rules_needed: bool = False,
+                 greedy_rules_refusal: tuple | None = None,
                  reading_declared: bool = False) -> CLIResult:
     """Stages 2–9. Split from :func:`_run` only so the stage-table decoration
     above has one place to sit."""
@@ -4719,7 +4721,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
             evidence_out=evidence_out, started_at=started_at,
             workspace=workspace, runner_api=runner_api, bundles=bundles,
             time=time, seed_rule_changed=seed_rule_changed,
-            greedy_rules_needed=greedy_rules_needed,
+            greedy_rules_refusal=greedy_rules_refusal,
             reading_declared=reading_declared)
     except runner_api.RunnerError as exc:
         # Same translation `_runner` makes, plus the stage table: the authoring
@@ -4740,7 +4742,7 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
               evidence_out: str | None, started_at: float, workspace: str,
               runner_api, bundles, time,
               seed_rule_changed: bool = False,
-              greedy_rules_needed: bool = False,
+              greedy_rules_refusal: tuple | None = None,
               reading_declared: bool = False) -> CLIResult:
     """Stages 3–9: everything that touches the wire or the workspace."""
 
@@ -4774,16 +4776,16 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             repair=sampling.outdated_engine_repair(), common=common,
             facts={"runnerOffers": {
                 "engineVersion": identity.get("engineVersion")}})
-    if greedy_rules_needed and not sampling.remote_has_greedy_rules(
+    if greedy_rules_refusal and not sampling.remote_has_greedy_rules(
             capabilities):
         # An older engine would refuse a readout-only study at temperature
-        # 0 with several seeds or samples per item, after its model load.
-        # Swift twin: `SubstrateRouting.greedyRulesSubmissionRefusal`.
+        # 0 with several seeds or samples per item, after its model load;
+        # one that generates sampled text is refused by every engine, and
+        # says so in the rule's own words (round 4). Swift twin:
+        # `SubstrateRouting.greedyRulesSubmissionRefusal`.
+        code, reason, repair = greedy_rules_refusal
         raise _die(
-            stages, "capabilities", code=sampling.GREEDY_RULES_UNSUPPORTED_CODE,
-            reason=sampling.greedy_rules_engine_reason(client.base_url),
-            repair=sampling.greedy_rules_engine_repair(
-                name, frozen=manifest_facts.get("status") != "draft"),
+            stages, "capabilities", code=code, reason=reason, repair=repair,
             common=common,
             facts={"runnerOffers": {
                 "engineVersion": identity.get("engineVersion")}})

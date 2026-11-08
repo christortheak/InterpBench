@@ -1386,9 +1386,14 @@ the seeds: answer-token readouts read each item once, so a readout-only
 study is never refused for its list. An engine from before this release
 refused such a study after its model load, so both clients refuse to send a
 study at temperature 0 with several seeds or samples per item to an engine
-whose capabilities do not list `remoteStudy.greedyRulesSampledTextOnly`
-(`greedyRulesUnsupported`; update the engine, or set one seed). A panel never
-reads the seed list and is never refused for it.
+whose capabilities do not list `remoteStudy.greedyRulesSampledTextOnly`. This
+command line refuses it as `missingPrerequisite`, the code of its other
+engine-capability refusals, and the cross-platform client as
+`greedyRulesUnsupported`; the repair is to update the engine, or to set one
+seed and one sample per item. A study of this shape that generates sampled
+text is refused with the rule's own sentence and repair instead, since every
+engine refuses it. A panel never reads the seed list and is never refused for
+it.
 
 A declared seed setting the run will not read carries a `seedSettingNotUsed`
 advisory here, at `set-instruments`, and at `verify`, never a refusal:

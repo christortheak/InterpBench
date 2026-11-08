@@ -292,6 +292,49 @@ import Testing
             experiment: "seeds", verb: "run", executor: "local", dryRun: true)
     }
 
+    /// The reviewer's case (round 4): a server-resident draft that samples
+    /// text at temperature 0 with samplesPerItem 3 and one seed, sent to an
+    /// engine without `greedyRulesSampledTextOnly`. Every engine refuses it,
+    /// so it is told the rule's own sentence and repair, never that the
+    /// engine predates a fix an update would bring; and it is still refused
+    /// before anything is queued.
+    @Test func aSampledStudyAnyEngineRefusesIsToldTheRuleNotTheEngine()
+        async throws
+    {
+        var study = ExperimentManifest(name: "sampled", description: "", modelID: "test/model")
+        study.temperature = 0
+        study.samplesPerItem = 3
+        study.seeds = [11]
+        let manifest = try JSONEncoder().encode(study)
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                let path = request.url?.path ?? ""
+                if path.hasSuffix("/manifest") { return (manifest, 200) }
+                if path == "/api/capabilities" {
+                    return (Data(#"{"remoteStudy":{"declaredSeedPolicy":true}}"#.utf8), 200)
+                }
+                Issue.record("reached \(path) for a study every engine refuses")
+                return (Self.submitted, 200)
+            })
+        do {
+            _ = try await client.submitStudy(
+                experiment: "sampled", verb: "run", executor: "local", dryRun: true)
+            Issue.record("expected the rule's refusal")
+        } catch {
+            let refusal = (error as? ExperimentError)?.lifecycleRefusal
+            #expect(refusal?.gate == .studyDeclaration)
+            #expect(
+                refusal?.reason == "samplesPerItem > 1 requires temperature > 0 "
+                    + "(greedy decoding makes every sample identical)")
+            #expect(
+                refusal?.repairAction
+                    == "steerlab-cli experiment set-sampling sampled --samples-per-item 1"
+                    + "  (one sample per item; or raise the temperature above 0 to sample several)")
+            #expect(refusal?.reason.contains("predates") == false)
+        }
+    }
+
     /// The nested value wins over the dotted feature whenever it is present
     /// (Python twin: `sampling.remote_honors_declared_seed_policy`).
     @Test func theNestedDeclaredSeedPolicyValueWins() throws {

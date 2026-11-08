@@ -56,7 +56,12 @@ lists one seed: `verify` refuses a draft with more (so `freeze` does), with
 so its runs stay readable, and says so with a `refusedWhenRun` advisory; `run`
 refuses to send it, and a runner refuses it before anything is queued
 (duplicate it first). Answer-token readouts read each item once, so a
-readout-only study is never refused for its list. A readout-only study with several seeds or samples per item runs on an engine from this release; one from before it refused such a study after the model load, so the client refuses to send it to an engine whose capabilities do not list `remoteStudy.greedyRulesSampledTextOnly` (update the engine, or set one seed). A
+readout-only study is never refused for its list. A readout-only study with
+several seeds or samples per item runs on an engine from this release; one
+from before it refused such a study after the model load, so `run` refuses to
+send it to an engine whose capabilities do not list
+`remoteStudy.greedyRulesSampledTextOnly` (code `greedyRulesUnsupported`;
+update the engine, or set one seed and one sample per item). A
 `seedSettingNotUsed`
 advisory, here and at `verify`, says when a declared seed setting will not be
 read: `derivedSHA256` at temperature 0 with one seed (greedy, no seed),

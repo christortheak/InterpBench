@@ -379,12 +379,33 @@ import Testing
                 == "\(Self.threeGreedy). To run it: steerlab-cli experiment duplicate "
                 + "demo demo-v2 && steerlab-cli experiment set-sampling demo-v2 "
                 + "--seeds <n>  (one seed; or raise the temperature above 0 to sample)")
-        // refusedWhenRun: said unless the declared chain has no run stage.
-        #expect(StudySampling.frozenGreedySeedListAdvisory(frozen) != nil)
+        // refusedWhenRun: said for a study whose declared chain has no run
+        // stage too, worded for a run submitted on its own (round 4).
+        #expect(
+            StudySampling.frozenGreedySeedListAdvisory(frozen)?.hasPrefix(
+                "this study will be refused when its run is submitted or started") == true)
         frozen.pipeline = .object(["stages": .array([.string("extract"), .string("validate")])])
-        #expect(StudySampling.frozenGreedySeedListAdvisory(frozen) == nil)
+        #expect(
+            StudySampling.frozenGreedySeedListAdvisory(frozen)?.hasPrefix(
+                "this study will be refused when a run of it is submitted or started "
+                    + "(its declared pipeline does not run it), because ") == true)
         frozen.pipeline = .object(["stages": .array([.string("run"), .string("analyze")])])
-        #expect(StudySampling.frozenGreedySeedListAdvisory(frozen) != nil)
+        #expect(
+            StudySampling.frozenGreedySeedListAdvisory(frozen)?.hasPrefix(
+                "this study will be refused when its run is submitted or started") == true)
+        // The old-engine guard is worded by the study (round 4): sampled
+        // text that every engine refuses gets the rule's own sentence.
+        var sampled = ExperimentManifest(name: "s", description: "", modelID: "test/model")
+        sampled.temperature = 0
+        sampled.samplesPerItem = 3
+        let ruled = SubstrateRouting.greedyRulesSubmissionRefusal(
+            manifest: sampled, verb: "run", capabilities: nil, server: "here")
+        #expect(ruled?.gate == .studyDeclaration)
+        #expect(ruled?.reason.hasPrefix("samplesPerItem > 1 requires temperature > 0") == true)
+        let old = SubstrateRouting.greedyRulesSubmissionRefusal(
+            manifest: readout, verb: "run", capabilities: nil, server: "here")
+        #expect(old?.gate == .missingPrerequisite)
+        #expect(old?.reason.hasPrefix("The engine at here predates the fix") == true)
     }
 
     /// samplesPerItem 3 at temperature 0 on a readout-only study is inert,
