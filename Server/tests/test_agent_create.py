@@ -354,6 +354,43 @@ def test_a_declared_level_reaches_the_renderer_without_a_budget():
     assert settings[-1]["qwen_thinking_enabled"] is True
 
 
+def test_a_run_hands_the_agents_level_to_generation_and_stamps_it(tmp_path, monkeypatch):
+    """End to end through the run loop: an agent at `medium` in a study with
+    no reasoning budget generates with reasoning_effort=medium (not the
+    boolean's xhigh), a legacy thinking agent keeps its exact historical call,
+    and every agent record stamps the effort it ran at."""
+    import test_variant_study_sampling as fixture
+    from steerlab_server.experiment import tasks
+    root = str(tmp_path)
+    prompts = fixture._study_fixture(
+        root, "effort-run",
+        agent_a=fixture._artifact("agent-a", reasoningEffort="medium",
+                                  qwenThinkingEnabled=True),
+        agent_b=fixture._artifact("agent-b", qwenThinkingEnabled=True))
+    raw = store.load_raw("effort-run", root)
+    raw["outcomeInstruments"] = ["sampledText"]
+    store.save_raw(raw, root)
+    calls = []
+
+    def generate(model, prompt, *, model_id=None, max_tokens=0, temperature=0.0,
+                 injections=None, prompt_mode=None, system_prompt=None,
+                 qwen_thinking_enabled=False, token_ids_out=None, **reasoning):
+        calls.append({"thinking": qwen_thinking_enabled, **reasoning})
+        return "an answer"
+
+    fixture._patch(monkeypatch, generate, fixture._fake_score_options())
+    run_dir = tasks.run("effort-run", prompts, root, model_provider=fixture._fake_model,
+                        log=lambda *_: None)
+    records = fixture._sampled(fixture._records(run_dir))
+    by_condition = {}
+    for record, call in zip(records, calls):
+        by_condition.setdefault(record["condition"], set()).add(
+            (call["thinking"], call.get("reasoning_effort"), record.get("agentReasoningEffort")))
+    assert by_condition["agent-a"] == {(True, "medium", "medium")}
+    assert by_condition["agent-b"] == {(True, None, "xhigh")}
+    assert by_condition["baseline"] == {(False, None, None)}
+
+
 def test_the_template_rule_is_the_study_rule():
     record = qwen_capabilities()
     ok = model_variant.ModelVariant(name="a", base_model_id="Qwen/Qwen3.8-27B",
