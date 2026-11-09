@@ -518,6 +518,36 @@ optional but recommended, and omitting it permanently records that no reason
 was given. Hand-created and override-promoted variants stay legal but surface
 as non-blocking freeze advisories.
 
+**Settings the researcher chooses.** A sweep is one way to choose a layer and a
+strength. A prior study, a published setting, and a planned contrast are
+others, and so is an agent with no steering at all: the base model thinking at
+a stated level, or the base model with a fine-tuned adapter. `agent create`
+makes such an agent by hand:
+
+```bash
+steerlab-cli agent create formality-published --model <id> --revision <40-hex commit> \
+    --vector runs/<run>/formality --vector-sha256 <artifactSHA256> --layer 18 --strength 0.30 \
+    --reason "the setting the prior study reported"
+```
+
+It previews and writes nothing; repeating it with `--review-sha256` writes the
+agent with a `handmade` record (the command, each input and its hash, when it
+was made, and the reason) where a promoted agent keeps its `promotion` record.
+An agent carries one or the other, never both, and every surface names which:
+`agent inspect`, attachment, and the results export call it `swept` or
+`handmade`, and a handmade steered agent's description says the researcher
+chose its settings and no sweep selected them. This is a legitimate design as
+long as it is declared. What protects the study is the same either way: the
+settings are pinned and frozen before behaviour is measured, and a handmade
+steered agent passes the same freeze gates as a promoted one: the same pins on
+its vectors and adapter, and the same capability-battery evidence. Say in
+METHODS who chose the settings and
+on what basis; the `--reason` is the place to start. `agent create` has no
+temperature: the study sets the temperature for every arm, and an agent's file
+records only the Playground's. Its thinking level (`--reasoning-effort`) is
+the agent's own, and an agent arm of an ordinary study runs at it; the
+reasoning budget stays with the study.
+
 ### 4.6 `freeze` — the preregistration moment
 
 ```bash

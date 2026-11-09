@@ -277,6 +277,7 @@ steerlab panel inspect <path>
 steerlab panel check <file>
 steerlab panel import <file> --file-sha256 <value>
 steerlab panel compile <path> --casting <value> --experiment <value> --file-sha256 <value> --manifest-sha256 <digest>
+steerlab agent create <name> --model <id> --revision <commit> [--adapter <value>] [--adapter-sha256 <value>] [--layer <value>] [--mode <value>] [--prompt-mode <value>] [--reason <value>] [--reasoning-effort <value>] [--review-sha256 <digest>] [--strength <value>] [--system-prompt-file <value>] [--vector <value>] [--vector-sha256 <value>]
 steerlab experiment rename <name> <new-name> [--manifest-sha256 <digest>] [--yes]
 steerlab experiment delete <name> [--manifest-sha256 <digest>] [--yes]
 steerlab design rename <name> <new-name> [--file-sha256 <value>] [--yes]
@@ -940,7 +941,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   results export <study> [--run <run-dir>] [--out <dir>]  Export a run's results as tables, transcripts, a methods summary, and a codebook.
   results report <study> [--run <run-dir>] [--out <file>]  Write a run's results as one readable page to open in a browser or send.
   pack preview | apply | export …               Review and import study packs, or export text inputs and dependency names.
-  agent list | inspect <path>                   Inspect local agents for reviewed attachment.
+  agent list | inspect <path> | create <name> | delete <path>  Make an agent by hand, or inspect local agents for reviewed attachment.
   design list | inspect | describe | instantiate | batch | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
@@ -2757,6 +2758,7 @@ of bytes, not scientific validity or cleanup authorization. See
 ```
 steerlab-cli agent list
 steerlab-cli agent inspect <path>
+steerlab-cli agent create <name> [--adapter <value>] [--adapter-sha256 <value>] [--layer <value>] [--mode <value>] --model <id> [--prompt-mode <mode>] [--reason <text>] [--reasoning-effort <value>] [--review-sha256 <sha256>] --revision <commit> [--strength <value>] [--system-prompt-file <value>] [--vector <value>] [--vector-sha256 <value>]
 steerlab-cli agent delete <path> [--artifact-sha256 <sha256>] [--yes]
 ```
 
@@ -2764,6 +2766,7 @@ steerlab-cli agent delete <path> [--artifact-sha256 <sha256>] [--yes]
 |---|---|
 | `agent list` | List discoverable local agent artifacts and their file digests. |
 | `agent inspect` | Inspect a workspace agent artifact before attachment. |
+| `agent create` | Preview an agent made by hand: a base model at a pinned revision, at most one adapter, steering vectors at the layers and strengths you choose (in residual-norm units), a thinking level, a system prompt, and a prompt mode. Repeat with --review-sha256 to write it into the agent library with a record of how it was made. The study that casts the agent sets its temperature. |
 | `agent delete` | Preview deleting an agent no study uses; repeat with its reviewed --artifact-sha256 and --yes to move it into a .trash folder. Refused while any study uses it. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.

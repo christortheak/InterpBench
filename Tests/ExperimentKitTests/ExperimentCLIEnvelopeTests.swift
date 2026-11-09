@@ -733,6 +733,9 @@ import Testing
             "init",
             "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update",
             "agent list", "agent inspect", "experiment attach-agent",
+            // An agent made by hand (public issue #17): previewed, then
+            // written with the reviewed digest.
+            "agent create",
             // Housekeeping a coding assistant could otherwise only do by
             // hand-editing protected files: previewed, confirmed rename and
             // delete for drafts, templates, and unused agents.

@@ -29,6 +29,31 @@ reconstructing an attachment request.
 
 <!-- client: all -->
 
+**Agents made by hand:** `{{cli}} agent create <name> --model <id> --revision <sha>`
+makes an agent without a sweep: the base model at a pinned 40-character commit,
+and optionally one adapter (`--adapter <folder-or-fine-tune.json> --adapter-sha256 <weights digest>`),
+any number of steering vectors (`--vector <runs/<run>/<name>> --vector-sha256 <artifactSHA256> --layer <n> --strength <alpha> [--mode add|ablate]`,
+once per vector; the k-th `--vector-sha256`, `--layer`, `--strength`, and
+`--mode` belong to the k-th `--vector`), `--reasoning-effort <level>`,
+`--system-prompt-file <file>`, `--prompt-mode <mode>`, and `--reason <text>`.
+Strengths are in residual-norm units, as the app's agent editor uses. It previews
+first and writes nothing: show the researcher the agent file and the checks,
+then repeat the command with `--review-sha256 <reviewSHA256>`
+(`result.confirmCommand` is the exact command). It refuses a revision that is
+not a pinned commit, an adapter or vector whose bytes do not match the digest
+you give or that belongs to another model or revision, a layer the vector does
+not have, a vector with no residual norm at that layer, more than one adapter
+(both engines run only the first), and a thinking level the model's chat
+template does not accept. Get vector digests from `{{cli}} experiment inspect-artifact`.
+The agent lands in `runs/model-variants/` with a `handmade` record: the
+command, each input and its hash, when it was made, and the reason. Attach it
+with the returned `artifactFileSHA256`. There is no `--temperature`: the study
+sets the temperature every arm runs at. `agent inspect`, `agent list`, and
+`attach-agent` say whether an agent is `swept` (a sweep chose its settings and
+`experiment promote` made it) or `handmade`, and its thinking level
+(`result.agent`). A handmade steered agent passes the same freeze gates as a
+promoted one; say in METHODS who chose its settings and why.
+
 **Renaming and deleting:** `{{cli}} experiment rename <name> <new-name>`,
 `{{cli}} experiment delete <name>`, `{{cli}} design rename <name> <new-name>`,
 `{{cli}} design delete <name>` (templates), and `{{cli}} agent delete <path>`
