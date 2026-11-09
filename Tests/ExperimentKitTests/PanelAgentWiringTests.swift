@@ -268,65 +268,199 @@ import Testing
         }
     }
 
-    @Test(arguments: [nil, ""] as [String?])
-    func theSeatRepairForAHandBoundPanelPinsACopyInTheStudyEditor(_ semantic: String?) async throws {
-        try await withWorkspace { root in
-            try writeAgent(root, ["reasoningEffort": "medium"], model: Self.plain)
-            var manifest = try panelStudy(root, model: Self.plain)
-            manifest.multiAgentSemanticScenarioPath = semantic
-            let findings = ModelVariantArtifact.manifestArmFindings(manifest, workspaceRoot: root)
-            #expect(findings.map(\.arm) == ["a"])
-            let repair = ModelVariantArtifact.armProblemsRepair(
-                manifest, findings: findings, frozen: false)
-            #expect(repair.contains("(seat ID a)"))
-            #expect(!repair.contains("panel compile"))
-            #expect(repair.contains("save a copy of the hand-bound panel prompts/panels/p.json "
-                + "in which each of those seats' variantArtifactPath and variantArtifactHash "
-                + "name its new agent, and pin the copy in the Mac app's study editor (Setup)"))
-            // Carry it out as the study editor does: a corrected agent, a copy
-            // of the panel naming it in seat a, and a setup save selecting it.
-            let fixedPath = "runs/model-variants/fixed/model-variant.json"
-            let fixedURL = root.appending(path: fixedPath)
+    /// The make-again lead every seat repair opens with on this command line.
+    static let macMake = "make a new agent for each seat whose agent breaks a rule (seat ID a): "
+        + "steerlab-cli agent create <new-name> --model <model> --revision <sha> … "
+        + "(or the app's agent editor), then "
+    static let macSeats = "in the Mac app's study editor (Seats), put each new agent in its "
+        + "seat and save, which compiles the panel again"
+
+    /// A corrected agent for seat a, in the library: its path and occupant.
+    private func fixedAgent(_ root: URL) throws -> (path: String, data: Data) {
+        let fixedPath = "runs/model-variants/fixed/model-variant.json"
+        let fixedURL = root.appending(path: fixedPath)
+        try FileManager.default.createDirectory(
+            at: fixedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fixed = try JSONSerialization.data(withJSONObject: [
+            "name": "fixed", "baseModelID": Self.plain, "reasoningEffort": "off",
+        ])
+        try fixed.write(to: fixedURL)
+        return (fixedPath, fixed)
+    }
+
+    /// A saved draft panel study whose seat a's agent breaks a rule, with
+    /// the given semantic path and pin, exactly as the editor would read it.
+    private func savedSeatDraft(
+        _ root: URL, semantic: String?, pin: String
+    ) throws -> DraftAuthoringSnapshot {
+        try writeAgent(root, ["reasoningEffort": "medium"], model: Self.plain)
+        var manifest = try panelStudy(root, model: Self.plain)
+        if pin != "prompts/panels/p.json" {
+            let url = root.appending(path: pin)
             try FileManager.default.createDirectory(
-                at: fixedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let fixed = try JSONSerialization.data(withJSONObject: [
-                "name": "fixed", "baseModelID": Self.plain, "reasoningEffort": "off",
-            ])
-            try fixed.write(to: fixedURL)
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(contentsOf: root.appending(path: "prompts/panels/p.json")).write(to: url)
+            manifest.multiAgentScenarioPath = pin
+        }
+        manifest.multiAgentSemanticScenarioPath = semantic
+        try ExperimentStore.save(manifest, allowCreate: true, workspaceRoot: root, expectedFile: .absent)
+        return try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+    }
+
+    @Test func aHandBoundPanelIsRepairedByPinningACopyInSetup() async throws {
+        try await withWorkspace { root in
+            let reviewed = try savedSeatDraft(root, semantic: nil, pin: "prompts/panels/p.json")
+            let findings = ModelVariantArtifact.manifestArmFindings(
+                reviewed.manifest, workspaceRoot: root)
+            #expect(findings.map(\.arm) == ["a"])
+            #expect(ModelVariantArtifact.armProblemsRepair(
+                reviewed.manifest, findings: findings, frozen: false)
+                == Self.macMake + "save a copy of the panel prompts/panels/p.json in which "
+                + "each of those seats' variantArtifactPath and variantArtifactHash name its "
+                + "new agent, and pin the copy: in the Mac app's study editor (Setup), which "
+                + "pins a hand-bound panel as it stands")
+            // Carry it out as the study editor does: a copy of the panel
+            // naming the corrected agent in seat a, selected in Setup.
+            let fixed = try fixedAgent(root)
             var copy = scenario(model: Self.plain)
-            copy.agents[0].variantArtifactPath = fixedPath
-            copy.agents[0].variantArtifactHash = sha(fixed)
+            copy.agents[0].variantArtifactPath = fixed.path
+            copy.agents[0].variantArtifactHash = sha(fixed.data)
             try JSONEncoder().encode(copy).write(to: root.appending(path: "prompts/panels/p-fixed.json"))
-            var study = manifest
-            study.status = .draft
-            // A hand-bound panel as the study editor pins one (no semantic
-            // path at all); the repair above reads an empty one the same way.
-            study.multiAgentSemanticScenarioPath = nil
-            try ExperimentStore.save(study, allowCreate: true, workspaceRoot: root, expectedFile: .absent)
-            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
             var fields = StudyProtocolFields(manifest: reviewed.manifest)
             fields.studyKind = .multiAgent
-            let result = try StudyProtocolAuthoring.save(
+            guard case .saved(let saved, _, _) = try StudyProtocolAuthoring.save(
                 reviewed: reviewed, fields: fields,
                 scenario: StudyProtocolScenario(path: "prompts/panels/p-fixed.json", workspaceRoot: root))
-            guard case .saved(let saved, _, _) = result else {
-                Issue.record("expected a save"); return
-            }
+            else { Issue.record("expected a save"); return }
             #expect(saved.manifest.multiAgentScenarioPath == "prompts/panels/p-fixed.json")
             #expect(ModelVariantArtifact.manifestArmFindings(saved.manifest, workspaceRoot: root).isEmpty)
         }
     }
 
-    @Test func aSeatAgentFileThatIsNotTheOneItsSeatPinsIsNeverJudged() async throws {
+    /// An empty semantic path, or a pin in prompts/panels/compiled/: the
+    /// editor reads a casting it recompiles (and ignores a new selection),
+    /// so the repair is its Seats section, and doing that clears it.
+    @Test(arguments: [
+        ("", "prompts/panels/p.json"), (nil, "prompts/panels/compiled/p.json"),
+    ] as [(String?, String)])
+    func aCastingTheEditorRecompilesIsRepairedInItsSeats(
+        _ semantic: String?, _ pin: String
+    ) async throws {
         try await withWorkspace { root in
-            try writeAgent(root, ["reasoningEffort": "medium"], model: Self.plain)
+            let reviewed = try savedSeatDraft(root, semantic: semantic, pin: pin)
+            let findings = ModelVariantArtifact.manifestArmFindings(
+                reviewed.manifest, workspaceRoot: root)
+            #expect(findings.map(\.arm) == ["a"])
+            #expect(ModelVariantArtifact.armProblemsRepair(
+                reviewed.manifest, findings: findings, frozen: false)
+                == Self.macMake + Self.macSeats)
+            let fixed = try fixedAgent(root)
+            var fields = StudyProtocolFields(manifest: reviewed.manifest)
+            fields.studyKind = .multiAgent
+            fields.seatCastingEdits = ["a": try SeatCasting.occupant(artifactPath: fixed.path)]
+            guard case .saved(let saved, let compiled, _) = try StudyProtocolAuthoring.save(
+                reviewed: reviewed, fields: fields)
+            else { Issue.record("expected a save"); return }
+            #expect(compiled)
+            #expect(ModelVariantArtifact.manifestArmFindings(saved.manifest, workspaceRoot: root).isEmpty)
+        }
+    }
+
+    @Test func printedSeatRepairsQuoteTheirValues() async throws {
+        try await withWorkspace { root in
+            var manifest = try panelStudy(root, model: Self.plain)
+            manifest.multiAgentSemanticScenarioPath = "prompts/panels/my panel.json"
+            // The same strings test_panel_agent_wiring.py asserts for the server.
+            #expect(ModelVariantArtifact.seatRepair(
+                manifest, seatIDs: ["judge one", "it's"], target: "study")
+                == "make a new agent for each seat whose agent breaks a rule (seat IDs "
+                + "judge one, it's): steerlab-cli agent create <new-name> --model <model> "
+                + "--revision <sha> … (or the app's agent editor), then compile the panel "
+                + "again, casting every seat, with each new agent in place of the one its "
+                + "seat holds: steerlab-cli panel compile 'prompts/panels/my panel.json' "
+                + "--experiment study --seat 'judge one'=<agent-path> --seat "
+                + "'it'\"'\"'s'=<agent-path> --seat <each other seat>=<its agent-path>")
+            #expect(ModelVariantArtifact.seatRepair(manifest, seatIDs: ["a=b"], target: "study")
+                == "make a new agent for each seat whose agent breaks a rule (seat ID "
+                + "a=b): steerlab-cli agent create <new-name> --model <model> --revision "
+                + "<sha> … (or the app's agent editor), then in the Mac app's study editor "
+                + "(Seats), put each new agent in its seat and save, which compiles the "
+                + "panel again (a seat ID with '=' cannot be named on the Mac command line)")
+        }
+    }
+
+    @Test func aSeatAgentEditedInPlaceIsJudgedAsItIsOnDisk() async throws {
+        try await withWorkspace { root in
+            // The run loads the file as it is now (drift is a warning there),
+            // so the seat checks judge that file, whatever hash the seat pins.
+            try writeAgent(root, ["reasoningEffort": "off"], model: Self.plain)
             var pinned = scenario(model: Self.plain)
             pinned.agents[0].variantArtifactHash = sha(
                 try Data(contentsOf: root.appending(path: Self.agentPath)))
-            #expect(!ModelVariantArtifact.scenarioSeatFindings(pinned, workspaceRoot: root).isEmpty)
-            // Another file at the same path: not the agent the seat pins.
-            try writeAgent(root, ["reasoningEffort": "high"], model: Self.plain)
             #expect(ModelVariantArtifact.scenarioSeatFindings(pinned, workspaceRoot: root).isEmpty)
+            try writeAgent(root, ["reasoningEffort": "medium"], model: Self.plain)
+            #expect(ModelVariantArtifact.scenarioSeatFindings(pinned, workspaceRoot: root)
+                .map(\.arm) == ["a"])
+        }
+    }
+
+    @Test func aFrozenStudyKeepsItsBudgetAfterASeatAgentIsEdited() async throws {
+        try await withWorkspace { root in
+            try writeAgent(root, ["reasoningEffort": "on"])
+            var pinned = scenario()
+            pinned.agents[0].variantArtifactHash = sha(
+                try Data(contentsOf: root.appending(path: Self.agentPath)))
+            var frozen = try panelStudy(root, status: .frozen)
+            try JSONEncoder().encode(pinned).write(to: root.appending(path: "prompts/panels/p.json"))
+            frozen.reasoningEffort = "off"
+            frozen.reasoningMaxTokens = 256
+            var draft = frozen
+            draft.status = .draft
+            #expect(frozen.reasoningProtocolViolations.isEmpty)
+            // The agent editor's Save Changes, in place, to off.
+            try writeAgent(root, ["reasoningEffort": "off"])
+            #expect(frozen.reasoningProtocolViolations.isEmpty)
+            // A draft reads the file as it is now: nothing thinks any more.
+            #expect(draft.reasoningProtocolViolations == [ReasoningEffort.budgetWithoutEffortReason])
+        }
+    }
+
+    /// A casting that cannot compile is refused with the compile's own
+    /// reason, not as a budget problem.
+    @Test func aCastingThatCannotCompileRefusesWithItsOwnReason() async throws {
+        try await withWorkspace { root in
+            try writeAgent(root, ["reasoningEffort": "on"])
+            let broken = MultiAgentScenario(
+                name: "dialogue", baseModelID: "",
+                agents: [.init(id: "speaker", name: "Speaker", baseModelID: "", systemPrompt: "Discuss.")],
+                turns: [
+                    .init(id: "turn", title: "One", speakerAgentID: "speaker",
+                          promptTemplate: "Respond.", outputLabel: "one"),
+                    .init(id: "turn", title: "Two", speakerAgentID: "speaker",
+                          promptTemplate: "Again.", outputLabel: "two"),
+                ])
+            let url = root.appending(path: "prompts/panels/dialogue.json")
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(broken).write(to: url)
+            var created = ExperimentManifest(name: "study", description: "", modelID: Self.qwen)
+            created.modelRevision = Self.revision
+            try ExperimentStore.save(created, allowCreate: true, workspaceRoot: root, expectedFile: .absent)
+            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+            var fields = StudyProtocolFields(manifest: reviewed.manifest)
+            fields.studyKind = .multiAgent
+            fields.reasoningEffort = "off"
+            fields.reasoningMaxTokens = 256
+            fields.seatCastingEdits = ["speaker": try SeatCasting.occupant(artifactPath: Self.agentPath)]
+            do {
+                _ = try StudyProtocolAuthoring.save(
+                    reviewed: reviewed, fields: fields,
+                    scenario: StudyProtocolScenario(path: "prompts/panels/dialogue.json", workspaceRoot: root))
+                Issue.record("expected the casting to be refused")
+            } catch let error as ExperimentError {
+                #expect(!error.reason.contains(ReasoningEffort.budgetWithoutEffortReason))
+                #expect(error.lifecycleRefusal?.gate == .missingPrerequisite, "\(error.reason)")
+            }
         }
     }
 

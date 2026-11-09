@@ -601,14 +601,18 @@ def scenario_seat_findings(scenario, *, root: str | None, study_model_id: str = 
     check``, the id heuristic for a frozen study (the rules it was frozen
     under), as :meth:`Manifest._capabilities_for_gates` does for a study's
     own model. An agent file that cannot be read is not judged here: the run
-    refuses it by name, as it always has. Neither is one whose bytes are not
-    the ones its seat pins (``variantArtifactHash``): a stale copy at the
-    same path, in an engine's own root say, must never refuse a study whose
-    own agent is sound, and verify and the run refuse the mismatch
-    themselves. Each finding names the seat by its ID, the key ``panel
-    compile`` casts by; the sentence names it as the panel does. Swift twin:
-    ``ModelVariantArtifact.scenarioSeatFindings``."""
-    import hashlib
+    refuses it by name, as it always has.
+
+    The file is judged AS IT IS ON DISK in ``root``, whatever hash the seat
+    pins, because that is the file the run loads (a drifted seat agent is a
+    warning there, "variant artifact drifted…; using the current artifact
+    on disk"): the app's agent editor saves a library agent in place, so a
+    seat's agent can change after the panel was compiled, and the change is
+    what runs. ``root`` must therefore be the study's own files: the
+    engine's bundle admission passes the bundle's own members, never its
+    own root (``api.submissions``). Each finding names the seat by its ID,
+    the key ``panel compile`` casts by; the sentence names it as the panel
+    does. Swift twin: ``ModelVariantArtifact.scenarioSeatFindings``."""
     from . import model_capabilities as mc, paths
     out: list[tuple[str, str, str]] = []
     for agent in scenario.agents:
@@ -616,12 +620,8 @@ def scenario_seat_findings(scenario, *, root: str | None, study_model_id: str = 
             continue
         try:
             with open(paths.resolve_artifact(agent.variant_artifact_path, root),
-                      "rb") as handle:
-                data = handle.read()
-            pinned = agent.variant_artifact_hash
-            if pinned and hashlib.sha256(data).hexdigest() != pinned:
-                continue
-            artifact = json.loads(data)
+                      encoding="utf-8") as handle:
+                artifact = json.load(handle)
         except (OSError, ValueError):
             continue
         if not isinstance(artifact, dict):
@@ -721,7 +721,8 @@ def manifest_arm_notes(manifest) -> list[str]:
     return notes
 
 
-def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
+def arm_problems_repair(manifest, findings, *, frozen: bool, authoring,
+                        root: str | None = None) -> str:
     """The repair for :func:`manifest_arm_findings`, as commands the reader's
     client spells (``authoring`` is ``command_vocabulary.authoring``). A
     frozen study is duplicated first and repaired on the draft. An arm whose
@@ -739,7 +740,8 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
     revision = manifest.model_revision or "<sha>"
     seats = [arm for arm, wanted in fixes.items() if FIX_SEAT in wanted]
     if seats:
-        steps.append(seat_repair(manifest, seats, target=target, authoring=authoring))
+        steps.append(seat_repair(manifest, seats, target=target, authoring=authoring,
+                                 root=root))
     for arm, wanted in fixes.items():
         if wanted & {FIX_AGENT, FIX_REVISION}:
             at = ("at the study's revision " if FIX_REVISION in wanted else "")
@@ -772,48 +774,109 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
     return "; then ".join(steps)
 
 
-def seat_repair(manifest, seat_ids, *, target: str, authoring) -> str:
+def shell_quoted(word: str) -> str:
+    """``word`` as one shell word, by :func:`shlex.quote`'s rule (unchanged
+    when it holds only ``[A-Za-z0-9_@%+=:,./-]``, else single-quoted). For
+    the values a printed repair interpolates. Swift twin:
+    ``ModelVariantArtifact.shellQuoted``, the same output."""
+    import shlex
+    return shlex.quote(word)
+
+
+def editor_reads_as_cast(manifest, root: str | None = None) -> bool:
+    """Whether the Mac app's study editor reads a panel study with no
+    semantic path as a CASTING it recompiles (``SeatCasting.state``): its
+    ``multiAgentSemanticScenarioPath`` is present but empty, or the pinned
+    panel lies in ``prompts/panels/compiled/``. Such a study's seats are
+    edited in the editor's Seats section; a new panel selection is ignored
+    there. Swift twin: the ``.cast`` rule of ``SeatCasting.state``
+    (``PanelComposition.isCompiledPath``)."""
+    from . import paths
+    if manifest.raw.get("multiAgentSemanticScenarioPath") is not None:
+        return True
+    pinned = manifest.raw.get("multiAgentScenarioPath")
+    if not isinstance(pinned, str) or not pinned:
+        return False
+    base = paths.project_root() if root is None else root
+    full = pinned if os.path.isabs(pinned) else os.path.join(base, pinned)
+    return (os.path.dirname(os.path.normpath(full))
+            == os.path.normpath(os.path.join(base, "prompts", "panels", "compiled")))
+
+
+def _either_client(mac: str, client: str, *, mac_is_command: bool) -> str:
+    """One act, spelled for the reader: the cross-platform client's command,
+    the Mac's (a command, or where in the Mac app), or both on the engine."""
+    from . import command_vocabulary as vocabulary
+    client_text = f"{vocabulary.CLIENT_PROGRAM} {client}"
+    mac_text = f"{vocabulary.MAC_PROGRAM} {mac}" if mac_is_command else mac
+    if vocabulary.is_client():
+        return client_text
+    if vocabulary.surface() == vocabulary.MAC:
+        return mac_text
+    return ("on your authoring client: " + mac_text
+            + ("  (Mac command line)" if mac_is_command else "")
+            + ", or " + client_text + "  (cross-platform client)")
+
+
+def seat_repair(manifest, seat_ids, *, target: str, authoring,
+                root: str | None = None) -> str:
     """The step that replaces the agents of the seats ``seat_ids`` (keyed by
     seat ID) in a panel study's draft ``target``: make each agent again, then
-    put it in its seat. A panel compiled from a semantic panel is compiled
-    again (``panel compile``, casting every seat by ID). A hand-bound panel
-    (no ``multiAgentSemanticScenarioPath``), which ``panel compile`` refuses
-    on both clients, is copied with each seat's agent replaced and the copy
-    pinned: with ``experiment set-protocol`` on the cross-platform client,
-    and in the Mac app's study editor (the Mac command line has no verb that
-    pins a hand-bound panel). Swift twin:
-    ``ModelVariantArtifact.seatRepair``, the same steps."""
-    from . import command_vocabulary as vocabulary
+    put it in its seat, by the route each client has for the panel's form:
+
+    - compiled from a semantic panel (a non-empty
+      ``multiAgentSemanticScenarioPath``): ``panel compile`` again, casting
+      every seat by ID; on the Mac, the study editor when a seat ID holds
+      ``=``, which its ``--seat`` cannot express;
+    - a casting the Mac study editor recompiles (:func:`editor_reads_as_cast`):
+      the editor's Seats section on the Mac;
+    - hand-bound: a copy with each seat's agent replaced, pinned in the
+      Mac study editor's Setup, which pins a hand-bound panel as it stands.
+
+    The cross-platform client pins a copy with ``experiment set-protocol``
+    wherever it cannot recompile. Values in commands are shell-quoted
+    (:func:`shell_quoted`). Swift twin: ``ModelVariantArtifact.seatRepair``,
+    the same Mac text."""
     ids = ("seat IDs " if len(seat_ids) > 1 else "seat ID ") + ", ".join(seat_ids)
     make = ("make a new agent for each seat whose agent breaks a rule (" + ids + "): "
             + authoring("agent create <new-name> --model <model> --revision <sha> …")
             + " (or the app's agent editor), then ")
+    q = shell_quoted
+    seats_editor = ("in the Mac app's study editor (Seats), put each new agent in its "
+                    "seat and save, which compiles the panel again")
     semantic = manifest.raw.get("multiAgentSemanticScenarioPath")
-    casts = " ".join(f"--seat {seat}=<agent-path>" for seat in seat_ids)
     if isinstance(semantic, str) and semantic:
-        return (make + "compile the panel again, casting every seat, with each "
-                "new agent in place of the one its seat holds: "
-                + authoring((f"panel compile {semantic} --experiment {target} "
-                             f"{casts} --seat <each other seat>=<its agent-path>",
-                             f"panel compile {semantic} --experiment {target} "
-                             "--casting <file> --file-sha256 <digest> "
-                             "--manifest-sha256 <digest>")))
+        client = (f"panel compile {q(semantic)} --experiment {q(target)} --casting "
+                  "<file> --file-sha256 <digest> --manifest-sha256 <digest>")
+        if any("=" in seat for seat in seat_ids):
+            mac = seats_editor + " (a seat ID with '=' cannot be named on the Mac command line)"
+            return make + _either_client(mac, client, mac_is_command=False)
+        casts = " ".join(f"--seat {q(seat)}=<agent-path>" for seat in seat_ids)
+        mac = (f"panel compile {q(semantic)} --experiment {q(target)} {casts} "
+               "--seat <each other seat>=<its agent-path>")
+        return (make + "compile the panel again, casting every seat, with each new "
+                "agent in place of the one its seat holds: "
+                + _either_client(mac, client, mac_is_command=True))
     pinned = manifest.raw.get("multiAgentScenarioPath") or "<panel>"
-    copy = (f"save a copy of the hand-bound panel {pinned} in which each of "
-            "those seats' variantArtifactPath and variantArtifactHash name its "
-            "new agent, and pin the copy")
-    # Spelled by hand: only one client has the verb, so `authoring` (which
-    # spells an act on both) cannot name it.
-    client = (f"{vocabulary.CLIENT_PROGRAM} experiment set-protocol {target} --set "
-              "multiAgentScenarioPath=<copy-path> --set "
-              "multiAgentScenarioHash=<copy-sha256>")
-    mac = "in the Mac app's study editor (Setup), which pins a hand-bound panel as it stands"
-    if vocabulary.is_client():
-        return make + copy + ": " + client
-    if vocabulary.surface() == vocabulary.MAC:
-        return make + copy + " " + mac
-    return (make + copy + ": on your authoring client, " + mac + ", or "
-            + client + "  (cross-platform client)")
+    copy = (f"save a copy of the panel {pinned} in which each of those seats' "
+            "variantArtifactPath and variantArtifactHash name its new agent, and pin "
+            "the copy")
+    set_protocol = (f"experiment set-protocol {q(target)} --set "
+                    "multiAgentScenarioPath=<copy-path> --set "
+                    "multiAgentScenarioHash=<copy-sha256>")
+    if editor_reads_as_cast(manifest, root):
+        from . import command_vocabulary as vocabulary
+        client_text = f"{vocabulary.CLIENT_PROGRAM} {set_protocol}"
+        if vocabulary.is_client():
+            return make + copy + ": " + client_text
+        if vocabulary.surface() == vocabulary.MAC:
+            return make + seats_editor
+        return (make + "on your authoring client: " + seats_editor + ", or " + copy
+                + ": " + client_text + "  (cross-platform client)")
+    setup_editor = ("in the Mac app's study editor (Setup), which pins a hand-bound "
+                    "panel as it stands")
+    return make + copy + ": " + _either_client(setup_editor, set_protocol,
+                                               mac_is_command=False)
 
 
 def frozen_arm_problems_advisory(manifest, root: str | None) -> str | None:
@@ -832,4 +895,4 @@ def frozen_arm_problems_advisory(manifest, root: str | None) -> str | None:
             "because " + "; ".join(sentence for _, sentence, _ in findings)
             + ". To run it: "
             + arm_problems_repair(manifest, findings, frozen=True,
-                                  authoring=vocabulary.authoring))
+                                  authoring=vocabulary.authoring, root=root))

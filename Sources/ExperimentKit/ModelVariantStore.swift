@@ -1105,7 +1105,13 @@ extension ModelVariantArtifact {
     /// against the capability record of ITS model and revision: the
     /// workspace record for a draft and for `panel check`, the id heuristic
     /// for a frozen study. An agent file that cannot be read is not judged
-    /// here: the run refuses it by name. Server twin:
+    /// here: the run refuses it by name.
+    ///
+    /// The file is judged AS IT IS ON DISK under `workspaceRoot`, whatever
+    /// hash the seat pins, because that is the file the run loads (a drifted
+    /// seat agent is a warning there, never a refusal): the agent editor
+    /// saves a library agent in place, so a seat's agent can change after the
+    /// panel was compiled, and the change is what runs. Server twin:
     /// `agent_identity.scenario_seat_findings`.
     public static func scenarioSeatFindings(
         _ scenario: MultiAgentScenario, studyModelID: String = "",
@@ -1115,17 +1121,8 @@ extension ModelVariantArtifact {
             guard let path = seat.variantArtifactPath else { return [] }
             let url = path.hasPrefix("/")
                 ? URL(fileURLWithPath: path) : workspaceRoot.appending(path: path)
-            guard let data = try? Data(contentsOf: url) else { return [] }
-            // A file whose bytes are not the ones the seat pins is not judged
-            // here: a stale copy at the same path must never refuse a study
-            // whose own agent is sound, and verify and the run refuse the
-            // mismatch themselves.
-            if let pinned = seat.variantArtifactHash, !pinned.isEmpty,
-                SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() != pinned
-            {
-                return []
-            }
-            guard let artifact = try? JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+            guard let data = try? Data(contentsOf: url),
+                let artifact = try? JSONDecoder().decode(ModelVariantArtifact.self, from: data)
             else { return [] }
             let model = !artifact.baseModelID.isEmpty ? artifact.baseModelID
                 : (!seat.baseModelID.isEmpty ? seat.baseModelID : studyModelID)
@@ -1387,16 +1384,36 @@ extension ModelVariantArtifact {
         return steps.joined(separator: "; then ")
     }
 
+    /// `word` as one shell word, by Python's `shlex.quote` rule: unchanged
+    /// when it holds only `[A-Za-z0-9_@%+=:,./-]`, else single-quoted, with
+    /// each `'` spelled `'"'"'`. For the values a printed repair
+    /// interpolates. Server twin: `agent_identity.shell_quoted`.
+    static func shellQuoted(_ word: String) -> String {
+        guard !word.isEmpty else { return "''" }
+        let safe = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-")
+        if word.allSatisfy({ safe.contains($0) }) { return word }
+        return "'" + word.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
     /// The step that replaces the agents of the seats `seatIDs` in a panel
     /// study's draft `target`: make each agent again, then put it in its
-    /// seat. A panel compiled from a semantic panel is compiled again (`panel
-    /// compile`, casting every seat by ID). A hand-bound panel (no semantic
-    /// path), which `panel compile` refuses, is copied with each seat's agent
-    /// replaced, and the copy pinned in the app's study editor: this command
-    /// line has no verb that pins a hand-bound panel. Server twin:
-    /// `agent_identity.seat_repair`, the same steps.
+    /// seat, by the route this client has for the panel's form, which is the
+    /// study editor's own rule (`SeatCasting.state`):
+    ///
+    /// - compiled from a semantic panel (a non-empty semantic path): `panel
+    ///   compile` again, casting every seat by ID; the study editor's Seats
+    ///   when a seat ID holds `=`, which `--seat` cannot express;
+    /// - a casting the editor recompiles (an empty semantic path, or a pin in
+    ///   `prompts/panels/compiled/`): the editor's Seats section;
+    /// - hand-bound: a copy with each seat's agent replaced, pinned in the
+    ///   editor's Setup, which pins a hand-bound panel as it stands (this
+    ///   command line has no verb that pins one).
+    ///
+    /// Values in commands are shell-quoted (`shellQuoted`). Server twin:
+    /// `agent_identity.seat_repair`, the same text on the Mac surface.
     static func seatRepair(
-        _ manifest: ExperimentManifest, seatIDs: [String], target: String
+        _ manifest: ExperimentManifest, seatIDs: [String], target: String,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) -> String {
         let program = ExperimentCLIHelp.program
         let ids = (seatIDs.count > 1 ? "seat IDs " : "seat ID ")
@@ -1404,17 +1421,28 @@ extension ModelVariantArtifact {
         let make = "make a new agent for each seat whose agent breaks a rule (\(ids)): "
             + "\(program) agent create <new-name> --model <model> --revision <sha> … "
             + "(or the app's agent editor), then "
+        let seatsEditor = "in the Mac app's study editor (Seats), put each new agent in its "
+            + "seat and save, which compiles the panel again"
         if let semantic = manifest.multiAgentSemanticScenarioPath, !semantic.isEmpty {
-            let casts = seatIDs.map { "--seat \($0)=<agent-path>" }.joined(separator: " ")
+            if seatIDs.contains(where: { $0.contains("=") }) {
+                return make + seatsEditor
+                    + " (a seat ID with '=' cannot be named on the Mac command line)"
+            }
+            let casts = seatIDs.map { "--seat \(shellQuoted($0))=<agent-path>" }
+                .joined(separator: " ")
             return make + "compile the panel again, casting every seat, with each new agent "
-                + "in place of the one its seat holds: \(program) panel compile \(semantic) "
-                + "--experiment \(target) \(casts) --seat <each other seat>=<its agent-path>"
+                + "in place of the one its seat holds: \(program) panel compile "
+                + "\(shellQuoted(semantic)) --experiment \(shellQuoted(target)) \(casts) "
+                + "--seat <each other seat>=<its agent-path>"
         }
         let pinned = manifest.multiAgentScenarioPath.flatMap { $0.isEmpty ? nil : $0 }
-            ?? "<panel>"
-        return make + "save a copy of the hand-bound panel \(pinned) in which each of "
+        let editorCasts = manifest.multiAgentSemanticScenarioPath != nil
+            || pinned.map { PanelComposition.isCompiledPath($0, workspaceRoot: workspaceRoot) }
+                == true
+        if editorCasts { return make + seatsEditor }
+        return make + "save a copy of the panel \(pinned ?? "<panel>") in which each of "
             + "those seats' variantArtifactPath and variantArtifactHash name its new agent, "
-            + "and pin the copy in the Mac app's study editor (Setup), which pins a "
+            + "and pin the copy: in the Mac app's study editor (Setup), which pins a "
             + "hand-bound panel as it stands"
     }
 

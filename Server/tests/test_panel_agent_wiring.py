@@ -398,32 +398,61 @@ def test_a_turn_played_as_thinking_never_records_off(tmp_path):
             first["reasoningStatus"]) == ("on", 256, "complete")
 
 
-@pytest.mark.parametrize("semantic", [None, ""])
-def test_the_seat_repair_for_a_hand_bound_panel_names_a_command_that_pins_it(
-        tmp_path, capsys, semantic):
-    """A hand-bound panel (no semantic path, or an empty one) cannot be
-    recompiled; the repair copies it with the seat's new agent and pins the
-    copy. The client's command is run here and clears the refusal."""
+#: The make-again lead every seat repair opens with, on the Mac command line.
+MAC_MAKE = ("make a new agent for each seat whose agent breaks a rule (seat ID a): "
+            "steerlab-cli agent create <new-name> --model <model> --revision <sha> … "
+            "(or the app's agent editor), then ")
+#: What the Mac study editor does with a casting it recompiles.
+MAC_SEATS = ("in the Mac app's study editor (Seats), put each new agent in its seat "
+             "and save, which compiles the panel again")
+#: The client's copy-and-pin route, for any panel it cannot recompile.
+CLIENT_COPY = ("save a copy of the panel prompts/panels/p.json in which each of those "
+               "seats' variantArtifactPath and variantArtifactHash name its new agent, "
+               "and pin the copy: steerlab experiment set-protocol study --set "
+               "multiAgentScenarioPath=<copy-path> --set "
+               "multiAgentScenarioHash=<copy-sha256>")
+
+
+def _repairs(tmp_path, *, semantic, pin="prompts/panels/p.json"):
+    """The seat repair for a draft whose seat a's agent breaks a rule, on the
+    Mac and on the client, with the panel's semantic path set to
+    ``semantic`` (absent when None) and pinned at ``pin``."""
     from steerlab_server.experiment import command_vocabulary as vocabulary
-    from test_agent_create import cli
     panel_study(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN)
     raw = store.load_raw("study", str(tmp_path))
-    raw["multiAgentSemanticScenarioPath"] = semantic
+    if semantic is None:
+        raw.pop("multiAgentSemanticScenarioPath", None)
+    else:
+        raw["multiAgentSemanticScenarioPath"] = semantic
+    if pin != "prompts/panels/p.json":
+        target = tmp_path / pin
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((tmp_path / "prompts" / "panels" / "p.json").read_bytes())
+        raw["multiAgentScenarioPath"] = pin
     store.save_raw(raw, str(tmp_path))
     manifest = Manifest.load("study", str(tmp_path))
     findings = agent_identity.manifest_arm_findings(manifest, str(tmp_path))
     assert [seat for seat, _, _ in findings] == ["a"]
-    with vocabulary.speaking_as(vocabulary.CLIENT):
-        repair = agent_identity.arm_problems_repair(
-            manifest, findings, frozen=False, authoring=vocabulary.authoring)
-    assert "(seat ID a)" in repair and "panel compile" not in repair
-    assert ("save a copy of the hand-bound panel prompts/panels/p.json in which each "
-            "of those seats' variantArtifactPath and variantArtifactHash name its new "
-            "agent, and pin the copy: steerlab experiment set-protocol study --set "
-            "multiAgentScenarioPath=<copy-path> --set "
-            "multiAgentScenarioHash=<copy-sha256>") in repair
-    # Carry the repair out: a corrected agent, a copy of the panel naming it in
-    # seat a, and the client's command.
+    out = {}
+    for surface in (vocabulary.MAC, vocabulary.CLIENT):
+        with vocabulary.speaking_as(surface):
+            out[surface] = agent_identity.arm_problems_repair(
+                manifest, findings, frozen=False, authoring=vocabulary.authoring,
+                root=str(tmp_path))
+    return manifest, out[vocabulary.MAC], out[vocabulary.CLIENT]
+
+
+def test_a_hand_bound_panel_is_repaired_by_pinning_a_copy(tmp_path, capsys):
+    """No semantic path and a pin outside prompts/panels/compiled/: the Mac
+    study editor reads the panel as hand-bound and pins a new selection as it
+    stands. The client's command is run here and clears the refusal."""
+    from test_agent_create import cli
+    _, mac, client = _repairs(tmp_path, semantic=None)
+    assert mac == (MAC_MAKE + "save a copy of the panel prompts/panels/p.json in which "
+                   "each of those seats' variantArtifactPath and variantArtifactHash "
+                   "name its new agent, and pin the copy: in the Mac app's study editor "
+                   "(Setup), which pins a hand-bound panel as it stands")
+    assert client.endswith(CLIENT_COPY) and "panel compile" not in client
     fixed = tmp_path / "runs" / "model-variants" / "fixed" / "model-variant.json"
     fixed.parent.mkdir(parents=True)
     fixed.write_text(json.dumps({"name": "fixed", "baseModelID": PLAIN,
@@ -443,6 +472,21 @@ def test_the_seat_repair_for_a_hand_bound_panel_names_a_command_that_pins_it(
     assert agent_identity.manifest_arm_findings(repaired, str(tmp_path)) == []
 
 
+@pytest.mark.parametrize("semantic, pin", [
+    ("", "prompts/panels/p.json"),
+    (None, "prompts/panels/compiled/p.json"),
+])
+def test_a_casting_the_mac_editor_recompiles_is_repaired_in_its_seats(
+        tmp_path, semantic, pin):
+    """An empty semantic path, or a pin in prompts/panels/compiled/, is a
+    casting the Mac study editor recompiles (it ignores a new selection
+    there): the Mac repair is its Seats section. The client pins a copy."""
+    _, mac, client = _repairs(tmp_path, semantic=semantic, pin=pin)
+    assert mac == MAC_MAKE + MAC_SEATS
+    assert "save a copy of the panel " + pin in client
+    assert client.endswith(CLIENT_COPY.split("prompts/panels/p.json", 1)[1])
+
+
 def test_the_seat_repair_for_a_compiled_panel_casts_by_seat_id(tmp_path):
     from steerlab_server.experiment import command_vocabulary as vocabulary
     manifest = panel_study(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN)
@@ -453,17 +497,135 @@ def test_the_seat_repair_for_a_compiled_panel_casts_by_seat_id(tmp_path):
     assert "(seat ID a)" in repair and "Ava" not in repair
     assert ("steerlab panel compile prompts/panels/semantic/p.json --experiment study "
             "--casting <file>") in repair
+    with vocabulary.speaking_as(vocabulary.MAC):
+        mac = agent_identity.arm_problems_repair(
+            manifest, findings, frozen=False, authoring=vocabulary.authoring)
+    assert mac == (MAC_MAKE + "compile the panel again, casting every seat, with each "
+                   "new agent in place of the one its seat holds: steerlab-cli panel "
+                   "compile prompts/panels/semantic/p.json --experiment study --seat "
+                   "a=<agent-path> --seat <each other seat>=<its agent-path>")
 
 
-def test_a_seat_agent_file_that_is_not_the_one_its_seat_pins_is_never_judged(tmp_path):
-    """A stale copy of a seat's agent at the same path (an engine's own root,
-    say) never refuses a study whose bundled agent is sound."""
-    manifest = panel_study(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN,
-                           status="frozen")
-    assert agent_identity.manifest_arm_findings(manifest, str(tmp_path))
-    _write_agent(tmp_path, {"reasoningEffort": "high"}, model=PLAIN)
-    assert agent_identity.manifest_arm_findings(manifest, str(tmp_path)) == []
-    assert study_admission.settings_refusal(manifest, str(tmp_path)) is None
+#: The Mac text both engines print for seat IDs a shell or the Mac parser
+#: would misread (PanelAgentWiringTests asserts the same strings).
+QUOTED_MAC = ("make a new agent for each seat whose agent breaks a rule (seat IDs "
+              "judge one, it's): steerlab-cli agent create <new-name> --model <model> "
+              "--revision <sha> … (or the app's agent editor), then compile the panel "
+              "again, casting every seat, with each new agent in place of the one its "
+              "seat holds: steerlab-cli panel compile 'prompts/panels/my panel.json' "
+              "--experiment study --seat 'judge one'=<agent-path> --seat "
+              "'it'\"'\"'s'=<agent-path> --seat <each other seat>=<its agent-path>")
+EQUALS_MAC = ("make a new agent for each seat whose agent breaks a rule (seat ID "
+              "a=b): steerlab-cli agent create <new-name> --model <model> --revision "
+              "<sha> … (or the app's agent editor), then in the Mac app's study editor "
+              "(Seats), put each new agent in its seat and save, which compiles the "
+              "panel again (a seat ID with '=' cannot be named on the Mac command line)")
+
+
+def test_printed_seat_repairs_quote_their_values(tmp_path):
+    from steerlab_server.experiment import command_vocabulary as vocabulary
+    manifest = panel_study(tmp_path, {}, model=PLAIN)
+    manifest.raw["multiAgentSemanticScenarioPath"] = "prompts/panels/my panel.json"
+    with vocabulary.speaking_as(vocabulary.MAC):
+        quoted = agent_identity.seat_repair(manifest, ["judge one", "it's"], target="study",
+                                            authoring=vocabulary.authoring)
+        equals = agent_identity.seat_repair(manifest, ["a=b"], target="study",
+                                            authoring=vocabulary.authoring)
+    assert quoted == QUOTED_MAC
+    assert equals == EQUALS_MAC
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        client = agent_identity.seat_repair(manifest, ["a=b"], target="study",
+                                            authoring=vocabulary.authoring)
+    assert "steerlab panel compile 'prompts/panels/my panel.json' --experiment study" in client
+
+
+def test_a_seat_agent_edited_in_place_is_judged_as_it_is_on_disk(tmp_path):
+    """The run loads the agent file as it is now (a drifted seat agent is a
+    warning there, never a refusal), so the seat checks judge that file,
+    whatever hash the seat pins: a sound agent saved in place with a level
+    its template does not take is named by verify and refused at run start."""
+    sound = panel_study(tmp_path, {"reasoningEffort": "off"}, model=PLAIN)
+    root = str(tmp_path)
+    assert agent_identity.manifest_arm_findings(sound, root) == []
+    _write_agent(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN)
+    edited = Manifest.load("study", root)
+    assert [s for s, _, _ in agent_identity.manifest_arm_findings(edited, root)] == ["a"]
+    assert any(v.startswith("seat 'Ava': ") for v in edited.verify(root))
+    assert study_admission.settings_refusal(edited, root) is not None
+
+
+def test_a_frozen_study_keeps_its_budget_after_a_seat_agent_is_edited(tmp_path):
+    """The study froze with its budget allowed (seat a thought). An agent
+    saved in place since, even to off, must never make it stop verifying,
+    which would block analyze and evaluate of its runs."""
+    frozen = panel_study(tmp_path / "frozen", {"reasoningEffort": "on"}, status="frozen",
+                         reasoningEffort="off", reasoningMaxTokens=256)
+    root = str(tmp_path / "frozen")
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON not in frozen.verify(root)
+    _write_agent(root, {"reasoningEffort": "off"})
+    after = Manifest.load("study", root)
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON not in after.verify(root)
+    # A draft reads the file as it is now: nothing in it thinks any more.
+    draft = panel_study(tmp_path / "draft", {"reasoningEffort": "on"},
+                        reasoningEffort="off", reasoningMaxTokens=256)
+    root = str(tmp_path / "draft")
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON not in draft.verify(root)
+    _write_agent(root, {"reasoningEffort": "off"})
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON in Manifest.load(
+        "study", root).verify(root)
+
+
+def _bundle(source, path):
+    """A run bundle holding ``source``'s study files, as a staged upload."""
+    import tarfile
+    with tarfile.open(path, "w:gz") as tar:
+        for folder in ("experiments", "prompts", "runs"):
+            tar.add(source / folder, arcname=folder)
+    return str(path)
+
+
+def _submit_bundle(tmp_path, monkeypatch, bundle):
+    """``submit_run_bundle`` of ``bundle`` for a run, up to the step after the
+    settings preflight (a sentinel stands in for the rest)."""
+    from steerlab_server.api import submissions
+
+    class PastSettings(Exception):
+        pass
+
+    def past(*args, **kwargs):
+        raise PastSettings
+
+    monkeypatch.setattr(submissions.bundles, "inspect_bundle",
+                        lambda path: {"kind": "runBundle", "experiment": "study"})
+    monkeypatch.setattr(submissions, "_refuse_inert_conditions", past)
+    try:
+        submissions.submit_run_bundle(bundle, verb="run", jobs=None, executor="local",
+                                      dry_run=True)
+    except PastSettings:
+        return None
+    raise AssertionError("submission went past the sentinel")
+
+
+def test_a_bundle_is_judged_by_its_own_seat_agents_never_the_engines(tmp_path, monkeypatch):
+    """The engine's root holds a stale copy of the seat's agent that breaks a
+    rule; the bundle carries a sound one. The bundle is judged by its own
+    files, so it is not refused. A bundle whose own agent breaks the rule is
+    refused here, before the queue."""
+    from steerlab_server.api import submissions
+    sound = tmp_path / "sound"
+    panel_study(sound, {"reasoningEffort": "off"}, model=PLAIN, status="frozen")
+    engine = tmp_path / "engine"
+    panel_study(engine, {"reasoningEffort": "medium"}, model=PLAIN, status="frozen")
+    # The engine's copy of the panel is the bundle's, byte for byte.
+    (engine / "prompts" / "panels" / "p.json").write_bytes(
+        (sound / "prompts" / "panels" / "p.json").read_bytes())
+    monkeypatch.setenv("STEERLAB_ROOT", str(engine))
+    assert _submit_bundle(tmp_path, monkeypatch,
+                          _bundle(sound, tmp_path / "sound.tar.gz")) is None
+    broken = tmp_path / "broken"
+    panel_study(broken, {"reasoningEffort": "medium"}, model=PLAIN, status="frozen")
+    with pytest.raises(submissions.SubmissionRefusal, match="seat 'Ava': "):
+        _submit_bundle(tmp_path, monkeypatch, _bundle(broken, tmp_path / "broken.tar.gz"))
 
 
 def test_one_set_protocol_call_that_pins_a_panel_and_its_budget_is_judged_by_that_panel(

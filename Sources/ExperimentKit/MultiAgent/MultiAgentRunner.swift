@@ -1807,7 +1807,17 @@ public enum MultiAgentRunner {
     ) -> Bool {
         if frozen {
             do {
-                for agent in scenario.agents where agent.variantArtifactPath != nil {
+                for agent in scenario.agents {
+                    guard let path = agent.variantArtifactPath else { continue }
+                    // An agent whose file is no longer the one the seat pins
+                    // (saved in place after the freeze, or gone) counts as
+                    // thinking: the study froze with this budget allowed, and
+                    // an edit made since must never stop it verifying.
+                    if let pinned = agent.variantArtifactHash, !pinned.isEmpty {
+                        let current = (try? Data(contentsOf: ModelVariantStore.absoluteURL(path)))
+                            .map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+                        if current != pinned { return true }
+                    }
                     if try seatReasoning(for: agent, studyEffort: .off, studyBudget: nil)
                         .effort.isOn
                     {

@@ -175,7 +175,9 @@ public enum StudyProtocolAuthoring {
         if fields.reasoningMaxTokens == nil {
             budgetForAgents = false
         } else if fields.studyKind == .multiAgent {
-            budgetForAgents = savedPanel(
+            // A casting that cannot compile refuses with its own reason here,
+            // never as a budget problem it is not.
+            budgetForAgents = try savedPanel(
                 casting, assignment: castAssignment, selection: selection,
                 manifest: manifest, root: root
             ).map {
@@ -312,16 +314,17 @@ public enum StudyProtocolAuthoring {
 
     /// The panel this save pins, in memory: the casting compiled (nothing
     /// is written), or a hand-bound panel as it stands. nil when there is
-    /// none, or when it cannot compile (the save refuses that itself, below).
+    /// none. Throws the compile's own refusal for a casting that cannot
+    /// compile: the same refusal the save's compile would give.
     private static func savedPanel(
         _ casting: SeatCasting.State?, assignment: SeatAssignment?,
         selection: StudyProtocolScenario?, manifest: ExperimentManifest, root: URL
-    ) -> MultiAgentScenario? {
+    ) throws -> MultiAgentScenario? {
         guard let casting else { return nil }
         switch casting.form {
         case .uncast, .cast:
             guard let assignment else { return nil }
-            return try? PanelComposition.compile(
+            return try PanelComposition.compile(
                 semantic: casting.semantic, assignment: assignment,
                 modelID: manifest.modelID, temperature: manifest.temperature,
                 maxTokens: manifest.maxTokens)

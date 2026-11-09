@@ -743,11 +743,27 @@ def panel_seat_thinks(manifest, root: str | None = None) -> bool:
     try:
         scenario, _ = load_scenario(spath)
         if (document.get("status") or "draft") != "draft":
-            return any(
-                seat_reasoning(_runtime_settings(agent, True, root=base)[0],
-                               study_effort=prompt_render.REASONING_OFF,
-                               study_budget=None)[0] != prompt_render.REASONING_OFF
-                for agent in scenario.agents if agent.variant_artifact_path)
+            for agent in scenario.agents:
+                if not agent.variant_artifact_path:
+                    continue
+                # An agent whose file is no longer the one the seat pins
+                # (saved in place after the freeze, or gone) counts as
+                # thinking: the study froze with this budget allowed, and an
+                # edit made since must never stop it verifying.
+                if agent.variant_artifact_hash:
+                    try:
+                        with open(paths.resolve_artifact(agent.variant_artifact_path,
+                                                         base), "rb") as handle:
+                            current = hashlib.sha256(handle.read()).hexdigest()
+                    except OSError:
+                        current = None
+                    if current != agent.variant_artifact_hash:
+                        return True
+                if seat_reasoning(_runtime_settings(agent, True, root=base)[0],
+                                  study_effort=prompt_render.REASONING_OFF,
+                                  study_budget=None)[0] != prompt_render.REASONING_OFF:
+                    return True
+            return False
         changes = panel_rule_changes(
             scenario, study_effort=prompt_render.REASONING_OFF,
             study_temperature=float(document.get("temperature") or 0.0), root=base,

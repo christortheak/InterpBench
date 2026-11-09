@@ -127,7 +127,7 @@ def agent_arm_refusal(manifest: Manifest,
         lifecycle_gates.STUDY_DECLARATION, "; ".join(s for _, s, _ in findings),
         repair=agent_identity.arm_problems_repair(
             manifest, findings, frozen=manifest.status != "draft",
-            authoring=vocabulary.authoring))
+            authoring=vocabulary.authoring, root=root))
 
 
 def declare_an_arm_repair(name: str) -> str:

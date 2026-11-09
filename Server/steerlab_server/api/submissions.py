@@ -10,12 +10,15 @@ reproducible files needed to run the same job from the CLI.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import math
 import os
+import shutil
 import sys
 import tarfile
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -547,7 +550,14 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # comparison whose arms would not run, refused here before a submission
     # directory exists (public issue #9).
     _refuse_pipeline_block(manifest, verb)
-    _refuse_settings(manifest, verb, _pipeline_stages(manifest))
+    # Judged against the BUNDLE'S OWN files: its JSON members (the panel, its
+    # seats' agent files, vector sidecars, capability records), unpacked into
+    # a scratch folder. Never this engine's root, which may hold a stale copy
+    # of a file at the same path. A bundle that cannot be read yields an
+    # empty folder, so the seat and arm file checks are skipped here and run
+    # start judges the unpacked bundle.
+    with _bundle_json_members(bundle_path) as bundle_root:
+        _refuse_settings(manifest, verb, _pipeline_stages(manifest), bundle_root)
     _refuse_inert_conditions(manifest, verb)
     _refuse_prompt_rules(manifest, verb, _pipeline_stages(manifest),
                          _prompts_text_for_bundle(bundle_path, manifest,
@@ -1968,6 +1978,26 @@ def _prompts_text_for_study(manifest: Manifest | None, prompts_path: str | None,
             return handle.read()
     except OSError:
         return None
+
+
+@contextlib.contextmanager
+def _bundle_json_members(bundle_path: str):
+    """A scratch folder holding the bundle's own JSON members at their
+    workspace paths: the files the settings preflight reads (a panel, its
+    seats' agent files, vector sidecars, capability records), never the
+    vectors or weights themselves. Extracted with the ``data`` filter, so
+    no member can land outside the folder. Empty when the bundle cannot be
+    read. Removed on exit."""
+    with tempfile.TemporaryDirectory(prefix="steerlab-bundle-settings-") as scratch:
+        try:
+            with tarfile.open(bundle_path, "r:gz") as tar:
+                members = [m for m in tar.getmembers()
+                           if m.isfile() and m.name.endswith(".json")]
+                tar.extractall(scratch, members=members, filter="data")
+        except Exception:  # noqa: BLE001 - unreadable: judged at run start instead
+            shutil.rmtree(scratch, ignore_errors=True)
+            os.makedirs(scratch, exist_ok=True)
+        yield scratch
 
 
 def _prompts_text_for_bundle(bundle_path: str, manifest: Manifest | None,
