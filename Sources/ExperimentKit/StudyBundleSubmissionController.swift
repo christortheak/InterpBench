@@ -207,7 +207,12 @@ public final class StudyBundleSubmissionController {
             jobs.remoteLogLines = []
             // Packaging copies files, hashes them, and shells out to tar; keep it
             // off the main actor so the UI doesn't freeze on a real study bundle.
-            let bundle = try await transport.package(manifest)
+            let bundle: URL
+            if let packageForVerb = transport.packageForVerb {
+                bundle = try await packageForVerb(manifest, submissionVerb)
+            } else {
+                bundle = try await transport.package(manifest)
+            }
             guard isCurrent(), !Task.isCancelled else { return contextChanged() }
             jobs.remoteStatus = "uploading \(bundle.lastPathComponent)..."
             let uploaded = try await transport.upload(bundle)

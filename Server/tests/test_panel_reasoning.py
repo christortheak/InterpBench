@@ -751,8 +751,17 @@ def test_current_engines_accept_their_own_panel_bundles(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(cli, "main", lambda args: calls.append(args) or 0)
     assert instrumented_bundle.main([command[3], *command[4:]]) == 0 and calls
-    contract.require(contract.requirements({"runtimeRequirements": required}),
-                     {"instrumentation": list(contract.SUPPORTED)})
+    # The execution step's own check, through the real function: it gets past
+    # the requirement and stops only at the stub's deliberate non-bundle.
+    from steerlab_server.experiment import bundles
+    monkeypatch.setattr(bundles, "inspect_bundle", lambda path: {
+        "runtimeRequirements": required, "kind": "notARunBundle"})
+    with pytest.raises(bundles.BundleError, match="requires a runBundle"):
+        bundles._execute_run_bundle_inner(
+            "bundle.tar.gz", verb="run", target_root=str(tmp_path), dtype="float32",
+            device=None, prompts_path=None, source_path=None,
+            package_evidence_on_complete=False, record_path=None, checkpoint=None,
+            shard=None, resume_from=None, captured_logs=[])
     # An engine without it still refuses, with the panel's own sentence.
     with pytest.raises(ValueError, match="predates answer-only panel routing"):
         contract.require(required, {"instrumentation": ["policy-v1"]})
@@ -833,6 +842,36 @@ def test_only_seats_that_speak_count_toward_the_generating_temperature(tmp_path)
                                              temperature=0.9))
     root = _workspace_with_panel(tmp_path, scenario)
     assert sampling.generating_temperature(_manifest(), root) == 0.0
+
+
+def test_a_heuristic_never_clears_a_seat_that_asks_to_think(tmp_path):
+    """Round 4: a thinking agent on a model whose id names no thinking
+    family, with no probe of its template, is still split; the prompt rule
+    then decides, and its reasoning never reaches a colleague."""
+    scenario = _panel(tmp_path, endpoint=False)
+    for seat in scenario.agents:
+        seat.base_model_id = "acme/plain-model"
+    scenario.base_model_id = "acme/plain-model"
+    artifact = model_variant.ModelVariant(name="t", base_model_id="acme/plain-model",
+                                          qwen_thinking_enabled=True)
+    with open(scenario.agents[0].variant_artifact_path, "w") as handle:
+        json.dump(artifact.to_dict(), handle)
+    prompts, calls, records = _run(
+        tmp_path, scenario, [(AVA_TEXT, []), ("ok", []), ("x</think>y", [])],
+        model=SimpleNamespace(model_id="acme/plain-model", revision="r"))
+    assert calls[0]["qwen_thinking_enabled"] is True
+    assert "I first lean" not in prompts[1]
+    assert records[0]["reasoningStatus"] == "complete"
+    # Its prompt could not be rendered here, so the split read it as opened,
+    # and the record says so.
+    assert records[0]["reasoningOpenedInPrompt"] is True
+
+
+def test_the_transcript_withholds_an_unknown_status_too():
+    text = multi_agent._transcript(_panel_plain(), [
+        {"turnIndex": 1, "title": "Ava votes", "speakerName": "Ava", "output": "",
+         "reasoning": "weighing it", "reasoningStatus": "aLaterStatus"}])
+    assert "Nothing from this turn was passed on (reasoning status aLaterStatus)" in text
 
 
 def test_the_judge_reads_thinking_and_attributed_closes_as_text():

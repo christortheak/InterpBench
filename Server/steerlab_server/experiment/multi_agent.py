@@ -1161,18 +1161,27 @@ def turn_text(output: str, *, thinking: bool, finish: str | None,
 
 
 def seat_template(model) -> bool:
-    """Whether the chat template a turn renders through can think, from its
-    capability record (``prompt_render.capabilities_for``: the tokenizer's
-    own template, probed, else the id heuristic). Swift twin:
-    ``MultiAgentRunner.seatTemplate``."""
+    """Whether a seat that asks to think is taken to think on the template a
+    turn renders through. Only a PROBE can say no: the loaded tokenizer's own
+    template, probed, or else a probed workspace record for exactly this
+    model and revision (``_template_thinks``). Never the id heuristic: a
+    model whose id names no thinking family can still think by default, and
+    a seat cleared by mistake would pass its reasoning on. A plain-text
+    template's prompt does not open the reasoning block, so its tag-less
+    answers are still ``notFound`` and passed on. Swift twin:
+    ``MultiAgentRunner.templateThinks``."""
     model_id = getattr(model, "model_id", "") or ""
-    try:
-        record = prompt_render.capabilities_for(
-            model_id, tokenizer=getattr(model, "tokenizer", None),
-            revision=getattr(model, "revision", None))
-    except Exception:  # noqa: BLE001 - an unprobeable template reads as the heuristic
-        record = prompt_render.capabilities_for(model_id)
-    return bool(record.has_thinking_switch)
+    revision = getattr(model, "revision", None)
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is not None:
+        try:
+            record = prompt_render.capabilities_for(
+                model_id, tokenizer=tokenizer, revision=revision)
+            if record.is_probed:
+                return bool(record.has_thinking_switch)
+        except Exception:  # noqa: BLE001 - unprobeable here: ask the workspace
+            pass
+    return _template_thinks(model_id, revision, None)
 
 
 def prompt_opens_reasoning(model, prompt: str, *, prompt_mode: str,
@@ -1973,11 +1982,12 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   # seat did not think).
                   "reasoningEffort": effort,
                   "reasoningMaxTokens": reasoning_budget,
-                  # Whether this turn's rendered prompt ended inside an open
-                  # reasoning block, for a thinking turn whose prompt could be
-                  # rendered here.
-                  **({"reasoningOpenedInPrompt": opens_in_prompt}
-                     if opens_in_prompt is not None else {}),
+                  # Whether this thinking turn was read as one whose prompt
+                  # opened the reasoning block: what its rendered prompt
+                  # showed, or True when it could not be rendered here, which
+                  # is how the split then read it.
+                  **({"reasoningOpenedInPrompt": opens_in_prompt is not False}
+                     if thinking else {}),
                   # Null for greedy turns: no RNG was consulted, so naming a
                   # seed would imply a stream that was never drawn.
                   "seed": turn_seed if turn_temperature > 0 else None}
@@ -2228,7 +2238,8 @@ def _transcript(scenario: Scenario, results: list[dict]) -> str:
                   ""]
         # A thinking turn's reasoning, shown for the reader and labelled as
         # what it is: the other seats never read it (issue #15).
-        if r.get("reasoningStatus") in WITHHELD_STATUSES:
+        status = r.get("reasoningStatus")
+        if status is not None and status not in PASSED_STATUSES:
             lines += [f"_Nothing from this turn was passed on (reasoning "
                       f"status {r.get('reasoningStatus')}). What it wrote:_",
                       "", r.get("reasoning") or r.get("withheldText") or "", ""]

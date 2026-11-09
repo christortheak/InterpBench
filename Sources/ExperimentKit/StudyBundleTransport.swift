@@ -7,6 +7,10 @@ struct StudyBundleTransport {
     var origin: RemoteJobOrigin? = nil
     var frozenConflict: (ExperimentManifest) async -> String?
     var package: (ExperimentManifest) async throws -> URL
+    /// Packages for a named verb, so a bundle carries only the requirements
+    /// that verb needs (an `analyze` bundle of a panel needs no
+    /// answer-only routing). nil in test doubles, which use `package`.
+    var packageForVerb: ((ExperimentManifest, String) async throws -> URL)? = nil
     var upload: (URL) async throws -> String
     var submit: (String, StudySubmissionRequest) async throws -> RemoteStudySubmission
 
@@ -27,15 +31,17 @@ struct StudyBundleTransport {
         frozenConflict = { manifest in
             await client.frozenOnServerConflict(study: manifest.name, localStatus: manifest.status)
         }
-        package = { manifest in
+        let packageFor: (ExperimentManifest, String?) async throws -> URL = { manifest, verb in
             guard ExperimentStore.workspaceRoot.standardizedFileURL == workspaceRoot.standardizedFileURL else {
                 throw ChatServiceError(reason: "The workspace changed before packaging; submit from the intended workspace.")
             }
             let source = RunBundlePackager.captureSource(manifest)
             return try await Task.detached {
-                try RunBundlePackager.packageExperiment(manifest, source: source)
+                try RunBundlePackager.packageExperiment(manifest, source: source, verb: verb)
             }.value
         }
+        package = { try await packageFor($0, nil) }
+        packageForVerb = { try await packageFor($0, $1) }
         upload = { try await client.uploadBundle($0).path }
         submit = { path, request in
             try await client.submitBundle(

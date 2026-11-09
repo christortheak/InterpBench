@@ -323,7 +323,8 @@ public enum MultiAgentRunner {
                     for: speaker.spec, studyEffort: studyEffort,
                     studyBudget: studyReasoningBudget)
                 // A seat thinks only on a template that can (N3).
-                if !seatTemplate(modelID: modelID, revision: variant?.baseRevision ?? defaultRevision) {
+                // Only an exact-revision probe clears a seat that asks to think.
+                if !templateThinks(modelID: modelID, revision: variant?.baseRevision ?? defaultRevision) {
                     (effort, reasoningBudget) = (.off, nil)
                 }
                 let (turnTemperature, temperatureSource) = seatTemperature(
@@ -467,7 +468,9 @@ public enum MultiAgentRunner {
                 result.reasoningEffort = effort.rawValue
                 result.reasoningMaxTokens = reasoningBudget
                 result.withheldText = said.withheldText
-                result.reasoningOpenedInPrompt = opensInPrompt
+                // What the split used: the prompt tail's answer, or "opened"
+                // when the tail could not be read.
+                result.reasoningOpenedInPrompt = effort.isOn ? (opensInPrompt ?? true) : nil
                 result.temperatureSource = temperatureSource
                 results.append(result)
                 // Flush BEFORE the next turn starts: an unflushed transcript
@@ -1469,18 +1472,6 @@ public enum MultiAgentRunner {
             status: .complete)
     }
 
-    /// `(can think, opens the reasoning block in the prompt)` for a seat's
-    /// model, from its capability record (the workspace record, else the id
-    /// heuristic). `opens` is nil unless the record was probed: an unknown
-    /// template is read as one that opens the block, which passes on less.
-    /// Server twin: `multi_agent.seat_template` (which probes the loaded
-    /// tokenizer's template).
-    static func seatTemplate(modelID: String, revision: String?) -> Bool {
-        ModelCapabilitiesStore.resolve(
-            modelID: modelID, revision: revision, root: ExperimentStore.workspaceRoot
-        ).hasThinkingSwitch
-    }
-
     /// Whether a seat that asks to think should be taken to think, for the
     /// older-engine checks: yes, unless a PROBED record for exactly this
     /// model and revision says its template has no thinking switch — never
@@ -1970,7 +1961,10 @@ public enum MultiAgentRunner {
             // A thinking turn's reasoning, shown for the reader and labelled
             // as what it is: the other seats never read it (issue #15).
             if let status = result.reasoningStatus,
-                ReasoningStatus(rawValue: status)?.withheld == true
+                !TurnText(
+                    answer: result.output, reasoning: result.reasoning, status: status,
+                    withheldText: result.withheldText
+                ).passedOn
             {
                 lines.append(
                     "_Nothing from this turn was passed on (reasoning status "
