@@ -39,8 +39,8 @@ template can. A level the older switch cannot say (`on`, `low`, `medium`,
 turn's `reasoningEffort` is the level the template rendered (a level it
 ignores is recorded `on`). A turn played as thinking never records `off`: a
 seat that asks to think and that no probe of its template has cleared is
-split and budgeted, and records `on` when no level reached a thinking
-switch. The reasoning
+split, and budgeted when the study declares a budget, and records `on` when
+no level reached a thinking switch. The reasoning
 budget is the study's `reasoningMaxTokens`: a thinking seat gets it when the
 study declares one, and its turn's `maxTokens` is then the budget for its
 answer. A study whose own effort is off may still declare
@@ -59,10 +59,13 @@ residual norm. The Mac command line's `panel check` refuses such a seat in a
 bound panel too; the cross-platform client's `panel check` checks only
 unbound semantic panels, which cast no agents. The answer-token and revision
 rules of an agent arm do not apply to a seat. A seat whose agent file says
-two things also refuses when it plays, on either engine. To fix a seat, make
-its agent again and put it in the seat: compile the panel again, or, for a
-hand-bound panel, pin a copy of it that names the new agent. The refusal's
-repair names the commands, and the seats by their IDs.
+two things also refuses when it plays, on either engine. The checks read a
+seat's agent file as it is now, because that is the file the run loads: an
+agent saved in place after the panel was compiled is judged as saved. To fix
+a seat, make its agent again and put it in the seat: compile the panel again
+(in the Mac app's study editor, the Seats section), or, for a hand-bound
+panel, pin a copy of it that names the new agent. The refusal's repair names
+the commands, and the seats by their IDs.
 
 **Other seats read a thinking seat's answer, never its reasoning.** Each such
 turn is split into the two: `output` on its record is the answer, and
