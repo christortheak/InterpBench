@@ -1407,10 +1407,15 @@ it.
 A panel study is refused by a runner whose capabilities lack
 `remoteStudy.panelAnswerRouting` (`panelAnswerRoutingUnsupported` from the
 cross-platform client, `missingPrerequisite` from the Mac) when its panel has a
-seat that thinks, a seat with its own `temperature`, or `includeOwnReasoning`:
-such an engine passes each turn's whole text on, reasoning included, and
-ignores the other two. `verify` on a panel study names a seat whose declared
-temperature is the study's (`seatTemperatureChangesNothing`), never a refusal.
+seat that thinks or a seat whose own `temperature` differs from the study's:
+such an engine passes each turn's whole text on, reasoning included, never
+lets a baseline seat think, and ignores seat temperatures, and the refusal
+says which of these applies to which seat. A panel that cannot be read
+locally is refused the same way. A bundle of such a panel declares the
+runtime requirement `panel-answer-routing-v1`, which an engine without it
+refuses (`unsupportedInstrumentation`). `verify` on a panel study names a
+seat whose declared temperature is the study's
+(`seatTemperatureChangesNothing`), never a refusal.
 
 A declared seed setting the run will not read carries a `seedSettingNotUsed`
 advisory here, at `set-instruments`, and at `verify`, never a refusal:

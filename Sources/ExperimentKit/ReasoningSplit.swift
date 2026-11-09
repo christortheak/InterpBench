@@ -101,6 +101,43 @@ public struct ReasoningSplit: Sendable, Equatable {
         return String(view)
     }
 
+    /// Where the first closing tag at or after `start` begins, in Unicode
+    /// scalars, or nil. Python twin: `reasoning_split.first_close`.
+    public static func firstClose(_ text: String, from start: Int = 0) -> Int? {
+        firstClose(Array(text.unicodeScalars), from: start)
+    }
+
+    /// The scalar index just past an opening tag that leads the text
+    /// (whitespace allowed before it), or nil. Python twin:
+    /// `reasoning_split.leading_open_end`.
+    public static func leadingOpenEnd(_ text: String) -> Int? {
+        let scalars = Array(text.unicodeScalars)
+        var start = 0
+        while start < scalars.count, scalars[start].properties.isWhitespace { start += 1 }
+        return openTagEnd(scalars, at: start)
+    }
+
+    /// Whether `<think` or `</think` appears anywhere in `text`, ASCII case
+    /// folded. Wider than the tag grammar on purpose: when in doubt, a panel
+    /// passes nothing on. Python twin: `reasoning_split.has_tag`.
+    public static func hasTag(_ text: String) -> Bool {
+        let scalars = Array(text.unicodeScalars)
+        let open = Array("<think".unicodeScalars)
+        let close = Array("</think".unicodeScalars)
+        for index in scalars.indices where scalars[index] == "<" {
+            if matches(scalars, at: index, open) || matches(scalars, at: index, close) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The text between two scalar offsets.
+    static func slice(_ text: String, _ from: Int, _ to: Int? = nil) -> String {
+        let scalars = Array(text.unicodeScalars)
+        return string(scalars[from..<(to ?? scalars.count)])
+    }
+
     /// The reasoning block in `text`, and the answer after it.
     public static func split(_ text: String) -> ReasoningSplit {
         let scalars = Array(text.unicodeScalars)

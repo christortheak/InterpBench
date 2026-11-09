@@ -46,7 +46,8 @@ struct ReasoningSplitTests {
             let said = MultiAgentRunner.turnText(
                 try #require(entry["text"] as? String),
                 thinking: try #require(entry["thinking"] as? Bool),
-                finishReason: entry["finishReason"] as? String)
+                finishReason: entry["finishReason"] as? String,
+                opensInPrompt: entry["opensInPrompt"] as? Bool)
             #expect(said.answer == entry["answer"] as? String, "\(label)")
             #expect(said.reasoning == entry["reasoning"] as? String, "\(label)")
             #expect(said.status?.rawValue == entry["status"] as? String, "\(label)")
@@ -60,6 +61,97 @@ struct ReasoningSplitTests {
                     answer: try #require(entry["answer"] as? String))
                     == entry["text"] as? String, "\(label)")
         }
+    }
+
+    @Test func theJudgeReadsThinkingAndAttributedClosesAsText() {
+        // N4: `<thinking>` is not an opening tag, `</think attr>` not a closing one.
+        let body = "{\"winner\": \"A\"}"
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock("<thinking>x</thinking>" + body)
+                == "<thinking>x</thinking>" + body)
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock("x</think attr>" + body)
+                == "x</think attr>" + body)
+        #expect(PairedJudgeVerdictParser.strippingLeadingThinkBlock("<thinking>x</think>" + body) == body)
+    }
+
+    // Written by hand: the three leaks of review round 2 (B1).
+    static let leaks = [
+        "weighing it, Final answer: affirm",
+        "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+        "Sure. <think>secret plan</think>Final answer: reverse.",
+    ]
+
+    @Test func theThreeLeaksAreClosed() {
+        var said = MultiAgentRunner.turnText(
+            Self.leaks[0], thinking: true, finishReason: "stop", opensInPrompt: true)
+        #expect(!said.passedOn && said.status == .unfinished)
+        said = MultiAgentRunner.turnText(
+            Self.leaks[1], thinking: true, finishReason: "stop", opensInPrompt: true)
+        #expect(said.answer == "Final answer: reverse." && said.status == .complete)
+        said = MultiAgentRunner.turnText(
+            Self.leaks[2], thinking: true, finishReason: "stop", opensInPrompt: false)
+        #expect(!said.passedOn && said.status == .unclear)
+    }
+
+    @Test(arguments: [true, false, nil] as [Bool?])
+    func aRoutedAnswerNeverCarriesAReasoningTag(_ opens: Bool?) {
+        let corpus = Self.leaks + [
+            Self.avaText, "<think>a</think>b", "a</think>b</think>c", "x <think>y",
+            "answer <think>aside</think> more", "a</THINK>b", "<think>a</think>b <think",
+            "plain words", "</think>", "<think>", "",
+        ]
+        for text in corpus {
+            for finish in ["stop", "length", "lengthInReasoning"] {
+                let said = MultiAgentRunner.turnText(
+                    text, thinking: true, finishReason: finish, opensInPrompt: opens)
+                guard said.passedOn else { continue }
+                let folded = said.answer.lowercased()
+                #expect(!folded.contains("<think") && !folded.contains("</think"), "\(text)")
+                #expect(!said.answer.contains("secret plan"))
+            }
+        }
+    }
+
+    /// S4: the live and replay paths share `turnOutcome`; `playTurn` takes
+    /// the raw text and every reader of it reads the answer.
+    @Test func onePerTurnFunctionDecidesRoutingEndpointAndLint() throws {
+        let scenario = Self.panel()
+        let turn = scenario.turns[0]
+        let outcome = MultiAgentRunner.playTurn(
+            scenario: scenario, turn: turn, index: 0, text: Self.avaText,
+            thinking: true, finishReason: "stop", opensInPrompt: true)
+        #expect(outcome.label == "ava1" && outcome.routed == ["a", "b"])
+        let ben = try #require(outcome.entries.first { $0.reader == "b" })
+        #expect(ben.entry.contains(Self.avaAnswer) && !ben.entry.contains("I first lean"))
+        #expect(outcome.endpoint?.value == .choice("reverse"))
+        #expect(outcome.endpoint?.markerInReasoning == true)
+        #expect(
+            outcome.voiceLint
+                == MultiAgentRunner.voiceLintStamp(
+                    for: turn, output: Self.avaAnswer, agents: scenario.agents))
+        let replayed = MultiAgentRunner.turnOutcome(
+            scenario: scenario, turn: turn, index: 0, said: outcome.said)
+        #expect(replayed.entries.map(\.entry) == outcome.entries.map(\.entry))
+    }
+
+    @Test func aWithheldTurnExposesNobody() {
+        var scenario = Self.panel()
+        scenario.turns = [scenario.turns[0], scenario.turns[1]]
+        #expect(PanelEffects.exposureByTurn(scenario: scenario, treated: ["a"])["t2"] == true)
+        #expect(
+            PanelEffects.exposureByTurn(scenario: scenario, treated: ["a"], withheld: ["t1"])["t2"]
+                == false)
+        var cut = Self.oldEngineTurn(speaker: "a")
+        cut.reasoningStatus = "cutOff"
+        #expect(PanelEffects.withheldTurnIDs([cut]) == ["t1"])
+    }
+
+    @Test func temperaturesAreWrittenAsPythonWritesThem() {
+        #expect(MultiAgentRunner.formatTemperature(0.1234567) == "0.123457")
+        #expect(MultiAgentRunner.formatTemperature(0.7) == "0.7")
+        #expect(MultiAgentRunner.formatTemperature(0) == "0")
+        #expect(MultiAgentRunner.formatTemperature(-0.5) == "-0.5")
     }
 
     @Test func theJudgeStillStripsEachShape() {
@@ -76,10 +168,10 @@ struct ReasoningSplitTests {
 
     static func panel(includeOwnReasoning: Bool? = nil) -> MultiAgentScenario {
         MultiAgentScenario(
-            name: "p", baseModelID: "m",
+            name: "p", baseModelID: "test/qwen-panel",
             agents: [
-                .init(id: "a", name: "Ava", baseModelID: "m"),
-                .init(id: "b", name: "Ben", baseModelID: "m"),
+                .init(id: "a", name: "Ava", baseModelID: "test/qwen-panel"),
+                .init(id: "b", name: "Ben", baseModelID: "test/qwen-panel"),
             ],
             turns: [
                 .init(
@@ -163,13 +255,14 @@ struct ReasoningSplitTests {
     }
 
     @Test func reasoningThatNeverClosedPassesNothingOn() {
-        for (text, finish) in [
-            ("<think>weighing affirm", "stop"),
-            ("weighing affirm", "lengthInReasoning"),
-            ("weighing affirm", "length"),
+        for (text, finish, status) in [
+            ("<think>weighing affirm", "stop", MultiAgentRunner.ReasoningStatus.unfinished),
+            ("weighing affirm", "lengthInReasoning", .cutOff),
+            ("weighing affirm", "length", .cutOff),
+            ("weighing affirm", "stop", .unfinished),
         ] {
             let said = MultiAgentRunner.turnText(text, thinking: true, finishReason: finish)
-            #expect(said.status == .cutOff)
+            #expect(said.status == status)
             #expect(!said.passedOn)
             #expect(said.answer.isEmpty)
         }
@@ -183,12 +276,12 @@ struct ReasoningSplitTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let artifact = ModelVariantArtifact(
-            name: "thinker", baseModelID: "m", promptMode: "chatAssistant",
+            name: "thinker", baseModelID: "test/qwen-panel", promptMode: "chatAssistant",
             qwenThinkingEnabled: true, temperature: 0.9, systemPrompt: "")
         let path = directory.appending(component: "thinker.json")
         try JSONEncoder().encode(artifact).write(to: path)
 
-        let bare = MultiAgentScenario.Agent(id: "b", name: "Ben", baseModelID: "m")
+        let bare = MultiAgentScenario.Agent(id: "b", name: "Ben", baseModelID: "test/qwen-panel")
         let bareOn = try MultiAgentRunner.seatReasoning(
             for: bare, studyEffort: .on, studyBudget: 300)
         #expect(bareOn.effort == .on && bareOn.budget == 300)
@@ -197,15 +290,15 @@ struct ReasoningSplitTests {
         #expect(bareOff.effort == .off && bareOff.budget == nil)
 
         let agent = MultiAgentScenario.Agent(
-            id: "a", name: "Ava", baseModelID: "m", variantArtifactPath: path.path)
+            id: "a", name: "Ava", baseModelID: "test/qwen-panel", variantArtifactPath: path.path)
         let thinking = try MultiAgentRunner.seatReasoning(
             for: agent, studyEffort: .off, studyBudget: 300)
         #expect(thinking.effort == .xhigh && thinking.budget == 300)
     }
 
     @Test func aSeatRunsAtItsDeclaredTemperatureAndSaysWhereItCameFrom() {
-        let own = MultiAgentScenario.Agent(id: "a", name: "Ava", baseModelID: "m", temperature: 0.8)
-        let plain = MultiAgentScenario.Agent(id: "b", name: "Ben", baseModelID: "m")
+        let own = MultiAgentScenario.Agent(id: "a", name: "Ava", baseModelID: "test/qwen-panel", temperature: 0.8)
+        let plain = MultiAgentScenario.Agent(id: "b", name: "Ben", baseModelID: "test/qwen-panel")
         #expect(MultiAgentRunner.seatTemperature(own, studyTemperature: 0, studyOwned: true) == (0.8, "panelSeat"))
         #expect(MultiAgentRunner.seatTemperature(plain, studyTemperature: 0.3, studyOwned: true) == (0.3, "study"))
         #expect(MultiAgentRunner.seatTemperature(plain, studyTemperature: 0.3, studyOwned: false) == (0.3, "panel"))
@@ -261,19 +354,32 @@ struct ReasoningSplitTests {
 
     // MARK: - An older engine is never sent a panel it would run differently
 
-    @Test func aPanelTheRuleChangesIsNamedAndOneItDoesNotIsNot() {
+    @Test func aPanelTheRuleChangesIsNamedAndOneItDoesNotIsNot() throws {
+        typealias Change = MultiAgentRunner.RuleChange
         var scenario = Self.panel()
-        #expect(MultiAgentRunner.panelRuleChanges(scenario, studyEffort: .off).isEmpty)
+        #expect(try MultiAgentRunner.panelRuleChanges(
+            scenario, studyEffort: .off, studyTemperature: 0).isEmpty)
         #expect(
-            MultiAgentRunner.panelRuleChanges(scenario, studyEffort: .on)
-                == ["seat 'Ava' thinks", "seat 'Ben' thinks"])
+            try MultiAgentRunner.panelRuleChanges(
+                scenario, studyEffort: .on, studyTemperature: 0)
+                == [Change(Change.seatWouldNotThink, "Ava"), Change(Change.seatWouldNotThink, "Ben")])
         scenario.agents[1].temperature = 0.5
-        scenario.includeOwnReasoning = true
         #expect(
-            MultiAgentRunner.panelRuleChanges(scenario, studyEffort: .off) == [
-                "the panel shows each seat its own earlier reasoning",
-                "seat 'Ben' declares its own temperature",
-            ])
+            try MultiAgentRunner.panelRuleChanges(
+                scenario, studyEffort: .off, studyTemperature: 0)
+                == [Change(Change.temperatureIgnored, "Ben")])
+        #expect(
+            MultiAgentRunner.ruleChangeClauses(
+                [Change(Change.reasoningPassedOn, "Ava"), Change(Change.seatWouldNotThink, "Jo"),
+                 Change(Change.temperatureIgnored, "Ben")], past: false)
+                == ["the reasoning of seat 'Ava' would be passed on to the other seats",
+                    "seat 'Jo' would not think", "the temperature of seat 'Ben' would be ignored"])
+        // N2: an equal temperature, and includeOwnReasoning with no thinking
+        // seat, change nothing.
+        scenario.agents[1].temperature = 0
+        scenario.includeOwnReasoning = true
+        #expect(try MultiAgentRunner.panelRuleChanges(
+            scenario, studyEffort: .off, studyTemperature: 0).isEmpty)
     }
 
     @Test func theCapabilityIsReadInEitherSpelling() throws {
@@ -308,7 +414,7 @@ struct ReasoningSplitTests {
             MultiAgentRunner.resumeRuleRefusal(
                 scenario: scenario, completed: ["t1": Self.oldEngineTurn(speaker: "a")],
                 studyEffort: .on))
-        #expect(refusal.reason.contains("seat 'Ava' thinks"))
+        #expect(refusal.reason.contains("under which seat 'Ava' did not think"))
         #expect(refusal.lifecycleRefusal?.gate == .manifestEpoch)
         // A turn this engine wrote carries its effort, and resumes.
         var current = Self.oldEngineTurn(speaker: "a")

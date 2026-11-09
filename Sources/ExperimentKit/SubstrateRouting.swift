@@ -223,13 +223,18 @@ public enum SubstrateRouting {
         capabilities: ClusterCapabilities?, server: String
     ) -> String? {
         guard capabilities?.supportsPanelAnswerRouting != true else { return nil }
-        let reasons = MultiAgentRunner.submissionPanelRuleChanges(manifest, verb: verb)
-        guard !reasons.isEmpty else { return nil }
-        return "The engine at \(server) predates answer-only panel routing: its "
-            + "capabilities do not list remoteStudy.panelAnswerRouting, so it would "
-            + "pass each turn's whole text on to the other seats, a thinking seat's "
-            + "reasoning included, and would ignore what this panel declares "
-            + "(\(reasons.joined(separator: "; "))). Nothing was submitted."
+        let changes = MultiAgentRunner.submissionPanelRuleChanges(manifest, verb: verb)
+        if let changes, changes.isEmpty { return nil }
+        let head = "The engine at \(server) predates answer-only panel routing (its "
+            + "capabilities do not list remoteStudy.panelAnswerRouting)"
+        guard let changes else {
+            return head + ", and this study's panel or one of its agent files could not "
+                + "be read here, so this client cannot tell whether that engine would "
+                + "run the panel as this one does. Nothing was submitted."
+        }
+        return head + ", so on it "
+            + MultiAgentRunner.ruleChangeClauses(changes, past: false).joined(separator: "; ")
+            + ". Nothing was submitted."
     }
 
     /// The greedy seed rule for a submission of `verb` (public issue #9): a

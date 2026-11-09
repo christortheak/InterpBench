@@ -156,9 +156,11 @@ public enum StudyProtocolAuthoring {
         // rules (budget beside a non-off effort, on a family with a
         // thinking mode) are refused HERE with the store's sentences so
         // a draft the run would refuse is never saved.
-        let reasoningProblems = ReasoningEffort.protocolViolations(
-            effort: fields.reasoningEffort, reasoningMaxTokens: fields.reasoningMaxTokens,
-            modelID: manifest.modelID)
+        let reasoningProblems = MultiAgentRunner.permitPanelBudget(
+            ReasoningEffort.protocolViolations(
+                effort: fields.reasoningEffort, reasoningMaxTokens: fields.reasoningMaxTokens,
+                modelID: manifest.modelID),
+            manifest: manifest)
         guard reasoningProblems.isEmpty else {
             throw ExperimentError.malformed(
                 reasoningProblems.joined(separator: "; "),

@@ -66,19 +66,29 @@ made before that key existed lack it; join `turns.jsonl` for those.
 Whether a seat thinks belongs to whoever sits in it: a cast agent's own
 setting, or, for a baseline seat, the study's `reasoningEffort` (so a
 baseline seat in a thinking study thinks, as an ordinary study's baseline
-does). A seat that thinks gets the study's `reasoningMaxTokens` for its
-reasoning, and its turn's `maxTokens` is then the budget for its answer. To
-cast a thinking judge beside a study that does not think, cast an agent with
-no steering and thinking on.
+does). A seat thinks only when its model's chat template can. The reasoning
+budget is the study's `reasoningMaxTokens`: a thinking seat gets it when the
+study declares one, and its turn's `maxTokens` is then the budget for its
+answer. A study whose own effort is off may still declare
+`reasoningMaxTokens` when its panel casts an agent that thinks; with nothing
+in the panel thinking, a budget is refused. To cast a thinking judge beside a
+study that does not think, cast an agent with no steering and thinking on.
 
 **Other seats read a thinking seat's answer, never its reasoning.** Each such
 turn is split into the two: `output` on its record is the answer, and
 `reasoning` holds what it thought. A template's `outputs.<label>` placeholder
-and a contract input read the answer. An endpoint is read from the answer, and its stamp carries
-`markerInReasoning: true` when the reasoning also wrote the marker. A turn
-whose reasoning was cut off before it finished has no answer: nothing from
-it is passed on, its `routedAgentIDs` is empty, and its `reasoningStatus` is
-`cutOff`. A seat that does not think passes on its whole text, as before.
+and a contract input read the answer. An endpoint is read from the answer,
+and its stamp carries `markerInReasoning: true` when the reasoning also wrote
+the marker. **When in doubt, nothing is passed on.** A turn's
+`reasoningStatus` says how it was read: `complete` (the reasoning finished
+and the answer followed), `notFound` (the template leaves the reasoning tag
+to the model and the text has none, so it is all answer), or one of three
+under which the turn has no answer, nothing from it reaches any seat, and
+its `routedAgentIDs` is empty: `cutOff` (a token limit ended it before its
+reasoning finished), `unfinished` (the seat stopped before its reasoning
+finished), and `unclear` (a reasoning tag appeared where the answer should
+be). A routed answer never holds a reasoning tag. A seat that does not think
+passes on its whole text, as before.
 
 A seat reads its **own** earlier reasoning only when the panel declares
 `"includeOwnReasoning": true` (off by default, as chat templates drop
@@ -88,18 +98,22 @@ only.
 
 **Temperature is the study's**, for every seat that declares none. A panel
 may give a seat its own with `"temperature": <t>` on that seat; a seat at 0 is
-greedy and one above it is seeded per turn. An agent file's temperature is
-never used. Every turn records `temperature`, `temperatureSource` (`study`,
-`panelSeat`, or `panel` when no study runs it), `reasoningEffort`, and
+greedy and one above it is seeded per turn. A study at temperature 0 with a
+warm seat may run several samples per item, and its records and settings
+name the seed of each turn. An agent file's temperature is never used.
+Every turn records `temperature`, `temperatureSource` (`study`, `panelSeat`,
+or `panel` when no study runs it), `reasoningEffort`, and
 `reasoningMaxTokens`. `panel check` refuses a negative seat temperature, and
 `experiment verify` names one that equals the study's
 (`seatTemperatureChangesNothing`), because it changes nothing.
 
-An engine from before this rule passed reasoning on. Both clients refuse to
-send it a panel that has a seat that thinks, a seat temperature, or
-`includeOwnReasoning` (`remoteStudy.panelAnswerRouting` missing from its
-capabilities). A run such an engine started is not resumed or merged under
-the new rule when that changes what the seats read; start a new run.
+An engine from before this rule passed reasoning on, never let a baseline
+seat think, and ignored seat temperatures. Both clients refuse to send it a
+panel where that changes something (`remoteStudy.panelAnswerRouting` missing
+from its capabilities), and say what would change; a bundle of such a panel
+requires `panel-answer-routing-v1`. A run such an engine started is not
+resumed or merged under the new rule when that changes what its seats read;
+start a new run.
 
 ## Reviewed casting, on either client
 

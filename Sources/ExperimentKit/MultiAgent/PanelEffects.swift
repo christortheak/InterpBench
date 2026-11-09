@@ -69,8 +69,17 @@ public enum PanelEffects {
     /// output from a treated seat, OR from an already-exposed agent. That
     /// second-order case (A speaks to B, B speaks to C) is real propagation
     /// and arguably the most interesting kind.
+    /// The turns of a transcript that passed nothing on (issue #15). Server
+    /// twin: `panel_effects.withheld_turn_ids`.
+    public static func withheldTurnIDs(_ turns: [MultiAgentTurnResult]) -> Set<String> {
+        Set(turns.filter {
+            $0.reasoningStatus.flatMap(MultiAgentRunner.ReasoningStatus.init(rawValue:))?.withheld
+                ?? false
+        }.map(\.turnID))
+    }
+
     public static func exposureByTurn(
-        scenario: MultiAgentScenario, treated: Set<String>
+        scenario: MultiAgentScenario, treated: Set<String>, withheld: Set<String> = []
     ) -> [String: Bool] {
         // Two channels reach a prompt, and BOTH count, because exposure is
         // about what a turn actually READS — not about what routing recorded:
@@ -95,7 +104,8 @@ public enum PanelEffects {
 
             // This turn's output carries the treatment when its speaker is
             // treated, or when the speaker read treated material to write it.
-            if treated.contains(speaker) || exposedHere {
+            // A turn that passed nothing on carried nothing to anyone.
+            if treated.contains(speaker) || exposedHere, !withheld.contains(turn.id) {
                 let explicit = turn.outputLabel
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 carrierLabels.insert(explicit.isEmpty ? "turn_\(index + 1)" : explicit)

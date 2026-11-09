@@ -4952,7 +4952,9 @@ public enum ExperimentStore {
         // capability record for a DRAFT and the id heuristic for anything
         // frozen (`capabilitiesForGates`). Server twin: `Manifest.verify`.
         let capabilityRecord = capabilitiesForGates(manifest)
-        violations += manifest.reasoningProtocolViolations(capabilities: capabilityRecord)
+        violations += MultiAgentRunner.permitPanelBudget(
+            manifest.reasoningProtocolViolations(capabilities: capabilityRecord),
+            manifest: manifest)
         violations += PromptRendering.systemPromptViolations(
             systemPrompt: manifest.systemPrompt, modelID: manifest.modelID,
             rawCompletion: manifest.promptMode == .rawCompletion,

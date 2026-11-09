@@ -3437,7 +3437,6 @@ public struct ClusterClient: Sendable {
         // An older engine would seed a declared derivedSHA256 at one sample
         // per item with the fixed list: refused before submitting.
         try await requireDeclaredSeedPolicy(inspectedBundle: inspected, verb: verb)
-        try await requirePanelAnswerRouting(inspectedBundle: inspected, verb: verb)
         try await requirePromptReading(inspectedBundle: inspected, verb: verb)
         // An older engine ignores `rereadChoices`: refused before submitting
         // when its capabilities do not list it.
@@ -5283,7 +5282,13 @@ public enum RunBundlePackager {
             "experimentContentHash": .string(ExperimentStore.manifestHash(manifest)),
             "validationScopeHash": .string(""),
             "rootRelative": .bool(true),
-            "runtimeRequirements": .array(runtimeRequirements.sorted().map { .string($0) }),
+            "runtimeRequirements": .array(
+                runtimeRequirements.union(
+                    // A panel an engine from before issue #15 would run
+                    // differently, or one this packager cannot read.
+                    MultiAgentRunner.submissionPanelRuleChanges(manifest, verb: "run") == []
+                        ? [] : [InstrumentationSupport.panelAnswerRouting]
+                ).sorted().map { .string($0) }),
             "verificationViolations": .array(source.verification.map { .string($0) }),
             "entries": .array(entries.map { .object($0) }),
         ]

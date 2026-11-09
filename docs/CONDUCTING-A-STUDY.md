@@ -1123,17 +1123,19 @@ routing record has to describe exactly what happened.
 
 - **Seats read answers, not reasoning.** A seat that thinks has its turn split
   into reasoning and answer; the other seats, and templates, read the answer
-  alone, and its endpoint is read from the answer. A turn whose reasoning was
-  cut off before it finished passes nothing on and says so
-  (`reasoningStatus: cutOff`). Whether a seat re-reads its *own* earlier
+  alone, and its endpoint is read from the answer. When the engine cannot be
+  sure where the reasoning ends (it was cut off, it never finished, or a
+  reasoning tag appears where the answer should be), the turn passes nothing
+  on and its `reasoningStatus` says why. Whether a seat re-reads its *own* earlier
   reasoning is a design choice, since it may hold the seat to its first view:
   declare `includeOwnReasoning` in the panel to show it, and report that you
   did. It is off by default.
 - **Thinking belongs to the seat, the reasoning budget to the study.** A cast
   agent thinks by its own setting, and a baseline seat follows the study's
-  `reasoningEffort`. Every thinking seat gets the study's
-  `reasoningMaxTokens`, so a long reasoning block cannot use up the room for
-  the answer.
+  `reasoningEffort`. Declare the study's `reasoningMaxTokens` whenever a seat
+  thinks, so a long reasoning block cannot use up the room for the answer;
+  a study whose own effort is off may declare it when its panel casts an
+  agent that thinks.
 - **Temperature belongs to the study.** A seat that should sample differently
   declares its own `temperature` in the panel, which makes the difference a
   stated part of the design; each turn records whether its temperature came

@@ -35,8 +35,16 @@ public enum InstrumentationSupport {
         return policy["schemaVersion"]
     }
 
+    /// A panel study's bundle requires this when an engine from before issue
+    /// #15 would run its panel differently, or when its panel could not be
+    /// read at packaging. Python twin: `instrumentation_contract.PANEL_ANSWER_ROUTING`.
+    public static let panelAnswerRouting = "panel-answer-routing-v1"
+
     public static func require(_ required: Set<String>, offered: [String]?) throws {
         let missing = required.subtracting(offered ?? [])
+        if missing.contains(panelAnswerRouting) {
+            throw ExperimentError(reason: "This engine predates answer-only panel routing (\(panelAnswerRouting)): it would pass each turn’s whole text on to the other seats, a thinking seat’s reasoning included, so the study’s panel would not run as declared. Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.")
+        }
         guard missing.isEmpty else {
             throw ExperimentError(reason: "This engine cannot execute the study’s declared probes or policies: \(missing.sorted().joined(separator: ", ")). Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.")
         }
@@ -127,28 +135,6 @@ extension ClusterClient {
     /// read from this workspace only when both match, because a bundle this
     /// client did not build says nothing a local manifest can vouch for.
     /// Python twin: `runner.require_declared_seed_policy`.
-    /// Refuse to submit a staged bundle whose panel an engine from before
-    /// issue #15 would run differently, read from this workspace only when
-    /// the bundle's study hash matches. Python twin:
-    /// `runner.require_panel_answer_routing`.
-    func requirePanelAnswerRouting(inspectedBundle inspected: JSONValue, verb: String) async throws {
-        guard SubstrateRouting.matrixExecutingVerbs.contains(verb),
-            case .object(let metadata) = inspected,
-            case .string(let name)? = metadata["experiment"], !name.isEmpty,
-            case .string(let hash)? = metadata["experimentContentHash"],
-            let manifest = try? ExperimentStore.load(name: name),
-            ExperimentStore.manifestHash(manifest) == hash,
-            !MultiAgentRunner.submissionPanelRuleChanges(manifest, verb: verb).isEmpty
-        else { return }
-        if let refusal = SubstrateRouting.panelAnswerRoutingSubmissionRefusal(
-            manifest: manifest, verb: verb, capabilities: try await capabilities(),
-            server: profile.baseURL.absoluteString)
-        {
-            throw ExperimentError.refusing(
-                .missingPrerequisite, refusal, repair: SubstrateRouting.declaredSeedPolicyRepair)
-        }
-    }
-
     func requireDeclaredSeedPolicy(inspectedBundle inspected: JSONValue, verb: String) async throws {
         guard SubstrateRouting.matrixExecutingVerbs.contains(verb),
             case .object(let metadata) = inspected,

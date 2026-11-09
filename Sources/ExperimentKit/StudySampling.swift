@@ -118,8 +118,16 @@ public enum StudySampling {
     /// `verify`'s sentence for several samples per item at temperature 0,
     /// where the run reads the count, or nil. Python twin:
     /// `sampling.greedy_samples_problem`.
+    /// The highest temperature any generation of this study runs at: the
+    /// study's own, or, for a panel, the highest of its seats' effective
+    /// temperatures (issue #15). Python twin: `sampling.generating_temperature`.
+    public static func generatingTemperature(_ manifest: ExperimentManifest) -> Double {
+        guard manifest.studyKind == .multiAgent else { return manifest.temperature }
+        return MultiAgentRunner.panelSeatTemperatures(manifest).max() ?? manifest.temperature
+    }
+
     public static func greedySamplesProblem(_ manifest: ExperimentManifest) -> String? {
-        guard (manifest.samplesPerItem ?? 1) > 1, manifest.temperature <= 0,
+        guard (manifest.samplesPerItem ?? 1) > 1, generatingTemperature(manifest) <= 0,
             samplesAreRead(manifest)
         else { return nil }
         return "samplesPerItem > 1 requires temperature > 0 "

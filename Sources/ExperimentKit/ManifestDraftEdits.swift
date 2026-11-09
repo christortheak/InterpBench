@@ -138,10 +138,14 @@ enum ManifestDraftEdits {
             // rejects is refused here, at the declaration, never
             // rendered at the template's default under a manifest that
             // asserts the level. Server twin: `set_protocol`.
-            let problems = ReasoningEffort.protocolViolations(
-                effort: mergedEffort, reasoningMaxTokens: mergedBudget,
-                modelID: manifest.modelID,
-                capabilities: capabilities)
+            // A panel whose cast agents think may declare the budget they
+            // think under with the study's own effort off (FR6 round 2).
+            let problems = MultiAgentRunner.permitPanelBudget(
+                ReasoningEffort.protocolViolations(
+                    effort: mergedEffort, reasoningMaxTokens: mergedBudget,
+                    modelID: manifest.modelID,
+                    capabilities: capabilities),
+                manifest: manifest)
             guard problems.isEmpty else {
                 throw ExperimentError.malformed(
                     problems.joined(separator: "; "),

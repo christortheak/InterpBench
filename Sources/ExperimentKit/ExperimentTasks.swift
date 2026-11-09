@@ -198,7 +198,8 @@ public enum ExperimentTasks {
             temperature: generates ? experiment.temperature : nil,
             samplesPerItem: generates ? (experiment.samplesPerItem ?? 1) : nil,
             seedPolicy: generates ? (task == "multi-agent-run"
-                ? (experiment.temperature > 0 ? "derivedSHA256" : "manifestSeeds")
+                ? (StudySampling.generatingTemperature(experiment) > 0
+                    ? "derivedSHA256" : "manifestSeeds")
                 : StudySampling.policy(experiment)) : nil,
             notes: inertNote.map { ["inertConceptMachinery": $0] } ?? [:],
             // The seeded evaluate subsample (2026-08-29), stamped so the run
@@ -4188,11 +4189,13 @@ public enum ExperimentTasks {
             taskPromptsHash: scenarioHash,
             promptMode: "multi-agent",
             systemPrompt: nil,
-            qwenThinkingEnabled: false,
+            // The SEAT's thinking and temperature, not the study's: a seat
+            // thinks by its occupant and may declare its own temperature.
+            qwenThinkingEnabled: (turn.reasoningEffort ?? "off") != "off",
             condition: row.condition,
             seed: row.seed,
-            seedInert: manifest.temperature == 0,
-            seedPolicy: manifest.temperature > 0 ? "derivedSHA256" : "greedy",
+            seedInert: (turn.temperature ?? manifest.temperature) == 0,
+            seedPolicy: (turn.temperature ?? manifest.temperature) > 0 ? "derivedSHA256" : "greedy",
             sampleIndex: replicate,
             promptTokenCount: turn.promptTokenCount,
             promptIndex: row.promptIndex,
@@ -4225,7 +4228,8 @@ public enum ExperimentTasks {
             reasoningStatus: turn.reasoningStatus,
             reasoningEffort: turn.reasoningEffort,
             reasoningMaxTokens: turn.reasoningMaxTokens,
-            temperatureSource: turn.temperatureSource)
+            temperatureSource: turn.temperatureSource,
+            temperature: turn.temperature ?? manifest.temperature)
     }
 
     private static func runMultiAgentStudy(
@@ -4483,7 +4487,9 @@ public enum ExperimentTasks {
         // `panel-voice-lint.csv` — and, like the months parser, it is
         // server-side today: Swift stamps every turn identically (see
         // `MultiAgentRunner.voiceLintStamp`) and the server aggregates.
-        let exposed = PanelEffects.exposureByTurn(scenario: scenario, treated: treated)
+        let exposed = PanelEffects.exposureByTurn(
+            scenario: scenario, treated: treated,
+            withheld: PanelEffects.withheldTurnIDs(configured))
         let rows = [
             PanelEffects.compute(
                 configured: configured, baseline: baseline, treated: treated,
