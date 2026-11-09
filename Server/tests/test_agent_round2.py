@@ -352,3 +352,23 @@ def test_an_unpinned_sweep_run_must_have_run_at_the_studys_level(tmp_path):
     snapshot.write_text(json.dumps({"reasoningEffort": "medium", "reasoningMaxTokens": 64}))
     minted = promote.promote("pr", "fear", root=root, log=lambda *_: None, sweep_run=run)
     assert minted["variant"]["reasoningEffort"] == "medium"
+
+
+# --- the cross-engine fixture ---------------------------------------------------------
+
+
+def test_the_thinking_fields_fixture_is_current():
+    """Each committed case, re-read through the rules the fixture pins; a
+    difference means the fixture is stale (regenerate it with
+    scripts/regenerate-cross-engine-fixtures.py, agent_reasoning_effort)."""
+    from steerlab_server.experiment import model_variant
+    path = REPO / "Tests" / "Fixtures" / "cross-engine" / "agent-reasoning-effort.json"
+    cases = json.loads(path.read_text())
+    assert len(cases) == 33
+    for case in cases:
+        artifact = case["artifact"]
+        assert agent_identity.agent_file_problem(artifact) == case["problem"], artifact
+        if case["problem"] is None:
+            variant = model_variant.ModelVariant.from_dict(artifact)
+            assert agent_identity.variant_reasoning_effort(variant) == case["reasoningEffort"]
+            assert variant.qwen_thinking_enabled is case["qwenThinkingEnabled"]

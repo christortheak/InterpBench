@@ -392,6 +392,10 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_model_capabilities.py (the records against
         # the schema, the probe verdicts, hashes, gates and sentences).
         "model-capabilities.json", "model-capabilities.schema.json",
+        # Checked inline in test_agent_round2.py (every case re-read through
+        # the agent-file rules and the level helper) and read by
+        # StudyAgentCreationTests.swift.
+        "agent-reasoning-effort.json",
         # Checked inline in test_sampled_effect_pairing.py (analyze re-run
         # over the committed records, and the derived seeds re-derived).
         "sampled-effect-pairing.json",
