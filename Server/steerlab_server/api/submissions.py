@@ -307,7 +307,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     os.makedirs(records_dir, exist_ok=True)
     run_bundle_path = os.path.join(submission_dir, f"{experiment}.run-bundle.tar.gz")
     run_bundle = bundles.package_experiment(
-        experiment, output_path=run_bundle_path, root=root)
+        experiment, output_path=run_bundle_path, root=root, verb=verb)
 
     job_id = uuid.uuid4().hex[:12]
     record_path = os.path.join(records_dir, f"{job_id}.json")

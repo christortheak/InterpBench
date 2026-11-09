@@ -138,6 +138,25 @@ public struct ReasoningSplit: Sendable, Equatable {
         return string(scalars[from..<(to ?? scalars.count)])
     }
 
+    /// Whether `text` — a rendered prompt — ends inside an open reasoning
+    /// block: its final reasoning tag, by this type's tag grammar, is an
+    /// opening `<think>` that no `</think>` follows. Python twin:
+    /// `reasoning_split.opens_reasoning`.
+    public static func opensReasoning(_ text: String) -> Bool {
+        let scalars = Array(text.unicodeScalars)
+        var lastOpen: Int?
+        var lastClose: Int?
+        for index in scalars.indices where scalars[index] == "<" {
+            if matches(scalars, at: index, closeTag) {
+                lastClose = index
+            } else if openTagEnd(scalars, at: index) != nil {
+                lastOpen = index
+            }
+        }
+        guard let lastOpen else { return false }
+        return lastClose.map { lastOpen > $0 } ?? true
+    }
+
     /// The reasoning block in `text`, and the answer after it.
     public static func split(_ text: String) -> ReasoningSplit {
         let scalars = Array(text.unicodeScalars)

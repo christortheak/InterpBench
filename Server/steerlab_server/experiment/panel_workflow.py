@@ -120,7 +120,8 @@ def _advise_panel_transcripts(run_directory: str, problems: list[str],
 #: told from the answer, the reasoning protocol the turn ran under, and where
 #: its temperature came from. Each is absent on turns written before it.
 PANEL_TURN_PASSTHROUGH = ("reasoning", "reasoningStatus", "reasoningEffort",
-                          "reasoningMaxTokens", "temperatureSource")
+                          "reasoningMaxTokens", "temperatureSource",
+                          "withheldText", "reasoningOpenedInPrompt")
 
 
 def _panel_seed_fields(temperature) -> dict:

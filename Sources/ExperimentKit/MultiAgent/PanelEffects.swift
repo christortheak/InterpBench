@@ -72,9 +72,12 @@ public enum PanelEffects {
     /// The turns of a transcript that passed nothing on (issue #15). Server
     /// twin: `panel_effects.withheld_turn_ids`.
     public static func withheldTurnIDs(_ turns: [MultiAgentTurnResult]) -> Set<String> {
+        // An allow-list, as routing reads it: an unknown status passed nothing on.
         Set(turns.filter {
-            $0.reasoningStatus.flatMap(MultiAgentRunner.ReasoningStatus.init(rawValue:))?.withheld
-                ?? false
+            !MultiAgentRunner.TurnText(
+                answer: $0.output, reasoning: $0.reasoning, status: $0.reasoningStatus,
+                withheldText: $0.withheldText
+            ).passedOn
         }.map(\.turnID))
     }
 

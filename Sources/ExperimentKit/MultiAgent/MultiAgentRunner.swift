@@ -25,6 +25,12 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
     public var reasoningEffort: String? = nil
     /// The study's reasoning budget, when this turn thought under one.
     public var reasoningMaxTokens: Int? = nil
+    /// An `unclear` turn's whole text (none of it was passed on).
+    public var withheldText: String? = nil
+    /// Whether this thinking turn's rendered prompt ended inside an open
+    /// reasoning block; nil when the turn did not think or the prompt tail
+    /// was not read.
+    public var reasoningOpenedInPrompt: Bool? = nil
     /// Where `temperature` came from: `study`, `panelSeat` (the panel's own
     /// declaration for this seat), or `panel` (the panel file, when no study
     /// runs it). Never the agent file.
@@ -250,7 +256,7 @@ public enum MultiAgentRunner {
             // rule would mix two rules in one transcript.
             if let refusal = resumeRuleRefusal(
                 scenario: scenario, completed: completed, studyEffort: studyEffort,
-                studyTemperature: effectiveTemperature)
+                studyTemperature: effectiveTemperature, studyRevision: defaultRevision)
             {
                 throw refusal
             }
@@ -299,7 +305,8 @@ public enum MultiAgentRunner {
                         scenario: scenario, turn: turn, index: index,
                         said: TurnText(
                             answer: replayed.output, reasoning: replayed.reasoning,
-                            status: replayed.reasoningStatus)))
+                            status: replayed.reasoningStatus,
+                            withheldText: replayed.withheldText)))
                     results.append(replayed)
                     await progress?(.turnCompleted(replayed))
                     continue
@@ -316,8 +323,9 @@ public enum MultiAgentRunner {
                     for: speaker.spec, studyEffort: studyEffort,
                     studyBudget: studyReasoningBudget)
                 // A seat thinks only on a template that can (N3).
-                let template = seatTemplate(modelID: modelID, revision: variant?.baseRevision ?? defaultRevision)
-                if !template.thinks { (effort, reasoningBudget) = (.off, nil) }
+                if !seatTemplate(modelID: modelID, revision: variant?.baseRevision ?? defaultRevision) {
+                    (effort, reasoningBudget) = (.off, nil)
+                }
                 let (turnTemperature, temperatureSource) = seatTemperature(
                     speaker.spec, studyTemperature: effectiveTemperature,
                     studyOwned: studyOwnedTemperature)
@@ -408,10 +416,14 @@ public enum MultiAgentRunner {
                 // What the seat SAID (its answer) and what it thought (its
                 // reasoning), told apart once, here. `output` on the record is
                 // the answer, which is what was routed (issue #15).
+                // Whether this turn's own rendered prompt opened the
+                // reasoning block, read from that prompt's tail (R2).
+                let opensInPrompt = effort.isOn
+                    ? measured.promptTail.map(ReasoningSplit.opensReasoning) : nil
                 let outcome = playTurn(
                     scenario: scenario, turn: turn, index: index, text: measured.text,
                     thinking: effort.isOn, finishReason: measured.finishReason,
-                    opensInPrompt: template.opens)
+                    opensInPrompt: opensInPrompt)
                 apply(outcome)
                 let said = outcome.said
                 let output = said.answer
@@ -454,6 +466,8 @@ public enum MultiAgentRunner {
                 result.reasoningStatus = said.status?.rawValue
                 result.reasoningEffort = effort.rawValue
                 result.reasoningMaxTokens = reasoningBudget
+                result.withheldText = said.withheldText
+                result.reasoningOpenedInPrompt = opensInPrompt
                 result.temperatureSource = temperatureSource
                 results.append(result)
                 // Flush BEFORE the next turn starts: an unflushed transcript
@@ -1363,22 +1377,40 @@ public enum MultiAgentRunner {
         public let answer: String
         public let reasoning: String?
         public let status: ReasoningStatus?
+        /// An `unclear` turn's whole text, kept apart from reasoning and
+        /// answer alike; none of it is passed on.
+        public let withheldText: String?
+        /// A recorded status this engine does not know. Such a turn passes
+        /// nothing on: unknown fails closed.
+        let unrecognizedStatus: Bool
 
-        public init(answer: String, reasoning: String? = nil, status: ReasoningStatus? = nil) {
+        public init(
+            answer: String, reasoning: String? = nil, status: ReasoningStatus? = nil,
+            withheldText: String? = nil
+        ) {
             self.answer = answer
             self.reasoning = reasoning
             self.status = status
+            self.withheldText = withheldText
+            self.unrecognizedStatus = false
         }
 
         /// A record's own text, for replay on resume.
-        init(answer: String, reasoning: String?, status: String?) {
-            self.init(
-                answer: answer, reasoning: reasoning,
-                status: status.flatMap(ReasoningStatus.init(rawValue:)))
+        init(answer: String, reasoning: String?, status: String?, withheldText: String?) {
+            self.answer = answer
+            self.reasoning = reasoning
+            self.status = status.flatMap(ReasoningStatus.init(rawValue:))
+            self.withheldText = withheldText
+            self.unrecognizedStatus = status != nil && self.status == nil
         }
 
-        /// False when nothing from this turn may reach any seat.
-        public var passedOn: Bool { !(status?.withheld ?? false) }
+        /// Whether this turn's answer reaches any seat. An allow-list: a
+        /// thinking turn passes on only when `complete` or `notFound`.
+        public var passedOn: Bool {
+            guard !unrecognizedStatus else { return false }
+            guard let status else { return true }
+            return status == .complete || status == .notFound
+        }
     }
 
     /// Split one turn's generated text into answer and reasoning. When in
@@ -1415,7 +1447,7 @@ public enum MultiAgentRunner {
         } else {
             guard let leading = opened else {
                 if ReasoningSplit.hasTag(output) {
-                    return TurnText(answer: "", reasoning: output, status: .unclear)
+                    return TurnText(answer: "", status: .unclear, withheldText: output)
                 }
                 return TurnText(answer: output, status: .notFound)
             }
@@ -1430,7 +1462,7 @@ public enum MultiAgentRunner {
         let answer = ReasoningSplit.leadingWhitespaceRemoved(
             ReasoningSplit.slice(output, close + ReasoningSplit.closeTag.count))
         if ReasoningSplit.hasTag(answer) {
-            return TurnText(answer: "", reasoning: output, status: .unclear)
+            return TurnText(answer: "", status: .unclear, withheldText: output)
         }
         return TurnText(
             answer: answer, reasoning: ReasoningSplit.slice(output, start, close),
@@ -1443,10 +1475,24 @@ public enum MultiAgentRunner {
     /// template is read as one that opens the block, which passes on less.
     /// Server twin: `multi_agent.seat_template` (which probes the loaded
     /// tokenizer's template).
-    static func seatTemplate(modelID: String, revision: String?) -> (thinks: Bool, opens: Bool?) {
-        let record = ModelCapabilitiesStore.resolve(
+    static func seatTemplate(modelID: String, revision: String?) -> Bool {
+        ModelCapabilitiesStore.resolve(
+            modelID: modelID, revision: revision, root: ExperimentStore.workspaceRoot
+        ).hasThinkingSwitch
+    }
+
+    /// Whether a seat that asks to think should be taken to think, for the
+    /// older-engine checks: yes, unless a PROBED record for exactly this
+    /// model and revision says its template has no thinking switch — never
+    /// the id heuristic, never another revision's record. Server twin:
+    /// `multi_agent._template_thinks`.
+    static func templateThinks(modelID: String, revision: String?) -> Bool {
+        let url = ModelCapabilitiesStore.recordURL(
             modelID: modelID, revision: revision, root: ExperimentStore.workspaceRoot)
-        return (record.hasThinkingSwitch, record.isProbed ? record.thinkOpenInPrompt : nil)
+        guard FileManager.default.fileExists(atPath: url.path),
+            let record = try? ModelCapabilitiesStore.read(url)
+        else { return true }
+        return !(record.source == .probe && record.detected.thinkingSwitch == .unsupported)
     }
 
     /// Everything one turn passes on and records, decided in one place for
@@ -1480,7 +1526,10 @@ public enum MultiAgentRunner {
         }
         return TurnOutcome(
             said: said, label: label, routed: routed, entries: entries,
-            endpoint: endpointStamp(for: turn, output: said.answer, reasoning: said.reasoning),
+            // Only a complete turn has reasoning told apart from an answer.
+            endpoint: endpointStamp(
+                for: turn, output: said.answer,
+                reasoning: said.status == .complete ? said.reasoning : nil),
             voiceLint: voiceLintStamp(for: turn, output: said.answer, agents: scenario.agents))
     }
 
@@ -1627,7 +1676,7 @@ public enum MultiAgentRunner {
     /// `multi_agent.panel_rule_changes`.
     public static func panelRuleChanges(
         _ scenario: MultiAgentScenario, studyEffort: ReasoningEffort?,
-        studyTemperature: Double, seats: Set<String>? = nil
+        studyTemperature: Double, seats: Set<String>? = nil, studyRevision: String? = nil
     ) throws -> [RuleChange] {
         var out: [RuleChange] = []
         for agent in scenario.agents where seats?.contains(agent.id) ?? true {
@@ -1638,14 +1687,15 @@ public enum MultiAgentRunner {
                 for: agent, studyEffort: studyEffort, studyBudget: nil)
             guard effort.isOn else { continue }
             var modelID = agent.baseModelID
+            var revision = studyRevision
             if let path = agent.variantArtifactPath,
                 let data = try? Data(contentsOf: ModelVariantStore.absoluteURL(path)),
-                let variant = try? JSONDecoder().decode(ModelVariantArtifact.self, from: data),
-                !variant.baseModelID.isEmpty
+                let variant = try? JSONDecoder().decode(ModelVariantArtifact.self, from: data)
             {
-                modelID = variant.baseModelID
+                if !variant.baseModelID.isEmpty { modelID = variant.baseModelID }
+                revision = variant.baseRevision ?? studyRevision
             }
-            guard seatTemplate(modelID: modelID, revision: nil).thinks else { continue }
+            guard templateThinks(modelID: modelID, revision: revision) else { continue }
             out.append(RuleChange(
                 agent.variantArtifactPath == nil
                     ? RuleChange.seatWouldNotThink : RuleChange.reasoningPassedOn,
@@ -1695,7 +1745,7 @@ public enum MultiAgentRunner {
         guard let scenario = pinnedPanel(manifest) else { return nil }
         return try? panelRuleChanges(
             scenario, studyEffort: manifest.resolvedReasoningEffort,
-            studyTemperature: manifest.temperature)
+            studyTemperature: manifest.temperature, studyRevision: manifest.modelRevision)
     }
 
     /// Whether a panel study casts an agent that thinks: the case in which
@@ -1704,7 +1754,8 @@ public enum MultiAgentRunner {
     public static func panelSeatThinks(_ manifest: ExperimentManifest) -> Bool {
         guard let scenario = pinnedPanel(manifest),
             let changes = try? panelRuleChanges(
-                scenario, studyEffort: .off, studyTemperature: manifest.temperature)
+                scenario, studyEffort: .off, studyTemperature: manifest.temperature,
+                studyRevision: manifest.modelRevision)
         else { return false }
         return changes.contains { $0.kind == RuleChange.reasoningPassedOn }
     }
@@ -1725,7 +1776,10 @@ public enum MultiAgentRunner {
     /// Server twin: `multi_agent.panel_seat_temperatures`.
     public static func panelSeatTemperatures(_ manifest: ExperimentManifest) -> [Double] {
         guard let scenario = pinnedPanel(manifest) else { return [] }
-        return scenario.agents.map { $0.temperature ?? manifest.temperature }
+        // Only seats that speak generate anything.
+        let speakers = Set(scenario.turns.map(\.speakerAgentID))
+        return scenario.agents.filter { speakers.contains($0.id) }
+            .map { $0.temperature ?? manifest.temperature }
     }
 
     /// Python's `{:g}` for the values a temperature takes.
@@ -1741,13 +1795,14 @@ public enum MultiAgentRunner {
         scenario: MultiAgentScenario,
         completed: [String: MultiAgentTurnResult],
         studyEffort: ReasoningEffort?,
-        studyTemperature: Double = 0
+        studyTemperature: Double = 0,
+        studyRevision: String? = nil
     ) -> ExperimentError? {
         let old = completed.values.filter { $0.reasoningEffort == nil }
         guard !old.isEmpty,
             let changes = try? panelRuleChanges(
                 scenario, studyEffort: studyEffort, studyTemperature: studyTemperature,
-                seats: Set(old.map(\.speakerAgentID))),
+                seats: Set(old.map(\.speakerAgentID)), studyRevision: studyRevision),
             !changes.isEmpty
         else { return nil }
         return .refusing(
@@ -1921,7 +1976,7 @@ public enum MultiAgentRunner {
                     "_Nothing from this turn was passed on (reasoning status "
                         + "\(status)). What it wrote:_")
                 lines.append("")
-                lines.append(result.reasoning ?? "")
+                lines.append(result.reasoning ?? result.withheldText ?? "")
                 lines.append("")
             } else if let reasoning = result.reasoning, !reasoning.isEmpty {
                 lines.append("_Reasoning (not passed on to the other seats):_")

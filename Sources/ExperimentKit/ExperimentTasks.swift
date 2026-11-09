@@ -1856,6 +1856,10 @@ public enum ExperimentTasks {
     /// sampled loop's `token_ids_out` count against the manifest's budget.
     struct MeasuredGeneration {
         var promptTokenCount: Int? = nil
+        /// The last tokens of the rendered prompt, decoded with special
+        /// tokens kept: what a panel reads to tell whether the chat template
+        /// opened the reasoning block in the prompt (issue #15).
+        var promptTail: String? = nil
         let text: String
         /// Why the decode ended, in the closed cross-engine vocabulary
         /// (`FinishReason`). Stamped on every generation record.
@@ -1963,6 +1967,10 @@ public enum ExperimentTasks {
                 qwenThinkingEnabled: effort.isOn,
                 reasoningEffort: effort))
         let promptTokenCount = input.text.tokens.size
+        let tailIDs = Array(input.text.tokens.asArray(Int.self).suffix(64))
+        let promptTail = await container.perform { context in
+            context.tokenizer.decode(tokenIds: tailIDs, skipSpecialTokens: false)
+        }
         // The budgeted decode, when the study declared a reasoning cap and
         // the vocabulary can name the close token; otherwise the single
         // budget every study ran under before the cap existed.
@@ -1990,9 +1998,11 @@ public enum ExperimentTasks {
             temperature: Float(temperature),
             prefillStepSize: PromptReading.mlxPrefillStepSize)
         if let budget {
-            return try await generateWithReasoningBudget(
+            var measured = try await generateWithReasoningBudget(
                 container, input: input, parameters: parameters,
                 budget: budget, seed: seed, onChunk: onChunk)
+            measured.promptTail = promptTail
+            return measured
         }
         let stream = try await SeededGeneration.chunks(
             container: container, input: input, parameters: parameters, seed: seed)
@@ -2022,7 +2032,9 @@ public enum ExperimentTasks {
         if let onChunk, text.count != lastProgressCount {
             await onChunk(text)
         }
-        return MeasuredGeneration(promptTokenCount: promptTokenCount, text: text, finishReason: finishReason)
+        return MeasuredGeneration(
+            promptTokenCount: promptTokenCount, promptTail: promptTail, text: text,
+            finishReason: finishReason)
     }
 
     /// The token-by-token decode under a declared reasoning budget: the same
@@ -4229,6 +4241,8 @@ public enum ExperimentTasks {
             reasoningEffort: turn.reasoningEffort,
             reasoningMaxTokens: turn.reasoningMaxTokens,
             temperatureSource: turn.temperatureSource,
+            withheldText: turn.withheldText,
+            reasoningOpenedInPrompt: turn.reasoningOpenedInPrompt,
             temperature: turn.temperature ?? manifest.temperature)
     }
 

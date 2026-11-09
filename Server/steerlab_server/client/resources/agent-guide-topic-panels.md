@@ -43,18 +43,21 @@ study that does not think, cast an agent with no steering and thinking on.
 **Other seats read a thinking seat's answer, never its reasoning.** Each such
 turn is split into the two: `output` on its record is the answer, and
 `reasoning` holds what it thought. A template's `outputs.<label>` placeholder
-and a contract input read the answer. An endpoint is read from the answer,
-and its stamp carries `markerInReasoning: true` when the reasoning also wrote
-the marker. **When in doubt, nothing is passed on.** A turn's
+and a contract input read the answer. An endpoint is read from the answer;
+on a `complete` turn its stamp carries `markerInReasoning: true` when the
+reasoning also wrote the marker. **When in doubt, nothing is passed on.**
+Whether the reasoning block opened in the prompt is read from the prompt each
+turn rendered, and stamped as `reasoningOpenedInPrompt`. A turn's
 `reasoningStatus` says how it was read: `complete` (the reasoning finished
-and the answer followed), `notFound` (the template leaves the reasoning tag
-to the model and the text has none, so it is all answer), or one of three
-under which the turn has no answer, nothing from it reaches any seat, and
-its `routedAgentIDs` is empty: `cutOff` (a token limit ended it before its
-reasoning finished), `unfinished` (the seat stopped before its reasoning
-finished), and `unclear` (a reasoning tag appeared where the answer should
-be). A routed answer never holds a reasoning tag. A seat that does not think
-passes on its whole text, as before.
+and the answer followed), `notFound` (the prompt did not open the block and
+the text has no reasoning tag, so it is all answer), or one of three under
+which the turn has no answer, nothing from it reaches any seat, and its
+`routedAgentIDs` is empty: `cutOff` (a token limit ended it before its
+reasoning finished) and `unfinished` (the seat stopped first), whose
+`reasoning` holds all it wrote, and `unclear` (a reasoning tag appeared where
+the answer should be), whose whole text is kept as `withheldText`. Any other
+status passes nothing on either. A routed answer never holds a reasoning tag.
+A seat that does not think passes on its whole text, as before.
 
 A seat reads its **own** earlier reasoning only when the panel declares
 `"includeOwnReasoning": true` (off by default, as chat templates drop
@@ -76,8 +79,10 @@ or `panel` when no study runs it), `reasoningEffort`, and
 An engine from before this rule passed reasoning on, never let a baseline
 seat think, and ignored seat temperatures. Both clients refuse to send it a
 panel where that changes something (`remoteStudy.panelAnswerRouting` missing
-from its capabilities), and say what would change; a bundle of such a panel
-requires `panel-answer-routing-v1`. A run such an engine started is not
+from its capabilities), and say what would change. An agent that asks to
+think counts as thinking here unless a probed capability record for its exact
+model revision says the template cannot. A bundle packaged to run such a panel
+requires `panel-answer-routing-v1`, which current engines support. A run such an engine started is not
 resumed or merged under the new rule when that changes what its seats read;
 start a new run.
 

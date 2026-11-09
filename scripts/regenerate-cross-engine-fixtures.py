@@ -3228,6 +3228,20 @@ TURN_TEXT_CASES = [
 ]
 
 
+#: ``(label, rendered-prompt tail)`` cases for
+#: ``reasoning_split.opens_reasoning``.
+OPENS_REASONING_TAILS = [
+    ("opens-in-prompt", "<|im_start|>assistant\n<think>\n"),
+    ("thinking-off-closes-it", "<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+    ("model-opens-it", "<|im_start|>assistant\n"),
+    ("attributed-open-tag", "assistant\n<THINK mode='x'>\n"),
+    ("thinking-is-not-a-tag", "assistant\n<thinking>\n"),
+    ("open-tag-in-user-text", "user: <think> here<|im_start|>assistant\n"),
+    ("closed-then-reopened", "<think>a</think> b <think>\n"),
+    ("empty", ""),
+]
+
+
 def reasoning_split_fixture() -> None:
     from steerlab_server.experiment import multi_agent, reasoning_split
 
@@ -3246,7 +3260,8 @@ def reasoning_split_fixture() -> None:
                                "thinking": thinking, "finishReason": finish,
                                "opensInPrompt": opens, "answer": said.answer,
                                "reasoning": said.reasoning,
-                               "status": said.status})
+                               "status": said.status,
+                               "withheldText": said.withheld_text})
     own = []
     for label, reasoning, answer in [
             ("plain", "weigh it\n", "Final answer: reverse."),
@@ -3264,6 +3279,12 @@ def reasoning_split_fixture() -> None:
                   "engine (scripts/regenerate-cross-engine-fixtures.py, "
                   "reasoning_split_fixture) and read by the Swift suite."),
         "split": split_cases, "turnText": turn_cases, "ownReasoning": own,
+        # The tail of a rendered prompt, and whether it ends inside an open
+        # reasoning block (reasoning_split.opens_reasoning).
+        "opensReasoning": [
+            {"label": label, "promptTail": tail,
+             "opens": reasoning_split.opens_reasoning(tail)}
+            for label, tail in OPENS_REASONING_TAILS],
     })
 
 

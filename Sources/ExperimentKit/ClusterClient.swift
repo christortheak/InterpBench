@@ -5202,7 +5202,9 @@ public enum RunBundlePackager {
         try packageExperiment(manifest, source: captureSource(manifest))
     }
 
-    static func packageExperiment(_ manifest: ExperimentManifest, source: Source) throws -> URL {
+    static func packageExperiment(
+        _ manifest: ExperimentManifest, source: Source, verb: String? = nil
+    ) throws -> URL {
         let fm = FileManager.default
         let root = source.root
         let stamp = ISO8601DateFormatter().string(from: Date())
@@ -5286,7 +5288,9 @@ public enum RunBundlePackager {
                 runtimeRequirements.union(
                     // A panel an engine from before issue #15 would run
                     // differently, or one this packager cannot read.
-                    MultiAgentRunner.submissionPanelRuleChanges(manifest, verb: "run") == []
+                    // Keyed to the verbs that play turns; no named verb
+                    // is taken to play them.
+                    MultiAgentRunner.submissionPanelRuleChanges(manifest, verb: verb ?? "run") == []
                         ? [] : [InstrumentationSupport.panelAnswerRouting]
                 ).sorted().map { .string($0) }),
             "verificationViolations": .array(source.verification.map { .string($0) }),

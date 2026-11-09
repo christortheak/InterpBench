@@ -1411,7 +1411,7 @@ seat that thinks or a seat whose own `temperature` differs from the study's:
 such an engine passes each turn's whole text on, reasoning included, never
 lets a baseline seat think, and ignores seat temperatures, and the refusal
 says which of these applies to which seat. A panel that cannot be read
-locally is refused the same way. A bundle of such a panel declares the
+locally is refused the same way. A bundle packaged to run such a panel declares the
 runtime requirement `panel-answer-routing-v1`, which an engine without it
 refuses (`unsupportedInstrumentation`). `verify` on a panel study names a
 seat whose declared temperature is the study's

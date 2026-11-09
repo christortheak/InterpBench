@@ -152,6 +152,25 @@ def has_tag(text: str) -> bool:
     return "<think" in folded or "</think" in folded
 
 
+def opens_reasoning(text: str) -> bool:
+    """Whether ``text`` — a rendered prompt — ends inside an open reasoning
+    block: its final reasoning tag, by this module's tag grammar, is an
+    opening ``<think>`` that no ``</think>`` follows. That is what a chat
+    template that opens the block in the prompt leaves at the end of it, and
+    it is read from the prompt each turn actually rendered, so it cannot be
+    stale. Swift twin: ``ReasoningSplit.opensReasoning``."""
+    text = text or ""
+    last_open = last_close = None
+    index = text.find("<")
+    while index >= 0:
+        if _matches_at(text, index, CLOSE_TAG):
+            last_close = index
+        elif _open_tag_end(text, index) is not None:
+            last_open = index
+        index = text.find("<", index + 1)
+    return last_open is not None and (last_close is None or last_open > last_close)
+
+
 def split(text: str) -> ReasoningSplit:
     """The reasoning block in ``text``, and the answer after it."""
     text = text or ""

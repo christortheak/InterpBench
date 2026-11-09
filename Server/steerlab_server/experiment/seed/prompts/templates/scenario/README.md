@@ -52,7 +52,8 @@ Key fields:
   panel run on its own. A study that runs the panel sets the temperature of
   every seat that declares none. Whether a seat thinks is its occupant's: a
   cast agent's own setting, or the study's `reasoningEffort` for a seat cast
-  as baseline. Every thinking seat gets the study's `reasoningMaxTokens`.
+  as baseline. A thinking seat gets the study's `reasoningMaxTokens` when
+  the study declares one.
 
 ## Where the file lives in a workspace
 

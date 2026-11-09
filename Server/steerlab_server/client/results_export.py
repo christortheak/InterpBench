@@ -688,10 +688,16 @@ def _responses_table(study, run_name, loaded):
                   "panel turn whose seat was thinking, it is the answer the seat "
                   "gave after its reasoning, which is what the other seats read; "
                   "the reasoning is in the reasoning column.", _key("output"))
-        table.add("reasoning", "The reasoning a thinking panel seat wrote before its "
-                  "answer, as recorded. The other seats did not read it. Empty when "
-                  "the seat was not thinking, or wrote no reasoning.",
-                  _key("reasoning"))
+        table.add("reasoning", "The reasoning a thinking panel seat wrote, as "
+                  "recorded: before its answer, or, for a cutOff or unfinished turn, "
+                  "all it wrote before its reasoning stopped. The other seats did not "
+                  "read it. Empty when the seat was not thinking, wrote no reasoning, "
+                  "or (an unclear turn) its reasoning could not be told from its "
+                  "answer.", _key("reasoning"))
+        table.add("withheld_text", "For an unclear turn, the whole text the seat "
+                  "wrote: a reasoning tag appeared where its answer should be, so the "
+                  "engine could not tell reasoning from answer and passed none of it "
+                  "on. Empty for every other turn.", _key("withheldText"))
         table.add("reasoning_status", "How the engine read a thinking panel seat's "
                   "turn: complete (the reasoning finished and the answer followed "
                   "it); notFound (the seat wrote no reasoning, so the whole text is "
@@ -740,10 +746,14 @@ def _responses_table(study, run_name, loaded):
     if "endpoint" in fields:
         table.add("endpoint_name", "The name of the outcome this turn was declared "
                   "to produce.", _nested("endpoint", "name"))
+        thinking = any("reasoningStatus" in record for record in records)
+        read_from = ("the turn's text (for a thinking panel seat, its answer alone; "
+                     "a turn that passed nothing on has no answer, so its outcome "
+                     "is never read)" if thinking else "the turn's text")
         table.add("endpoint_value", "The value the engine read for that outcome from "
-                  "the turn's text.", _nested("endpoint", "value"))
+                  f"{read_from}.", _nested("endpoint", "value"))
         table.add("endpoint_unparsed", "1 when the engine could not read the declared "
-                  "outcome from the turn's text, 0 when it could, and empty when "
+                  f"outcome from {read_from}, 0 when it could, and empty when "
                   "the turn declares no outcome.", _endpoint_unparsed)
     if "voiceLint" in fields:
         table.add("speaks_for_others", "1 when a line of the turn is written as if "

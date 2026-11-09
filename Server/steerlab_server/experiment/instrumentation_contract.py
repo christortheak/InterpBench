@@ -7,11 +7,7 @@ from .probe_artifacts import ProbeError
 #: packaging (``bundles.package_experiment``). Swift twin:
 #: ``InstrumentationSupport.panelAnswerRouting``.
 PANEL_ANSWER_ROUTING = 'panel-answer-routing-v1'
-SUPPORTED = ('policy-evidence-v2', 'policy-v1', 'policy-v2', 'probe-readings-v1')
-#: What this engine offers in its capability snapshot: every requirement a
-#: document can declare, plus the ones a packager adds for the study as a
-#: whole (``PANEL_ANSWER_ROUTING``).
-OFFERED = SUPPORTED + (PANEL_ANSWER_ROUTING,)
+SUPPORTED = ('panel-answer-routing-v1', 'policy-evidence-v2', 'policy-v1', 'policy-v2', 'probe-readings-v1')
 #: What an archive packaged before requirements were declared may need. Version-2
 #: policies arrived later, so such an archive cannot hold one.
 UNMARKED = ('policy-evidence-v2', 'policy-v1', 'probe-readings-v1')
@@ -50,7 +46,11 @@ def requirements(value):
 def require(required, capabilities):
     offered = capabilities.get('instrumentation', [])
     missing = sorted(set(required) - set(offered if isinstance(offered, list) else []))
+    others = [name for name in missing if name != PANEL_ANSWER_ROUTING]
+    parts = []
     if PANEL_ANSWER_ROUTING in missing:
-        raise ProbeError('This engine predates answer-only panel routing (' + PANEL_ANSWER_ROUTING + '): it would pass each turn’s whole text on to the other seats, a thinking seat’s reasoning included, so the study’s panel would not run as declared. Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.')
-    if missing:
-        raise ProbeError('This engine cannot execute the study’s declared probes or policies: ' + ', '.join(missing) + '. Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.')
+        parts.append('This engine predates answer-only panel routing (' + PANEL_ANSWER_ROUTING + '): it would pass each turn’s whole text on to the other seats, a thinking seat’s reasoning included, so the study’s panel would not run as declared.')
+    if others:
+        parts.append(('It also cannot' if parts else 'This engine cannot') + ' execute the study’s declared probes or policies: ' + ', '.join(others) + '.')
+    if parts:
+        raise ProbeError(' '.join(parts) + ' Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.')

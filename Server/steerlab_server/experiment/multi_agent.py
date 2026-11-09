@@ -600,19 +600,31 @@ class PanelUnreadable(Exception):
     older engine would do with it cannot be told."""
 
 
-def _template_thinks(model_id: str, root: str | None) -> bool:
-    """Whether ``model_id``'s chat template has a thinking switch, by its
-    workspace capability record, else the id heuristic."""
+def _template_thinks(model_id: str, revision: str | None,
+                     root: str | None) -> bool:
+    """Whether a seat that asks to think should be taken to think, for the
+    older-engine checks: yes, unless a PROBED capability record for exactly
+    this model and revision says its template has no thinking switch. Never
+    the id heuristic, and never another revision's record: either can say
+    "no" for a model that thinks, and an older engine would then pass its
+    reasoning on unrefused."""
     from . import model_capabilities
     try:
-        return bool(model_capabilities.resolve(model_id, None, root).has_thinking_switch)
+        path = model_capabilities.record_path(model_id, revision, root)
+        if not os.path.exists(path):
+            return True
+        record = model_capabilities.read_record(path)
     except Exception:  # noqa: BLE001 - an unreadable record: assume it can think
         return True
+    detected = record.get("detected") or {}
+    return not (record.get("source") == model_capabilities.SOURCE_PROBE
+                and detected.get("thinkingSwitch") == model_capabilities.UNSUPPORTED)
 
 
 def panel_rule_changes(scenario: Scenario, *, study_effort: str | None,
                        study_temperature: float, root: str | None = None,
-                       seats=None) -> list[tuple[str, str]]:
+                       seats=None, study_revision: str | None = None
+                       ) -> list[tuple[str, str]]:
     """What an engine from before issue #15 would run differently in this
     panel, as ``(kind, seat name)`` pairs in seat order, or [] when the two
     engines run it alike.
@@ -646,7 +658,8 @@ def panel_rule_changes(scenario: Scenario, *, study_effort: str | None,
         if effort == prompt_render.REASONING_OFF:
             continue
         model_id = (variant.base_model_id if variant else None) or agent.base_model_id
-        if not _template_thinks(model_id, root):
+        revision = (variant.base_revision if variant else None) or study_revision
+        if not _template_thinks(model_id, revision, root):
             continue
         out.append((RULE_REASONING_PASSED_ON if variant is not None
                     else RULE_SEAT_WOULD_NOT_THINK, agent.name))
@@ -695,7 +708,8 @@ def submission_panel_rule_changes(manifest, verb: str,
         # study's workspace, not whatever the process happens to point at.
         return panel_rule_changes(
             scenario, study_effort=manifest.reasoning_effort,
-            study_temperature=float(manifest.temperature or 0.0), root=base)
+            study_temperature=float(manifest.temperature or 0.0), root=base,
+            study_revision=getattr(manifest, "model_revision", None))
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             ScenarioError, PanelUnreadable):
         return None
@@ -720,7 +734,8 @@ def panel_seat_thinks(manifest, root: str | None = None) -> bool:
         scenario, _ = load_scenario(spath)
         changes = panel_rule_changes(
             scenario, study_effort=prompt_render.REASONING_OFF,
-            study_temperature=float(document.get("temperature") or 0.0), root=base)
+            study_temperature=float(document.get("temperature") or 0.0), root=base,
+            study_revision=document.get("modelRevision"))
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             ScenarioError, PanelUnreadable):
         return False
@@ -755,8 +770,11 @@ def panel_seat_temperatures(manifest, root: str | None = None) -> list[float]:
             ScenarioError):
         return []
     study = float(manifest.temperature or 0.0)
+    # Only seats that speak generate anything; a seat no turn names samples
+    # nothing, whatever temperature it declares.
+    speakers = {turn.speaker_agent_id for turn in scenario.turns}
     return [float(a.temperature) if a.temperature is not None else study
-            for a in scenario.agents]
+            for a in scenario.agents if a.id in speakers]
 
 
 def outdated_panel_engine_reason(where: str, changes) -> str:
@@ -1062,6 +1080,10 @@ REASONING_NOT_FOUND = "notFound"
 #: The statuses under which nothing from a turn reaches any seat.
 WITHHELD_STATUSES = frozenset({REASONING_CUT_OFF, REASONING_UNFINISHED,
                                REASONING_UNCLEAR})
+#: The ONLY statuses under which a thinking turn's answer is passed on. Read
+#: as an allow-list, so a status this engine does not know (a record from a
+#: later engine, replayed) passes nothing on: unknown fails closed.
+PASSED_STATUSES = frozenset({REASONING_COMPLETE, REASONING_NOT_FOUND})
 
 
 @dataclass(frozen=True)
@@ -1072,11 +1094,15 @@ class TurnText:
     answer: str
     reasoning: str | None = None
     status: str | None = None
+    #: An ``unclear`` turn's whole text: its reasoning could not be told from
+    #: its answer, so it is kept apart from both and none of it is passed on.
+    withheld_text: str | None = None
 
     @property
     def passed_on(self) -> bool:
-        """False when nothing from this turn may reach any seat."""
-        return self.status not in WITHHELD_STATUSES
+        """False when nothing from this turn may reach any seat: a status
+        outside :data:`PASSED_STATUSES`, known or not."""
+        return self.status is None or self.status in PASSED_STATUSES
 
 
 def turn_text(output: str, *, thinking: bool, finish: str | None,
@@ -1120,7 +1146,7 @@ def turn_text(output: str, *, thinking: bool, finish: str | None,
     else:
         if opened is None:
             if reasoning_split.has_tag(output):
-                return TurnText(answer="", reasoning=output, status=REASONING_UNCLEAR)
+                return TurnText(answer="", withheld_text=output, status=REASONING_UNCLEAR)
             return TurnText(answer=output, status=REASONING_NOT_FOUND)
         start = opened
         close = reasoning_split.first_close(output, start)
@@ -1129,18 +1155,16 @@ def turn_text(output: str, *, thinking: bool, finish: str | None,
     answer = reasoning_split.leading_whitespace_removed(
         output[close + len(reasoning_split.CLOSE_TAG):])
     if reasoning_split.has_tag(answer):
-        return TurnText(answer="", reasoning=output, status=REASONING_UNCLEAR)
+        return TurnText(answer="", withheld_text=output, status=REASONING_UNCLEAR)
     return TurnText(answer=answer, reasoning=output[start:close],
                     status=REASONING_COMPLETE)
 
 
-def seat_template(model) -> tuple[bool, bool | None]:
-    """``(can think, opens the reasoning block in the prompt)`` for the chat
-    template a turn renders through, from its capability record
-    (``prompt_render.capabilities_for``: the tokenizer's own template,
-    probed, else the id heuristic). ``opens`` is None unless the record was
-    probed: an unknown template is read as one that opens the block, which
-    passes on less. Swift twin: ``MultiAgentRunner.seatTemplate``."""
+def seat_template(model) -> bool:
+    """Whether the chat template a turn renders through can think, from its
+    capability record (``prompt_render.capabilities_for``: the tokenizer's
+    own template, probed, else the id heuristic). Swift twin:
+    ``MultiAgentRunner.seatTemplate``."""
     model_id = getattr(model, "model_id", "") or ""
     try:
         record = prompt_render.capabilities_for(
@@ -1148,8 +1172,27 @@ def seat_template(model) -> tuple[bool, bool | None]:
             revision=getattr(model, "revision", None))
     except Exception:  # noqa: BLE001 - an unprobeable template reads as the heuristic
         record = prompt_render.capabilities_for(model_id)
-    opens = record.think_open_in_prompt if record.is_probed else None
-    return bool(record.has_thinking_switch), opens
+    return bool(record.has_thinking_switch)
+
+
+def prompt_opens_reasoning(model, prompt: str, *, prompt_mode: str,
+                           system_prompt: str | None,
+                           reasoning_effort: str | None) -> bool | None:
+    """Whether the prompt this turn renders ends inside an open reasoning
+    block (``reasoning_split.opens_reasoning``), read from the text the chat
+    template actually produced for this turn — never a stored record, which
+    can belong to another revision or carry an override. None when the
+    prompt cannot be rendered here; ``turn_text`` reads None as "opens",
+    which passes on less. Swift twin: the prompt tail
+    ``ExperimentTasks.generateMeasured`` decodes."""
+    try:
+        rendered = prompt_render.render_for_generation(
+            model.tokenizer, prompt, model_id=model.model_id,
+            prompt_mode=prompt_mode, system_prompt=system_prompt,
+            qwen_thinking_enabled=True, reasoning_effort=reasoning_effort)
+    except Exception:  # noqa: BLE001 - unrenderable here: read as opening
+        return None
+    return reasoning_split.opens_reasoning(rendered.text)
 
 
 @dataclass(frozen=True)
@@ -1189,11 +1232,16 @@ def turn_outcome(scenario: Scenario, turn: Turn, index: int,
         # Absent rather than null when there is none, as Swift writes it.
         if said.reasoning is not None:
             fields["reasoning"] = said.reasoning
+        if said.withheld_text is not None:
+            fields["withheldText"] = said.withheld_text
     if turn.endpoint is not None:
         # Parsed from the ANSWER alone: a thinking seat often tries out
-        # "Final answer: ..." while reasoning.
+        # "Final answer: ..." while reasoning. Only a complete turn has
+        # reasoning that was told apart from an answer, so only it says the
+        # reasoning carried the marker.
         fields["endpoint"] = turn_endpoint.stamp(
-            turn.endpoint, said.answer, reasoning=said.reasoning)
+            turn.endpoint, said.answer,
+            reasoning=said.reasoning if said.status == REASONING_COMPLETE else None)
     # Voice lint (spec §5), on every generated turn, of what the seat SAID.
     fields["voiceLint"] = voice_lint.stamp(
         said.answer, speaker=speaker.name,
@@ -1228,9 +1276,11 @@ def _record_text(record: dict) -> TurnText:
     before the split carries neither key, and replays as the whole output."""
     status = record.get("reasoningStatus")
     reasoning = record.get("reasoning")
+    withheld = record.get("withheldText")
     return TurnText(answer=record.get("output", ""),
                     reasoning=reasoning if isinstance(reasoning, str) else None,
-                    status=status if isinstance(status, str) else None)
+                    status=status if isinstance(status, str) else None,
+                    withheld_text=withheld if isinstance(withheld, str) else None)
 
 
 def seat_reasoning(variant, *, study_effort: str,
@@ -1284,7 +1334,8 @@ def resume_rule_problem(scenario: Scenario, done: dict[str, dict], *,
                         strip_interventions: bool,
                         study_effort: str | None,
                         study_temperature: float,
-                        root: str | None = None):
+                        root: str | None = None,
+                        study_revision: str | None = None):
     """A refusal when finishing this transcript would mix two routing rules,
     or None.
 
@@ -1305,7 +1356,8 @@ def resume_rule_problem(scenario: Scenario, done: dict[str, dict], *,
     try:
         changes = panel_rule_changes(
             scenario, study_effort=study_effort,
-            study_temperature=study_temperature, root=root, seats=spoke)
+            study_temperature=study_temperature, root=root, seats=spoke,
+            study_revision=study_revision)
     except PanelUnreadable:
         return None  # the run itself reports an agent file it cannot read
     if not changes:
@@ -1355,7 +1407,7 @@ def run_resume_rule_problem(run_directory: str, manifest, root: str | None = Non
                 scenario, done, strip_interventions=condition == "baseline",
                 study_effort=getattr(manifest, "reasoning_effort", None),
                 study_temperature=float(getattr(manifest, "temperature", 0.0) or 0.0),
-                root=base)
+                root=base, study_revision=getattr(manifest, "model_revision", None))
             if problem is not None:
                 return problem
     return None
@@ -1714,7 +1766,8 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     if done:
         problem = resume_rule_problem(
             scenario, done, strip_interventions=strip_interventions,
-            study_effort=reasoning_effort, study_temperature=effective_temperature)
+            study_effort=reasoning_effort, study_temperature=effective_temperature,
+            study_revision=default_revision)
         if problem is not None:
             raise problem
 
@@ -1817,10 +1870,16 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             # A seat thinks only on a template that can (N3): an agent with
             # thinking on, cast on a model whose template has no thinking
             # switch, writes plain text, and is neither split nor budgeted.
-            template_thinks, opens_in_prompt = seat_template(active_model)
-            if not template_thinks:
+            if not seat_template(active_model):
                 effort, reasoning_budget = prompt_render.REASONING_OFF, None
             thinking = effort != prompt_render.REASONING_OFF
+            # Whether this turn's own rendered prompt opened the reasoning
+            # block, read from that prompt (R2): the fact the split reads.
+            opens_in_prompt = (prompt_opens_reasoning(
+                active_model, prompt, prompt_mode=prompt_mode,
+                system_prompt=system,
+                reasoning_effort=effort if reasoning_budget else None)
+                if thinking else None)
             # The study's reasoning budget, as an ordinary study's thinking
             # arm gets it: ``maxTokens`` (the turn's) is then the ANSWER's
             # budget and the reasoning block has its own, split at
@@ -1914,6 +1973,11 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   # seat did not think).
                   "reasoningEffort": effort,
                   "reasoningMaxTokens": reasoning_budget,
+                  # Whether this turn's rendered prompt ended inside an open
+                  # reasoning block, for a thinking turn whose prompt could be
+                  # rendered here.
+                  **({"reasoningOpenedInPrompt": opens_in_prompt}
+                     if opens_in_prompt is not None else {}),
                   # Null for greedy turns: no RNG was consulted, so naming a
                   # seed would imply a stream that was never drawn.
                   "seed": turn_seed if turn_temperature > 0 else None}
@@ -2167,7 +2231,7 @@ def _transcript(scenario: Scenario, results: list[dict]) -> str:
         if r.get("reasoningStatus") in WITHHELD_STATUSES:
             lines += [f"_Nothing from this turn was passed on (reasoning "
                       f"status {r.get('reasoningStatus')}). What it wrote:_",
-                      "", r.get("reasoning") or "", ""]
+                      "", r.get("reasoning") or r.get("withheldText") or "", ""]
         elif r.get("reasoning"):
             lines += ["_Reasoning (not passed on to the other seats):_", "",
                       r.get("reasoning") or "", "", "_Answer:_", ""]

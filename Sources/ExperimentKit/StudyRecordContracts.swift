@@ -214,6 +214,8 @@ extension ExperimentTasks {
         var reasoningEffort: String? = nil
         var reasoningMaxTokens: Int? = nil
         var temperatureSource: String? = nil
+        var withheldText: String? = nil
+        var reasoningOpenedInPrompt: Bool? = nil
         /// The temperature a panel turn generated at (a seat may declare its
         /// own). nil for every non-panel record.
         var temperature: Double? = nil

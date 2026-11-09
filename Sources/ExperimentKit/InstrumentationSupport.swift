@@ -42,8 +42,13 @@ public enum InstrumentationSupport {
 
     public static func require(_ required: Set<String>, offered: [String]?) throws {
         let missing = required.subtracting(offered ?? [])
+        let others = missing.subtracting([panelAnswerRouting])
         if missing.contains(panelAnswerRouting) {
-            throw ExperimentError(reason: "This engine predates answer-only panel routing (\(panelAnswerRouting)): it would pass each turn’s whole text on to the other seats, a thinking seat’s reasoning included, so the study’s panel would not run as declared. Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.")
+            var reason = "This engine predates answer-only panel routing (\(panelAnswerRouting)): it would pass each turn’s whole text on to the other seats, a thinking seat’s reasoning included, so the study’s panel would not run as declared."
+            if !others.isEmpty {
+                reason += " It also cannot execute the study’s declared probes or policies: \(others.sorted().joined(separator: ", "))."
+            }
+            throw ExperimentError(reason: reason + " Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.")
         }
         guard missing.isEmpty else {
             throw ExperimentError(reason: "This engine cannot execute the study’s declared probes or policies: \(missing.sorted().joined(separator: ", ")). Update and restart the engine, then reconnect and review the submission. Existing artifacts do not need editing.")

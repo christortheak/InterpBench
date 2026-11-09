@@ -216,19 +216,23 @@ def test_a_thinking_seat_with_no_block_is_its_answer_only_where_the_template_say
     # The template leaves the opening tag to the model and no tag appears:
     # the whole text is the answer, and the record has no reasoning key, as
     # Swift writes it.
-    monkeypatch.setattr(multi_agent, "seat_template", lambda model: (True, False))
+    monkeypatch.setattr(multi_agent, "seat_template", lambda model: True)
+    monkeypatch.setattr(multi_agent, "prompt_opens_reasoning", lambda *a, **k: False)
     scenario = _panel(tmp_path, endpoint=False)
     prompts, _calls, records = _run(
         tmp_path, scenario, [("Plain answer.", []), ("ok", []), ("ok", [])])
     assert "Plain answer." in prompts[1]
     assert records[0]["reasoningStatus"] == "notFound"
     assert "reasoning" not in records[0]
+    # The record says what the rendered prompt showed.
+    assert records[0]["reasoningOpenedInPrompt"] is False
 
 
 @pytest.mark.parametrize("opens", [True, None])
 def test_with_a_prompt_opened_or_unknown_template_no_close_tag_passes_nothing(
         tmp_path, monkeypatch, opens):
-    monkeypatch.setattr(multi_agent, "seat_template", lambda model: (True, opens))
+    monkeypatch.setattr(multi_agent, "seat_template", lambda model: True)
+    monkeypatch.setattr(multi_agent, "prompt_opens_reasoning", lambda *a, **k: opens)
     scenario = _panel(tmp_path, endpoint=False)
     prompts, _calls, records = _run(
         tmp_path, scenario, [("Plain answer.", []), ("ok", []), ("ok", [])])
@@ -240,7 +244,7 @@ def test_a_seat_whose_template_cannot_think_is_never_split(tmp_path, monkeypatch
     """N3: an agent with thinking on, cast on a template without a thinking
     switch, writes plain text: nothing is split or budgeted, and the record
     says the turn did not think."""
-    monkeypatch.setattr(multi_agent, "seat_template", lambda model: (False, None))
+    monkeypatch.setattr(multi_agent, "seat_template", lambda model: False)
     scenario = _panel(tmp_path, endpoint=False)
     text = "weighing it</think> my words"
     prompts, calls, records = _run(
@@ -551,8 +555,12 @@ def test_the_reasoning_split_fixture_is_current():
         said = multi_agent.turn_text(case["text"], thinking=case["thinking"],
                                      finish=case["finishReason"],
                                      opens_in_prompt=case["opensInPrompt"])
-        assert [said.answer, said.reasoning, said.status] == [
-            case["answer"], case["reasoning"], case["status"]], case["label"]
+        assert [said.answer, said.reasoning, said.status, said.withheld_text] == [
+            case["answer"], case["reasoning"], case["status"],
+            case["withheldText"]], case["label"]
+    for case in fixture["opensReasoning"]:
+        assert reasoning_split.opens_reasoning(case["promptTail"]) == case["opens"], \
+            case["label"]
     for case in fixture["ownReasoning"]:
         assert multi_agent.own_reasoning_text(
             case["reasoning"], case["answer"]) == case["text"], case["label"]
@@ -643,7 +651,13 @@ def test_a_bundle_requires_answer_routing_only_where_the_panel_needs_it(
             {"instrumentation": ["policy-v1"]})
     instrumentation_contract.require(
         [instrumentation_contract.PANEL_ANSWER_ROUTING],
-        {"instrumentation": list(instrumentation_contract.OFFERED)})
+        {"instrumentation": list(instrumentation_contract.SUPPORTED)})
+    # Keyed to the verbs that play turns: an analyze bundle needs nothing.
+    scenario.agents[1].temperature = 0.5
+    changed = _workspace_with_panel(tmp_path / "again", scenario)
+    meta = bundles.package_experiment("s", root=changed, verb="analyze",
+                                      output_path=os.path.join(changed, "a.tar.gz"))
+    assert instrumentation_contract.PANEL_ANSWER_ROUTING not in meta["runtimeRequirements"]
 
 
 def test_verify_allows_a_budget_only_where_a_cast_seat_thinks(tmp_path):
@@ -717,6 +731,108 @@ def test_the_transcript_says_a_withheld_turn_passed_nothing_on(status):
     assert (f"_Nothing from this turn was passed on (reasoning status {status}). "
             "What it wrote:_") in text
     assert "weighing it" in text
+
+
+def test_current_engines_accept_their_own_panel_bundles(tmp_path, monkeypatch):
+    """R1: the requirement a panel bundle carries is one this engine
+    supports, at submission (``_bundle_execute_command``), in the queued
+    worker (``instrumented_bundle.main``), and at execution (the check
+    ``_execute_run_bundle_inner`` makes)."""
+    from steerlab_server import cli, instrumented_bundle
+    from steerlab_server.api.submissions import _bundle_execute_command
+    from steerlab_server.experiment import instrumentation_contract as contract
+    required = [contract.PANEL_ANSWER_ROUTING]
+    kwargs = dict(verb="run", target_root=str(tmp_path), dtype="float32",
+                  device="cpu", prompts_path=None, source_path=None,
+                  package_evidence=False, record_path=str(tmp_path / "record.json"))
+    command = _bundle_execute_command("bundle.tar.gz", **kwargs,
+                                      runtime_requirements=required)
+    assert command[2] == "steerlab_server.instrumented_bundle"
+    calls = []
+    monkeypatch.setattr(cli, "main", lambda args: calls.append(args) or 0)
+    assert instrumented_bundle.main([command[3], *command[4:]]) == 0 and calls
+    contract.require(contract.requirements({"runtimeRequirements": required}),
+                     {"instrumentation": list(contract.SUPPORTED)})
+    # An engine without it still refuses, with the panel's own sentence.
+    with pytest.raises(ValueError, match="predates answer-only panel routing"):
+        contract.require(required, {"instrumentation": ["policy-v1"]})
+
+
+def test_the_rendered_prompt_decides_whether_the_block_opened(monkeypatch):
+    """R2: the fact comes from this turn's own rendered prompt."""
+    model = SimpleNamespace(model_id="test/qwen-panel", tokenizer=object())
+    for tail, opens in (("<|im_start|>assistant\n<think>\n", True),
+                        ("<|im_start|>assistant\n<think>\n\n</think>\n\n", False),
+                        ("<|im_start|>assistant\n", False)):
+        monkeypatch.setattr(multi_agent.prompt_render, "render_for_generation",
+                            lambda *a, _t=tail, **k: SimpleNamespace(text="x" + _t))
+        assert multi_agent.prompt_opens_reasoning(
+            model, "p", prompt_mode="chatAssistant", system_prompt=None,
+            reasoning_effort=None) is opens
+    def unrenderable(*a, **k):
+        raise RuntimeError("no template here")
+    monkeypatch.setattr(multi_agent.prompt_render, "render_for_generation", unrenderable)
+    assert multi_agent.prompt_opens_reasoning(
+        model, "p", prompt_mode="chatAssistant", system_prompt=None,
+        reasoning_effort=None) is None
+
+
+def test_an_agent_that_asks_to_think_is_taken_at_its_word(tmp_path):
+    """R3: neither the id heuristic nor another revision's record may
+    clear a thinking seat for an older engine; only an exact-revision probed
+    record that says the template cannot think does."""
+    from steerlab_server.experiment import model_capabilities as mc
+    assert multi_agent._template_thinks("acme/plain-model", "r1", str(tmp_path))
+    record = mc.heuristic("acme/plain-model", "r1")
+    record["source"] = mc.SOURCE_PROBE
+    record["detected"]["thinkingSwitch"] = mc.UNSUPPORTED
+    mc.write_record(record, str(tmp_path))
+    assert not multi_agent._template_thinks("acme/plain-model", "r1", str(tmp_path))
+    assert multi_agent._template_thinks("acme/plain-model", "r2", str(tmp_path))
+    # A thinking agent on a model whose id names no thinking family.
+    scenario = _panel(tmp_path, endpoint=False)
+    for seat in scenario.agents:
+        seat.base_model_id = "acme/plain-model"
+    artifact = model_variant.ModelVariant(name="t", base_model_id="acme/plain-model",
+                                          qwen_thinking_enabled=True)
+    with open(scenario.agents[0].variant_artifact_path, "w") as handle:
+        json.dump(artifact.to_dict(), handle)
+    assert multi_agent.panel_rule_changes(
+        scenario, study_effort="off", study_temperature=0.0,
+        root=str(tmp_path)) == [("reasoningPassedOn", "Ava")]
+
+
+def test_an_unclear_turn_keeps_its_text_apart_and_only_complete_turns_note_the_marker():
+    said = multi_agent.turn_text(LEAKS[2][0], thinking=True, finish="stop",
+                                 opens_in_prompt=False)
+    assert (said.reasoning, said.withheld_text) == (None, LEAKS[2][0])
+    scenario = _panel_plain()
+    outcome = multi_agent.turn_outcome(scenario, scenario.turns[0], 0, said)
+    assert outcome.fields["withheldText"] == LEAKS[2][0]
+    assert "reasoning" not in outcome.fields
+    cut = multi_agent.turn_text("Final answer: affirm, weighing", thinking=True,
+                                finish="length", opens_in_prompt=True)
+    stamp = multi_agent.turn_outcome(scenario, scenario.turns[0], 0, cut).fields["endpoint"]
+    assert stamp == {"name": "vote", "value": None, "unparsed": True}
+
+
+def test_unknown_statuses_fail_closed():
+    from steerlab_server.experiment import panel_effects
+    assert not multi_agent.TurnText(answer="x", status="aLaterStatus").passed_on
+    assert multi_agent.TurnText(answer="x").passed_on
+    assert multi_agent.TurnText(answer="x", status="notFound").passed_on
+    assert panel_effects.withheld_turn_ids(
+        [{"turnID": "t1", "reasoningStatus": "aLaterStatus"}]) == {"t1"}
+
+
+def test_only_seats_that_speak_count_toward_the_generating_temperature(tmp_path):
+    from steerlab_server.experiment import sampling
+    scenario = _panel(tmp_path, endpoint=False)
+    scenario.agents.append(multi_agent.Agent(id="c", name="Cy",
+                                             base_model_id="test/qwen-panel",
+                                             temperature=0.9))
+    root = _workspace_with_panel(tmp_path, scenario)
+    assert sampling.generating_temperature(_manifest(), root) == 0.0
 
 
 def test_the_judge_reads_thinking_and_attributed_closes_as_text():

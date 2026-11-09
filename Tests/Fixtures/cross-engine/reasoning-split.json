@@ -1,5 +1,47 @@
 {
   "about": "The reasoning splitter both engines share (issue #15): split is reasoning_split.split (Swift ReasoningSplit.split), turnText is multi_agent.turn_text (Swift MultiAgentRunner.turnText), and ownReasoning is multi_agent.own_reasoning_text (Swift MultiAgentRunner.ownReasoningText). Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, reasoning_split_fixture) and read by the Swift suite.",
+  "opensReasoning": [
+    {
+      "label": "opens-in-prompt",
+      "opens": true,
+      "promptTail": "<|im_start|>assistant\n<think>\n"
+    },
+    {
+      "label": "thinking-off-closes-it",
+      "opens": false,
+      "promptTail": "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    },
+    {
+      "label": "model-opens-it",
+      "opens": false,
+      "promptTail": "<|im_start|>assistant\n"
+    },
+    {
+      "label": "attributed-open-tag",
+      "opens": true,
+      "promptTail": "assistant\n<THINK mode='x'>\n"
+    },
+    {
+      "label": "thinking-is-not-a-tag",
+      "opens": false,
+      "promptTail": "assistant\n<thinking>\n"
+    },
+    {
+      "label": "open-tag-in-user-text",
+      "opens": true,
+      "promptTail": "user: <think> here<|im_start|>assistant\n"
+    },
+    {
+      "label": "closed-then-reopened",
+      "opens": true,
+      "promptTail": "<think>a</think> b <think>\n"
+    },
+    {
+      "label": "empty",
+      "opens": false,
+      "promptTail": ""
+    }
+  ],
   "ownReasoning": [
     {
       "answer": "Final answer: reverse.",
@@ -171,7 +213,8 @@
       "reasoning": null,
       "status": null,
       "text": "<think>a</think>b",
-      "thinking": false
+      "thinking": false,
+      "withheldText": null
     },
     {
       "answer": "<think>a</think>b",
@@ -181,7 +224,8 @@
       "reasoning": null,
       "status": null,
       "text": "<think>a</think>b",
-      "thinking": false
+      "thinking": false,
+      "withheldText": null
     },
     {
       "answer": "<think>a</think>b",
@@ -191,7 +235,8 @@
       "reasoning": null,
       "status": null,
       "text": "<think>a</think>b",
-      "thinking": false
+      "thinking": false,
+      "withheldText": null
     },
     {
       "answer": "b",
@@ -201,17 +246,19 @@
       "reasoning": "a\n",
       "status": "complete",
       "text": "a\n</think>\n\n  b",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "thinking-closed",
       "opensInPrompt": false,
-      "reasoning": "a\n</think>\n\n  b",
+      "reasoning": null,
       "status": "unclear",
       "text": "a\n</think>\n\n  b",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a\n</think>\n\n  b"
     },
     {
       "answer": "b",
@@ -221,7 +268,8 @@
       "reasoning": "a\n",
       "status": "complete",
       "text": "a\n</think>\n\n  b",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "b",
@@ -231,17 +279,19 @@
       "reasoning": "a",
       "status": "complete",
       "text": "a</think>b",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
       "finishReason": "length",
       "label": "thinking-closed-answer-cut",
       "opensInPrompt": false,
-      "reasoning": "a</think>b",
+      "reasoning": null,
       "status": "unclear",
       "text": "a</think>b",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a</think>b"
     },
     {
       "answer": "b",
@@ -251,7 +301,8 @@
       "reasoning": "a",
       "status": "complete",
       "text": "a</think>b",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "b",
@@ -261,7 +312,8 @@
       "reasoning": "a",
       "status": "complete",
       "text": "<think>a</think>\n\nb",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "b",
@@ -271,7 +323,8 @@
       "reasoning": "a",
       "status": "complete",
       "text": "<think>a</think>\n\nb",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "b",
@@ -281,7 +334,8 @@
       "reasoning": "a",
       "status": "complete",
       "text": "<think>a</think>\n\nb",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -291,7 +345,8 @@
       "reasoning": "a",
       "status": "unfinished",
       "text": "<think>a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -301,7 +356,8 @@
       "reasoning": "a",
       "status": "unfinished",
       "text": "<think>a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -311,7 +367,8 @@
       "reasoning": "a",
       "status": "unfinished",
       "text": "<think>a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -321,7 +378,8 @@
       "reasoning": "a",
       "status": "cutOff",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "a",
@@ -331,7 +389,8 @@
       "reasoning": null,
       "status": "notFound",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -341,7 +400,8 @@
       "reasoning": "a",
       "status": "cutOff",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -351,7 +411,8 @@
       "reasoning": "a",
       "status": "cutOff",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "a",
@@ -361,7 +422,8 @@
       "reasoning": null,
       "status": "notFound",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -371,7 +433,8 @@
       "reasoning": "a",
       "status": "cutOff",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -381,7 +444,8 @@
       "reasoning": "a",
       "status": "unfinished",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "a",
@@ -391,7 +455,8 @@
       "reasoning": null,
       "status": "notFound",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -401,7 +466,8 @@
       "reasoning": "a",
       "status": "unfinished",
       "text": "a",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -411,7 +477,8 @@
       "reasoning": "weighing it, Final answer: affirm",
       "status": "unfinished",
       "text": "weighing it, Final answer: affirm",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "weighing it, Final answer: affirm",
@@ -421,7 +488,8 @@
       "reasoning": null,
       "status": "notFound",
       "text": "weighing it, Final answer: affirm",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
@@ -431,7 +499,8 @@
       "reasoning": "weighing it, Final answer: affirm",
       "status": "unfinished",
       "text": "weighing it, Final answer: affirm",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "Final answer: reverse.",
@@ -441,17 +510,19 @@
       "reasoning": "Should I write a <think> tag? No.\n",
       "status": "complete",
       "text": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "open-tag-mentioned-in-reasoning",
       "opensInPrompt": false,
-      "reasoning": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+      "reasoning": null,
       "status": "unclear",
       "text": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse."
     },
     {
       "answer": "Final answer: reverse.",
@@ -461,7 +532,8 @@
       "reasoning": "Should I write a <think> tag? No.\n",
       "status": "complete",
       "text": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "Final answer: reverse.",
@@ -471,17 +543,19 @@
       "reasoning": "Sure. <think>secret plan",
       "status": "complete",
       "text": "Sure. <think>secret plan</think>Final answer: reverse.",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "tag-after-some-text",
       "opensInPrompt": false,
-      "reasoning": "Sure. <think>secret plan</think>Final answer: reverse.",
+      "reasoning": null,
       "status": "unclear",
       "text": "Sure. <think>secret plan</think>Final answer: reverse.",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "Sure. <think>secret plan</think>Final answer: reverse."
     },
     {
       "answer": "Final answer: reverse.",
@@ -491,67 +565,74 @@
       "reasoning": "Sure. <think>secret plan",
       "status": "complete",
       "text": "Sure. <think>secret plan</think>Final answer: reverse.",
-      "thinking": true
+      "thinking": true,
+      "withheldText": null
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "second-close-in-answer",
       "opensInPrompt": true,
-      "reasoning": "a</think>b</think>c",
+      "reasoning": null,
       "status": "unclear",
       "text": "a</think>b</think>c",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a</think>b</think>c"
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "second-close-in-answer",
       "opensInPrompt": false,
-      "reasoning": "a</think>b</think>c",
+      "reasoning": null,
       "status": "unclear",
       "text": "a</think>b</think>c",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a</think>b</think>c"
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "second-close-in-answer",
       "opensInPrompt": null,
-      "reasoning": "a</think>b</think>c",
+      "reasoning": null,
       "status": "unclear",
       "text": "a</think>b</think>c",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a</think>b</think>c"
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "open-tag-in-answer",
       "opensInPrompt": true,
-      "reasoning": "a</think>b <think>c",
+      "reasoning": null,
       "status": "unclear",
       "text": "a</think>b <think>c",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a</think>b <think>c"
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "open-tag-in-answer",
       "opensInPrompt": false,
-      "reasoning": "a</think>b <think>c",
+      "reasoning": null,
       "status": "unclear",
       "text": "a</think>b <think>c",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a</think>b <think>c"
     },
     {
       "answer": "",
       "finishReason": "stop",
       "label": "open-tag-in-answer",
       "opensInPrompt": null,
-      "reasoning": "a</think>b <think>c",
+      "reasoning": null,
       "status": "unclear",
       "text": "a</think>b <think>c",
-      "thinking": true
+      "thinking": true,
+      "withheldText": "a</think>b <think>c"
     }
   ]
 }

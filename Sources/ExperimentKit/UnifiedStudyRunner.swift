@@ -189,7 +189,7 @@ public final class UnifiedStudyRunner {
             // keep it off the main actor (same rule as the legacy path).
             let source = RunBundlePackager.captureSource(manifest)
             let bundle = try await Task.detached {
-                try RunBundlePackager.packageExperiment(manifest, source: source)
+                try RunBundlePackager.packageExperiment(manifest, source: source, verb: verb)
             }.value
             statusLine = "uploading \(bundle.lastPathComponent)…"
             let uploaded = try await client.uploadBundle(bundle)

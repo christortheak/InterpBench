@@ -210,7 +210,7 @@ class BundleEntry:
 
 
 def package_experiment(name: str, *, output_path: str | None = None,
-                       root: str | None = None) -> dict:
+                       root: str | None = None, verb: str | None = None) -> dict:
     manifest = Manifest.load(name, root)
     base = paths.project_root() if root is None else root
     files = _experiment_files(manifest, base, root)
@@ -238,7 +238,11 @@ def package_experiment(name: str, *, output_path: str | None = None,
         # one this packager cannot read, needs an engine that routes answers
         # only: computed from the same workspace files the bundle carries.
         from . import instrumentation_contract, multi_agent
-        if multi_agent.submission_panel_rule_changes(manifest, "run", base) != []:
+        # Keyed to the verbs that play panel turns: an analyze or evaluate
+        # bundle never routes a turn, and an older engine must still take it.
+        # A bundle packaged for no named verb is assumed to play its turns.
+        if multi_agent.submission_panel_rule_changes(
+                manifest, verb or "run", base) != []:
             required_runtime.add(instrumentation_contract.PANEL_ANSWER_ROUTING)
         meta["runtimeRequirements"] = sorted(required_runtime)
         meta["entries"] = [entry.to_dict() for entry in entries]

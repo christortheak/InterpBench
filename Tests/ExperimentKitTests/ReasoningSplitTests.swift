@@ -51,6 +51,15 @@ struct ReasoningSplitTests {
             #expect(said.answer == entry["answer"] as? String, "\(label)")
             #expect(said.reasoning == entry["reasoning"] as? String, "\(label)")
             #expect(said.status?.rawValue == entry["status"] as? String, "\(label)")
+            #expect(said.withheldText == entry["withheldText"] as? String, "\(label)")
+        }
+        let tails = try #require(fixture["opensReasoning"] as? [[String: Any]])
+        #expect(tails.count >= 6)
+        for entry in tails {
+            let label = try #require(entry["label"] as? String)
+            #expect(
+                ReasoningSplit.opensReasoning(try #require(entry["promptTail"] as? String))
+                    == entry["opens"] as? Bool, "\(label)")
         }
         let own = try #require(fixture["ownReasoning"] as? [[String: Any]])
         for entry in own {
@@ -145,6 +154,31 @@ struct ReasoningSplitTests {
         var cut = Self.oldEngineTurn(speaker: "a")
         cut.reasoningStatus = "cutOff"
         #expect(PanelEffects.withheldTurnIDs([cut]) == ["t1"])
+    }
+
+    @Test func unknownStatusesFailClosed() {
+        #expect(!MultiAgentRunner.TurnText(
+            answer: "x", reasoning: nil, status: "aLaterStatus", withheldText: nil).passedOn)
+        #expect(MultiAgentRunner.TurnText(answer: "x").passedOn)
+        #expect(MultiAgentRunner.TurnText(answer: "x", status: .notFound).passedOn)
+        var later = Self.oldEngineTurn(speaker: "a")
+        later.reasoningStatus = "aLaterStatus"
+        #expect(PanelEffects.withheldTurnIDs([later]) == ["t1"])
+    }
+
+    @Test func anUnclearTurnKeepsItsTextApartAndOnlyACompleteTurnNotesTheMarker() throws {
+        let said = MultiAgentRunner.turnText(
+            Self.leaks[2], thinking: true, finishReason: "stop", opensInPrompt: false)
+        #expect(said.reasoning == nil && said.withheldText == Self.leaks[2])
+        let scenario = Self.panel()
+        let cut = MultiAgentRunner.turnText(
+            "Final answer: affirm, weighing", thinking: true, finishReason: "length",
+            opensInPrompt: true)
+        let stamp = try #require(
+            MultiAgentRunner.turnOutcome(
+                scenario: scenario, turn: scenario.turns[0], index: 0, said: cut
+            ).endpoint)
+        #expect(stamp.markerInReasoning == nil && stamp.value == nil)
     }
 
     @Test func temperaturesAreWrittenAsPythonWritesThem() {

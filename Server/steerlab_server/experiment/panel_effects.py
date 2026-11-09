@@ -163,8 +163,11 @@ def withheld_turn_ids(turns: list[dict]) -> frozenset:
     from their records' ``reasoningStatus``. Swift twin:
     ``PanelEffects.withheldTurnIDs``."""
     from . import multi_agent
+    # An allow-list, as routing reads it: a status this engine does not know
+    # passed nothing on.
     return frozenset(t.get("turnID") for t in turns
-                     if t.get("reasoningStatus") in multi_agent.WITHHELD_STATUSES)
+                     if t.get("reasoningStatus") is not None
+                     and t.get("reasoningStatus") not in multi_agent.PASSED_STATUSES)
 
 
 def compute(configured_turns: list[dict], baseline_turns: list[dict],

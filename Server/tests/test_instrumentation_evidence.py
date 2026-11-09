@@ -156,7 +156,10 @@ def test_a_version_two_policy_requires_an_engine_that_knows_it():
     first, second = ({'json': json.dumps({'schemaVersion': version})} for version in (1, 2))
     previous = {'instrumentation': list(contract.UNMARKED)}
     contract.require(contract.requirements({'interventionPolicies': [first]}), previous)
-    document = {'agents': [{'artifact': {'interventionPolicies': [first, second]}}], 'probeMeasurements': {'probes': [{}]}}
+    # A panel bundle declares panel-answer-routing-v1 at packaging (issue #15);
+    # adding it to SUPPORTED is a deliberate contract change this pin shows.
+    document = {'agents': [{'artifact': {'interventionPolicies': [first, second]}}], 'probeMeasurements': {'probes': [{}]},
+                'runtimeRequirements': ['panel-answer-routing-v1']}
     assert contract.requirements(document) == list(contract.SUPPORTED)
     with pytest.raises(ValueError, match='policy-v2'): contract.require(contract.requirements(document), previous)
     contract.require(contract.requirements(document), {'instrumentation': list(contract.SUPPORTED)})

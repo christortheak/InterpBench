@@ -4735,7 +4735,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
     workspace = paths.project_root()
 
     # ---- stage 2: package, locally -----------------------------------------
-    meta = bundles.package_experiment(name)
+    meta = bundles.package_experiment(name, verb=study_verb)
     bundle_path = meta["bundlePath"]
     bundle_sha = meta["bundleSha256"]
     bundle_facts = {"path": bundle_path, "sha256": bundle_sha,
