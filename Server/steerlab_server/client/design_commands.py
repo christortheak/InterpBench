@@ -42,7 +42,8 @@ def run(invocation) -> CLIResult:
         from ..experiment.manifest_files import digest_bytes
         sha = digest_bytes(path.read_bytes())
         arm = design_panels.review_agent({"artifactPath": args[0], "artifactFileSHA256": sha}, root)
-        result = {"path": args[0], "artifactFileSHA256": sha, "artifact": arm["artifact"], "document": arm["artifact"]}
+        from .study_agents import described
+        result = described(args[0], sha, arm["artifact"])
     elif spec.verb == "list":
         result = library.catalog(root)
     elif spec.verb == "inspect":

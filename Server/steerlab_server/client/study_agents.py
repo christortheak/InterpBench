@@ -10,7 +10,16 @@ def inspect(path: str, *, root: Path) -> dict:
     data = design_files.ordinary(root, path).read_bytes()
     digest = manifest_files.digest_bytes(data)
     arm = design_panels.review_agent({"artifactPath": path, "artifactFileSHA256": digest}, root)
-    return {"path": path, "artifactFileSHA256": digest, "artifact": arm["artifact"], "document": arm["artifact"]}
+    return described(path, digest, arm["artifact"])
+
+
+def described(path: str, digest: str, artifact: dict) -> dict:
+    """One inspected agent: its file, its digest, and ``agent`` — how it was
+    made (``kind`` swept or handmade, and the sentence a reader is shown) and
+    how hard it thinks. Same keys on the Mac (``AgentArtifactDocument``)."""
+    from ..experiment.model_variant import agent_origin
+    return {"path": path, "artifactFileSHA256": digest, "artifact": artifact,
+            "document": artifact, "agent": agent_origin(artifact)}
 
 
 def catalog(*, root: Path) -> dict:
@@ -57,4 +66,6 @@ def attach(name: str, artifact: str, *, root: Path, expected: str, artifact_sha2
         document['variantConditions'] = [a for a in document.get('variantConditions', [])
             if a['name'] != arm['name'] and a['artifactPath'] != arm['artifactPath']] + [arm]
         store.save_raw(document, str(root))
-        return {**files.snapshot(name, root), "changed": document.source_digest != expected}
+        from ..experiment.model_variant import agent_origin
+        return {**files.snapshot(name, root), "changed": document.source_digest != expected,
+                "agent": agent_origin(arm["artifact"])}

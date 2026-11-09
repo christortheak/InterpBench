@@ -131,6 +131,7 @@ from . import cli_envelope as envelope
 from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands, setup_commands
 from .client import results_commands, housekeeping_commands
 from .client import custom_code_commands
+from .client import agent_creation
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -306,6 +307,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *authoring_commands.VERB_SPECS,
     *custom_code_commands.VERB_SPECS,
     *housekeeping_commands.VERB_SPECS,
+    *agent_creation.VERB_SPECS,
     *model_commands.specs(_RUNNER_FLAGS),
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
@@ -5290,6 +5292,7 @@ HANDLERS = {"setup": setup_commands.run, "workspace": bootstrap_commands.run, "s
             "pack": study_assembly.run,
             "design": lambda i: housekeeping_commands.run(i) if housekeeping_commands.handles(i) else design_commands.run(i),
             "agent": lambda i: (authoring_commands.run(i) if i.spec.verb == "list"
+                                else agent_creation.run(i) if i.spec.verb == "create"
                                 else housekeeping_commands.run(i) if housekeeping_commands.handles(i)
                                 else design_commands.run(i)),
             "panel": authoring_commands.run,
