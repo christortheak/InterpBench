@@ -114,8 +114,8 @@ def test_band_width_and_centering_follow_the_editor(tmp_path, capsys):
 
 
 def test_names_are_compared_ignoring_case(tmp_path, capsys):
-    base.create(tmp_path, capsys, *base.base_args("Taken"))
-    code, refused = base.cli(tmp_path, capsys, *base.base_args("taken"))
+    base.create(tmp_path, capsys, *base.base_args("taken"))
+    code, refused = base.cli(tmp_path, capsys, *base.base_args("TAKEN"))
     assert code == 65 and "ignoring case" in refused["error"]["reason"]
 
 
