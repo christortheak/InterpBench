@@ -104,8 +104,9 @@ an answer-token instrument, a commit other than the study's, or a vector
 without that layer or its residual norm. It names each agent a panel's seats
 are cast with by the same rules, less the answer-token and revision ones (a
 panel reads its seats' generated turns, and loads each seat at its own
-revision), and `panel check` refuses such a seat too; to fix one, make the
-corrected agent and compile the panel again with it in that seat. A revision is refused only when both the agent and the
+revision), and the Mac command line's `panel check` refuses such a seat in a
+bound panel too; to fix one, make the corrected agent and put it in that seat
+(the refusal's repair names the commands). A revision is refused only when both the agent and the
 study name full commits that differ (or a shortened hash the study's commit
 does not begin with); a branch, a tag, a shortened hash the other begins with,
 or an agent that records no revision gets an `agentRevisionNotChecked` note

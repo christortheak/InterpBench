@@ -53,7 +53,8 @@ migration that rewrites frozen bytes.
   level the older thinking switch cannot say (`on`, `low`, `medium`, or
   `high`) reaches the template even with no reasoning budget, and records
   stamp the level the template rendered (`agentReasoningEffort` on an arm's
-  records, `reasoningEffort` on a panel turn). `qwenThinkingEnabled` reads
+  records, `reasoningEffort` on a panel turn, where a turn played as
+  thinking never records `off`). `qwenThinkingEnabled` reads
   as before, and a file whose two fields disagree is refused.
   - **The study keeps the budget and the temperature.** A study whose own
     effort is off may declare `reasoningMaxTokens` when an attached agent
@@ -78,9 +79,10 @@ migration that rewrites frozen bytes.
     that breaks a rule: a level the template does not accept, fields that
     disagree, more than one adapter, a thinking agent beside an answer-token
     instrument, a commit other than the study's, or a vector without that
-    layer or its residual norm. It names every agent a panel's seats are
-    cast with by the same rules, less the answer-token and revision ones,
-    and `panel check` refuses such a seat. A study frozen before these rules
+    layer or its residual norm. On either client, it names every agent a
+    panel's seats are cast with by the same rules, less the answer-token and
+    revision ones, and the Mac command line's `panel check` refuses such a
+    seat in a bound panel. A study frozen before these rules
     is noted at `verify` (`refusedWhenRun`), and refused at submission and
     at run start. A revision the spelling cannot check gets an
     `agentRevisionNotChecked` note.
