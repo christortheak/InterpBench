@@ -460,3 +460,14 @@ def test_a_handmade_steered_agent_passes_the_same_freeze_gate(tmp_path, capsys):
                                     "artifact": document}]}
     freeze_policy.check_variant_validity("s", study, evidence_grade_variants=set())
     assert "handmade" in document
+
+
+def test_a_new_policy_version_drops_the_handmade_record(tmp_path, capsys):
+    # The record describes the agent it was made for; a new version made by
+    # policy-attach is another agent, as it is for a promotion record.
+    from steerlab_server.experiment import policy_authoring
+    _, result = create(tmp_path, capsys, *base_args("plain"))
+    plan = policy_authoring.attachment_review(
+        {"agentPath": result["path"], "name": "plain-v2", "policyPaths": []}, tmp_path)
+    assert "handmade" not in plan["document"]
+    assert "handmade" in json.loads((tmp_path / result["path"]).read_text())

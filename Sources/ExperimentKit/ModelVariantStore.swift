@@ -719,7 +719,7 @@ extension ModelVariantArtifact {
         let madeWith = record["madeWith"]?.agentRecordString.flatMap { $0.isEmpty ? nil : $0 }
         let reason = record["reason"]?.agentRecordString.flatMap { $0.isEmpty ? nil : $0 }
         return (madeWith.map { "Made by hand with \($0). " } ?? "Made by hand. ") + chose
-            + (reason.map { " Stated reason: \($0)" } ?? " No reason was stated.")
+            + (reason.map { " Stated reason: \"\($0)\"." } ?? " No reason was stated.")
     }
 }
 

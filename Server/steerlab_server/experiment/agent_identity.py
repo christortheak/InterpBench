@@ -173,7 +173,7 @@ def _agent_made(artifact: dict) -> dict:
     return {"kind": kind,
             "summary": ((f"Made by hand with {made_with}. " if made_with
                          else "Made by hand. ") + chose
-                        + (f" Stated reason: {reason}" if reason
+                        + (f" Stated reason: \"{reason}\"." if reason
                            else " No reason was stated."))}
 
 

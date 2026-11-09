@@ -1476,6 +1476,32 @@ def test_agent_and_latent_arms_are_described(root):
     assert "- **formal**: declared for the study, and the run holds no responses for it." in methods
 
 
+def test_agent_arms_say_how_they_were_made_and_their_thinking_level(root):
+    # Public issues #16 and #17: the export names an agent swept or handmade,
+    # read from its own file, and says what thinking level that file declares.
+    handmade = {"name": "chosen", "baseModelID": "test/model", "alphaInNormUnits": True,
+                "injections": [{"concept": "formality", "layer": 3, "alpha": 0.2}],
+                "reasoningEffort": "medium", "qwenThinkingEnabled": True,
+                "handmade": {"madeWith": "agent create", "reason": "a prior study's setting"}}
+    swept = {"name": "selected", "baseModelID": "test/model", "alphaInNormUnits": True,
+             "injections": [{"concept": "formality", "layer": 3, "alpha": 0.2}],
+             "qwenThinkingEnabled": False,
+             "promotion": {"experiment": "screen", "promotedBy": "criterion"}}
+    manifest = _manifest(variantConditions=[
+        {"name": "chosen", "artifactPath": "runs/model-variants/a.json",
+         "artifactHash": "1" * 64, "artifact": handmade},
+        {"name": "selected", "artifactPath": "runs/model-variants/b.json",
+         "artifactHash": "2" * 64, "artifact": swept}])
+    _write_run(root, manifest, _python_records("0" * 64, conditions=("baseline", "chosen", "selected")))
+    methods = _read(_export(root), "methods.md")
+    assert ("How it was made (`handmade`): Made by hand with agent create. The researcher "
+            "chose its steering settings; no sweep selected them. Stated reason: \"a prior "
+            "study's setting\". Its file declares reasoning effort `medium`.") in methods
+    assert ("How it was made (`swept`): A sweep chose this agent's settings: experiment "
+            "promote made it from study screen, using the cell the study's declared rule "
+            "selected. Its file's thinking switch reads as reasoning effort `off`.") in methods
+
+
 # --- the shape of the files ----------------------------------------------------
 
 
