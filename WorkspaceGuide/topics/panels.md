@@ -61,6 +61,46 @@ and pin the corrected file. To attribute a turn in `generations.jsonl`, read
 `speakerAgentID`; `speakerName` is a display name and may be shared. Runs
 made before that key existed lack it; join `turns.jsonl` for those.
 
+## What a seat passes on
+
+Whether a seat thinks belongs to whoever sits in it: a cast agent's own
+setting, or, for a baseline seat, the study's `reasoningEffort` (so a
+baseline seat in a thinking study thinks, as an ordinary study's baseline
+does). A seat that thinks gets the study's `reasoningMaxTokens` for its
+reasoning, and its turn's `maxTokens` is then the budget for its answer. To
+cast a thinking judge beside a study that does not think, cast an agent with
+no steering and thinking on.
+
+**Other seats read a thinking seat's answer, never its reasoning.** Each such
+turn is split into the two: `output` on its record is the answer, and
+`reasoning` holds what it thought. A template's `outputs.<label>` placeholder
+and a contract input read the answer. An endpoint is read from the answer, and its stamp carries
+`markerInReasoning: true` when the reasoning also wrote the marker. A turn
+whose reasoning was cut off before it finished has no answer: nothing from
+it is passed on, its `routedAgentIDs` is empty, and its `reasoningStatus` is
+`cutOff`. A seat that does not think passes on its whole text, as before.
+
+A seat reads its **own** earlier reasoning only when the panel declares
+`"includeOwnReasoning": true` (off by default, as chat templates drop
+earlier turns' reasoning). It then sees its routed turns and its own
+contract inputs with their reasoning, and its colleagues still see answers
+only.
+
+**Temperature is the study's**, for every seat that declares none. A panel
+may give a seat its own with `"temperature": <t>` on that seat; a seat at 0 is
+greedy and one above it is seeded per turn. An agent file's temperature is
+never used. Every turn records `temperature`, `temperatureSource` (`study`,
+`panelSeat`, or `panel` when no study runs it), `reasoningEffort`, and
+`reasoningMaxTokens`. `panel check` refuses a negative seat temperature, and
+`experiment verify` names one that equals the study's
+(`seatTemperatureChangesNothing`), because it changes nothing.
+
+An engine from before this rule passed reasoning on. Both clients refuse to
+send it a panel that has a seat that thinks, a seat temperature, or
+`includeOwnReasoning` (`remoteStudy.panelAnswerRouting` missing from its
+capabilities). A run such an engine started is not resumed or merged under
+the new rule when that changes what the seats read; start a new run.
+
 ## Reviewed casting, on either client
 
 **Complete local authoring.** Both clients offer `agent list`, `agent inspect`,

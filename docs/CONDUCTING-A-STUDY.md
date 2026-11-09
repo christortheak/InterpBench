@@ -1116,6 +1116,31 @@ of whether the observed-direction policy suffices, or an expected direction
 must be declarable, is the researcher's; until it is made, report
 promotion under this gate as "monotone in the observed direction".
 
+### 5.6 Panels: what each seat is shown
+
+In a deliberation study, what each seat reads is the manipulation, so the
+routing record has to describe exactly what happened.
+
+- **Seats read answers, not reasoning.** A seat that thinks has its turn split
+  into reasoning and answer; the other seats, and templates, read the answer
+  alone, and its endpoint is read from the answer. A turn whose reasoning was
+  cut off before it finished passes nothing on and says so
+  (`reasoningStatus: cutOff`). Whether a seat re-reads its *own* earlier
+  reasoning is a design choice, since it may hold the seat to its first view:
+  declare `includeOwnReasoning` in the panel to show it, and report that you
+  did. It is off by default.
+- **Thinking belongs to the seat, the reasoning budget to the study.** A cast
+  agent thinks by its own setting, and a baseline seat follows the study's
+  `reasoningEffort`. Every thinking seat gets the study's
+  `reasoningMaxTokens`, so a long reasoning block cannot use up the room for
+  the answer.
+- **Temperature belongs to the study.** A seat that should sample differently
+  declares its own `temperature` in the panel, which makes the difference a
+  stated part of the design; each turn records whether its temperature came
+  from the study or the seat. An agent file's temperature is never used.
+  Report a per-seat temperature as a design factor: a seat that differs from
+  its colleagues in temperature differs in more than who it is.
+
 ---
 
 ## 6. Measured-run policy: which substrate supports which claim

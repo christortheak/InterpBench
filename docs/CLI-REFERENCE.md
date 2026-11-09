@@ -1404,6 +1404,14 @@ text is refused with the rule's own sentence and repair instead, since every
 engine refuses it. A panel never reads the seed list and is never refused for
 it.
 
+A panel study is refused by a runner whose capabilities lack
+`remoteStudy.panelAnswerRouting` (`panelAnswerRoutingUnsupported` from the
+cross-platform client, `missingPrerequisite` from the Mac) when its panel has a
+seat that thinks, a seat with its own `temperature`, or `includeOwnReasoning`:
+such an engine passes each turn's whole text on, reasoning included, and
+ignores the other two. `verify` on a panel study names a seat whose declared
+temperature is the study's (`seatTemperatureChangesNothing`), never a refusal.
+
 A declared seed setting the run will not read carries a `seedSettingNotUsed`
 advisory here, at `set-instruments`, and at `verify`, never a refusal:
 `derivedSHA256` at temperature 0 with one seed, where decoding is greedy and
