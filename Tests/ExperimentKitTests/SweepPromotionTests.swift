@@ -764,7 +764,9 @@ extension ExperimentStoreTests {
             // The same promotion again returns that agent…
             let again = try AgentPromotion.promote(
                 experimentName: "pr", concept: "fear", log: { _ in })
-            #expect(again.url == record.url)
+            #expect(again.url.resolvingSymlinksInPath().path
+                == record.url.resolvingSymlinksInPath().path)
+            #expect(again.artifact == record.artifact)
             // …but not one minted before promotion carried the level (this
             // engine used to mint such a study's agent with thinking off).
             var stale = record.artifact
