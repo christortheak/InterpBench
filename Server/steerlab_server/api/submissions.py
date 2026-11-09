@@ -914,9 +914,9 @@ def _refuse_settings(manifest: Manifest | None, verb: str,
     and a pipeline whose declared stages include it. ``root`` is where the
     study's own files are (a panel's seats are read from there): for a
     bundle, its own members, extracted for this check
-    (``_bundle_json_members``), never this engine's root; when they cannot
-    be extracted within the unpack's limits, run start judges the unpacked
-    bundle."""
+    (``_bundle_json_members``), never this engine's root; when that helper
+    extracts nothing (the bundle cannot be read, or breaks a limit), run
+    start's ``settings_refusal`` judges the unpacked bundle."""
     if manifest is None or not _runs_the_study(verb, stages):
         return
     from ..experiment import study_admission
@@ -1994,18 +1994,25 @@ def _bundle_json_members(bundle_path: str, *, extract: bool = True):
     vectors or weights themselves. Extracted with the ``data`` filter, so
     no member can land outside the folder.
 
-    A bundle is untrusted input, so this follows the real unpack's limits
-    (``bundles``), on the DECLARED sizes, before anything is written: an
-    archive with more members than ``max_member_count()``, or whose files
-    declare more than ``max_total_bytes()`` in all, extracts nothing; and a
-    JSON member over ``max_metadata_bytes()`` is left out, and if the
-    members to extract still sum to more than ``max_metadata_bytes()``,
-    nothing is. The folder is empty when the bundle cannot be read or breaks
-    a limit, so these checks fall to run start, where the real unpack
-    refuses such a bundle. Nothing is read at all unless ``extract``: the
-    caller asks only for a bundle whose manifest it read and whose
-    submission runs the study, the only case its checks read files for.
-    Removed on exit."""
+    A bundle is untrusted input, so this is bounded on the DECLARED sizes,
+    before anything is written:
+
+    - by the real unpack's own limits (``bundles``): an archive with more
+      members than ``max_member_count()``, or whose files declare more than
+      ``max_total_bytes()`` in all, extracts nothing, and the unpack itself
+      refuses such a bundle;
+    - by this preflight's own caps, which the unpack does not apply (it
+      holds only its own metadata documents to ``max_metadata_bytes()``): a
+      JSON member over ``max_metadata_bytes()`` is left out, and if the
+      members to extract still sum to more than that, nothing is. Such a
+      bundle unpacks as usual, and run start's ``settings_refusal`` judges
+      the unpacked files.
+
+    The folder is empty when the bundle cannot be read or extracts nothing,
+    so these checks are left to run start. Nothing is read at all unless
+    ``extract``: the caller asks only for a bundle whose manifest it read
+    and whose submission runs the study, the only case its checks read files
+    for. Removed on exit."""
     with tempfile.TemporaryDirectory(prefix="steerlab-bundle-settings-") as scratch:
         try:
             if not extract:

@@ -580,6 +580,26 @@ import Testing
         }
     }
 
+    /// The other side of the frozen rule: every seat's agent is readable, is
+    /// the one it pins, and is off, so nothing thinks and the budget beside
+    /// an off effort is refused. A seat with an empty path is a bare seat.
+    @Test func aFrozenPanelWhoseReadableSeatsAreAllOffRefusesItsBudget() async throws {
+        try await withWorkspace { root in
+            try writeAgent(root, ["reasoningEffort": "off"])
+            var pinned = scenario()
+            pinned.agents[0].variantArtifactHash = sha(
+                try Data(contentsOf: root.appending(path: Self.agentPath)))
+            pinned.agents[1].variantArtifactPath = ""
+            #expect(!MultiAgentRunner.seatThinks(
+                in: pinned, studyRevision: Self.revision, frozen: true))
+            var frozen = try panelStudy(root, status: .frozen)
+            try JSONEncoder().encode(pinned).write(to: root.appending(path: "prompts/panels/p.json"))
+            frozen.reasoningEffort = "off"
+            frozen.reasoningMaxTokens = 256
+            #expect(frozen.reasoningProtocolViolations == [ReasoningEffort.budgetWithoutEffortReason])
+        }
+    }
+
     /// The repair reads the editor's rule against the workspace it is given,
     /// not whatever the process points at.
     @Test func theSeatRepairReadsTheGivenWorkspace() async throws {

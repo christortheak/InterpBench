@@ -1403,8 +1403,10 @@ extension ModelVariantArtifact {
     /// study editor's own rule (`SeatCasting.state`):
     ///
     /// - compiled from a semantic panel (a non-empty semantic path): `panel
-    ///   compile` again, casting every seat by ID; the study editor's Seats
-    ///   when a seat ID holds `=`, which `--seat` cannot express;
+    ///   compile` again, casting every seat by ID; when a seat ID holds `=`,
+    ///   which `--seat` cannot express, the casting-file form of `panel
+    ///   compile` (`--casting`, which names seats by ID) or the study
+    ///   editor's Seats;
     /// - a casting the editor recompiles (an empty semantic path, or a pin in
     ///   `prompts/panels/compiled/`): the editor's Seats section;
     /// - hand-bound: a copy with each seat's agent replaced, pinned in the

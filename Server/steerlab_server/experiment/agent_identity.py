@@ -826,8 +826,9 @@ def seat_repair(manifest, seat_ids, *, target: str, authoring,
 
     - compiled from a semantic panel (a non-empty
       ``multiAgentSemanticScenarioPath``): ``panel compile`` again, casting
-      every seat by ID; on the Mac, the study editor when a seat ID holds
-      ``=``, which its ``--seat`` cannot express;
+      every seat by ID; on the Mac, when a seat ID holds ``=``, which its
+      ``--seat`` cannot express, the casting-file form of ``panel compile``
+      (``--casting``, which names seats by ID) or the study editor's Seats;
     - a casting the Mac study editor recompiles (:func:`editor_reads_as_cast`):
       the editor's Seats section on the Mac;
     - hand-bound: a copy with each seat's agent replaced, pinned in the

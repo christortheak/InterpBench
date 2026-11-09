@@ -747,6 +747,20 @@ def _two_seat_frozen(root, *, first_pinned, second_pinned):
     return files
 
 
+def test_a_frozen_panel_whose_readable_seats_are_all_off_refuses_its_budget(tmp_path):
+    """The other side of the frozen rule: every seat's agent is readable, is
+    the one it pins, and is off, so nothing in the panel thinks and verify
+    names the budget beside an off effort."""
+    files = _two_seat_frozen(tmp_path, first_pinned=False, second_pinned=False)
+    root = str(tmp_path)
+    for seat in ("a", "b"):
+        files[seat].write_text(json.dumps({"name": seat, "baseModelID": QWEN,
+                                           "reasoningEffort": "off"}))
+    assert multi_agent.panel_seat_thinks(store.load_raw("study", root), root) is False
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON in Manifest.load(
+        "study", root).verify(root)
+
+
 def test_an_unreadable_unpinned_seat_never_hides_the_seats_after_it(tmp_path):
     """Frozen: seat a has no pin and its agent file is gone; seat b's pinned
     agent was saved in place to off. Each seat is read on its own, and a file

@@ -1809,7 +1809,8 @@ public enum MultiAgentRunner {
     ) -> Bool {
         if frozen {
             for agent in scenario.agents {
-                guard let path = agent.variantArtifactPath else { continue }
+                // An empty path is a bare seat, as the server reads it.
+                guard let path = agent.variantArtifactPath, !path.isEmpty else { continue }
                 // An agent whose file is no longer the one the seat pins
                 // (saved in place after the freeze, or gone) counts as
                 // thinking: the study froze with this budget allowed, and an
