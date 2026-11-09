@@ -149,11 +149,20 @@ belongs to the agent: its file's `reasoningEffort` (set with `agent create
 agent file that spells only the older `qwenThinkingEnabled` reads as before
 (true is the template's default effort, false is off); a file whose two fields
 disagree is refused. The study keeps the reasoning budget
-(`reasoningMaxTokens`), which applies to every arm that thinks, and the
-temperature, which applies to every arm: an agent file's `temperature` is a
-Playground setting, stamped on records as `agentPlaygroundTemperature` and
-never used for a measured run. Each sampled response of an agent arm stamps
-`agentReasoningEffort`, the level it ran at.
+(`reasoningMaxTokens`), which applies to every arm that thinks and to no arm
+that does not, and the temperature, which applies to every arm: an agent
+file's `temperature` is a Playground setting, stamped on records as
+`agentPlaygroundTemperature` and never used for a measured run. A study whose
+own effort is off may still declare a reasoning budget when an attached agent
+arm thinks. Each response of an agent arm stamps `agentReasoningEffort`, the
+level that reached the chat template (a level the template ignores is stamped
+`on`). `verify` names each attached agent arm that breaks a rule, so freeze
+refuses it: a level the template does not accept, a file whose fields
+disagree, more than one adapter, an agent that thinks beside an answer-token
+instrument, a revision other than the study's, or a vector without that layer
+or its residual norm. A study frozen before these rules verifies with a
+`refusedWhenRun` note and is refused when its run is submitted or started;
+duplicate it and attach a corrected agent.
 
 **`set-system-prompt <name> "<text>"`** — declares the study's system prompt
 on a draft: the deployment frame every arm is read under. `""` clears it. The

@@ -26,6 +26,17 @@ public enum StudySampling {
         variant?.resolvedReasoningEffort ?? manifest.resolvedReasoningEffort
     }
 
+    /// The reasoning budget an arm generates under: the study's declared
+    /// budget, for an arm that thinks; none for one that does not. A study
+    /// whose own effort is off may declare a budget for its thinking agent
+    /// arms (ruling 2026-11-08); it never reaches baseline or an off agent.
+    /// Python twin: `effective_variant_condition` and `study_arm_budget`.
+    public static func reasoningBudget(
+        _ manifest: ExperimentManifest, variant: ModelVariantArtifact?
+    ) -> Int? {
+        reasoningEffort(manifest, variant: variant).isOn ? manifest.reasoningMaxTokens : nil
+    }
+
     public static func deriveSeed(
         experimentHash: String, condition: String, promptID: String, sampleIndex: Int
     ) -> UInt64 {

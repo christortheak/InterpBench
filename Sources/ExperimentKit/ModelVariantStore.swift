@@ -453,6 +453,12 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
     /// promotion's `qualification`, so either engine's writer can extend it
     /// without the other learning keys.
     public var handmade: JSONValue?
+    /// Why the file this artifact was decoded from cannot be read as one
+    /// agent (`fileProblem(effortValue:…)`), recorded rather than thrown, so a
+    /// study whose inline agent has such a problem still DECODES and its
+    /// `verify` names the problem, as the server's does. Never encoded; nil
+    /// for an artifact built in code. Read it through `fileProblem`.
+    public internal(set) var fileProblemOnRead: String? = nil
 
     public init(
         name: String,
@@ -548,7 +554,10 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         promptMode =
             try container.decodeIfPresent(String.self, forKey: .promptMode) ?? "chatAssistant"
         let declaredThinking = try container.decodeIfPresent(Bool.self, forKey: .qwenThinkingEnabled)
-        reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+        // Read as any JSON value, so a non-string level gets the same
+        // sentence as the server's, rather than a decoding error.
+        let effortValue = try container.decodeIfPresent(JSONValue.self, forKey: .reasoningEffort)
+        if case .string(let spelled)? = effortValue { reasoningEffort = spelled } else { reasoningEffort = nil }
         handmade = try container.decodeIfPresent(JSONValue.self, forKey: .handmade)
         // The boolean is the effort's shadow: a file that spells only the
         // effort thinks exactly when the effort is not off.
@@ -561,18 +570,16 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         promotion = try container.decodeIfPresent(Promotion.self, forKey: .promotion)
         interventionPolicies = try container.decodeIfPresent([JSONValue].self, forKey: .interventionPolicies)
         try InterventionPolicyLibrary.validateAttachments(interventionPolicies)
-        if let problem = Self.fileProblem(
-            reasoningEffort: reasoningEffort, qwenThinkingEnabled: declaredThinking,
+        fileProblemOnRead = Self.fileProblem(
+            effortValue: effortValue == .null ? nil : effortValue,
+            qwenThinkingEnabled: declaredThinking,
             hasPromotion: promotion != nil, hasHandmade: handmade?.agentRecordObject != nil)
-        {
-            throw AgentFileProblem(reason: problem)
-        }
     }
 }
 
 /// An agent file whose fields cannot be read as one agent
-/// (`ModelVariantArtifact.fileProblem`). Thrown from decoding, so every
-/// reader refuses the same file with the same sentence.
+/// (`ModelVariantArtifact.fileProblem`), as the readers that refuse it throw
+/// it: the same sentence everywhere.
 public struct AgentFileProblem: Error, CustomStringConvertible, LocalizedError, Sendable {
     public let reason: String
     public var description: String { reason }
@@ -602,12 +609,27 @@ extension ModelVariantArtifact {
         reasoningEffort: String?, qwenThinkingEnabled: Bool?,
         hasPromotion: Bool, hasHandmade: Bool
     ) -> String? {
-        if let effort = reasoningEffort {
-            guard let parsed = ReasoningEffort(rawValue: effort) else {
-                return "This agent file's reasoningEffort \"\(effort)\" is not a level "
-                    + "SteerLab knows (off, on, low, medium, high, xhigh). Make the agent "
-                    + "again with agent create --reasoning-effort, or in the app's agent "
-                    + "editor."
+        fileProblem(
+            effortValue: reasoningEffort.map(JSONValue.string),
+            qwenThinkingEnabled: qwenThinkingEnabled,
+            hasPromotion: hasPromotion, hasHandmade: hasHandmade)
+    }
+
+    /// `fileProblem` for the level as the file spells it, any JSON value: a
+    /// non-string level is named in the server's own spelling
+    /// (`json.dumps`), so both engines say the same sentence.
+    public static func fileProblem(
+        effortValue: JSONValue?, qwenThinkingEnabled: Bool?,
+        hasPromotion: Bool, hasHandmade: Bool
+    ) -> String? {
+        if let effortValue {
+            guard case .string(let effort) = effortValue,
+                let parsed = ReasoningEffort(rawValue: effort)
+            else {
+                return "This agent file's reasoningEffort \(Self.pythonJSONText(effortValue)) "
+                    + "is not a level SteerLab knows (off, on, low, medium, high, xhigh). "
+                    + "Make the agent again with agent create --reasoning-effort, or in the "
+                    + "app's agent editor."
             }
             if let thinking = qwenThinkingEnabled, thinking != parsed.isOn {
                 return "This agent file says reasoningEffort \"\(effort)\" but "
@@ -623,6 +645,36 @@ extension ModelVariantArtifact {
                 + "made one way: make it again with agent create or experiment promote."
         }
         return nil
+    }
+
+    /// Why this agent cannot be read as one agent, or nil: the problem its
+    /// file had when it was read, else its current fields' (an artifact built
+    /// or edited in code).
+    public var fileProblem: String? {
+        fileProblemOnRead
+            ?? Self.fileProblem(
+                reasoningEffort: reasoningEffort, qwenThinkingEnabled: qwenThinkingEnabled,
+                hasPromotion: promotion != nil, hasHandmade: handmade?.agentRecordObject != nil)
+    }
+
+    /// A JSON value spelled as Python's `json.dumps` spells it, for the
+    /// shared sentences that quote one.
+    static func pythonJSONText(_ value: JSONValue) -> String {
+        switch value {
+        case .string(let text):
+            return "\"" + text.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        case .number(let number):
+            if number.rounded() == number, abs(number) < 1e15 { return String(Int64(number)) }
+            return String(number)
+        case .bool(let flag): return flag ? "true" : "false"
+        case .null: return "null"
+        case .array(let items): return "[" + items.map(pythonJSONText).joined(separator: ", ") + "]"
+        case .object(let members):
+            return "{" + members.keys.sorted().map {
+                "\"\($0)\": " + pythonJSONText(members[$0] ?? .null)
+            }.joined(separator: ", ") + "}"
+        }
     }
 
     /// How hard this agent thinks, wherever it is cast — the ONE reading:
@@ -657,13 +709,16 @@ extension ModelVariantArtifact {
 
     /// The levels an agent editor offers for a model: off always; on and the
     /// levels the model's chat template accepts (or, with no probed record,
-    /// is assumed to accept) when it has a thinking switch; and `current`,
-    /// so a stored level stays visible even where the template would refuse
-    /// it anew. In the vocabulary's fixed order.
+    /// is assumed to accept) when it has a thinking switch. A DECLARED level
+    /// the template rejects or ignores is never offered; the reading of an
+    /// older file's thinking switch (`currentDeclared` false) is, so such an
+    /// agent shows what it is and saves unchanged. In the vocabulary's order.
     public static func offeredReasoningEfforts(
-        capabilities: ModelCapabilities, current: ReasoningEffort
+        capabilities: ModelCapabilities, current: ReasoningEffort,
+        currentDeclared: Bool = true
     ) -> [ReasoningEffort] {
-        var offered: Set<ReasoningEffort> = [.off, current]
+        var offered: Set<ReasoningEffort> = [.off]
+        if !currentDeclared { offered.insert(current) }
         if capabilities.hasThinkingSwitch {
             offered.insert(.on)
             for level in ReasoningEffort.levels {
@@ -709,8 +764,8 @@ extension ModelVariantArtifact {
         }
         guard let record = handmade?.agentRecordObject else {
             return "This agent carries no promotion record, so nothing records that a sweep "
-                + "selected its settings, and no record of how it was made (the app's agent "
-                + "editor and new agent versions leave none)."
+                + "selected its settings, and no record of how it was made (agents saved "
+                + "before such records existed, and new agent versions, carry none)."
         }
         let steered = !injections.isEmpty || !(interventionPolicies ?? []).isEmpty
         let chose = steered
@@ -718,8 +773,213 @@ extension ModelVariantArtifact {
             : "The researcher chose its settings."
         let madeWith = record["madeWith"]?.agentRecordString.flatMap { $0.isEmpty ? nil : $0 }
         let reason = record["reason"]?.agentRecordString.flatMap { $0.isEmpty ? nil : $0 }
-        return (madeWith.map { "Made by hand with \($0). " } ?? "Made by hand. ") + chose
+        return Self.madeWithPhrase(madeWith) + chose
             + (reason.map { " Stated reason: \"\($0)\"." } ?? " No reason was stated.")
+    }
+
+    /// A handmade record's `madeWith` values. Server twin:
+    /// `agent_identity.MADE_WITH_AGENT_CREATE` / `MADE_WITH_AGENT_EDITOR`.
+    public static let madeWithAgentCreate = "agent create"
+    public static let madeWithAgentEditor = "agent editor"
+
+    /// The opening of a handmade agent's summary. Server twin:
+    /// `agent_identity.made_with_phrase`.
+    static func madeWithPhrase(_ madeWith: String?) -> String {
+        if madeWith == madeWithAgentEditor { return "Made by hand in the app's agent editor. " }
+        if let madeWith { return "Made by hand with \(madeWith). " }
+        return "Made by hand. "
+    }
+
+    /// The record the app's agent editor writes on an agent it saves that
+    /// carries neither record (a new agent, or an edited one whose record no
+    /// longer described it): who made it and when, with no paths.
+    public static func editorRecord(at date: Date = Date()) -> JSONValue {
+        .object([
+            "schemaVersion": .number(1), "madeWith": .string(madeWithAgentEditor),
+            "client": .string("SteerLab app"),
+            "createdAt": .string(ISO8601DateFormatter().string(from: date)),
+            "reason": .null,
+        ])
+    }
+
+    /// This agent with the editor's record when it carries neither record;
+    /// unchanged otherwise.
+    public func withEditorRecordIfUnrecorded(at date: Date = Date()) -> ModelVariantArtifact {
+        guard promotion == nil, handmade == nil else { return self }
+        var recorded = self
+        recorded.handmade = Self.editorRecord(at: date)
+        return recorded
+    }
+
+    // MARK: - What reached the renderer
+
+    /// The effort a template actually renders for `effort` under this
+    /// record, by `PromptRendering.thinkingContext`'s own rule: off when the
+    /// template has no thinking switch, on for a level it ignores (or, with a
+    /// probed record, does not read), else the level. What a record stamps.
+    /// Server twin: `agent_identity.rendered_effort`.
+    public static func renderedReasoningEffort(
+        _ effort: ReasoningEffort, modelID: String, capabilities: ModelCapabilities? = nil
+    ) -> ReasoningEffort {
+        let record = PromptRendering.capabilities(for: modelID, explicit: capabilities)
+        guard record.hasThinkingSwitch, effort.isOn else { return .off }
+        guard effort.isLevel else { return effort }
+        let verdict = record.effortVerdict(effort.rawValue)
+        if verdict == .ignored || (verdict == nil && record.effortVariableRead == false) {
+            return .on
+        }
+        return effort
+    }
+
+    // MARK: - The rules an attached agent arm must meet
+
+    /// The instruments that read an answer from its first tokens, with no
+    /// reasoning before it.
+    public static let answerTokenInstruments: Set<String> = [
+        "answerTokenLogprob", "choiceProbability", "ordinalScale",
+    ]
+
+    /// Whether at least one attached agent arm thinks: the one predicate
+    /// under which a study whose own effort is off may declare a reasoning
+    /// budget, which then reaches only the arms that think. Server twin:
+    /// `agent_identity.an_attached_agent_arm_thinks`.
+    public static func anAttachedAgentArmThinks(_ manifest: ExperimentManifest) -> Bool {
+        manifest.variantConditions.contains { $0.artifact.resolvedReasoningEffort.isOn }
+    }
+
+    public static func revisionMismatchReason(
+        agent: String, model: String, agentRevision: String, studyRevision: String
+    ) -> String {
+        "agent '\(agent)' was made for revision \(agentRevision) of \(model), but the "
+            + "study pins revision \(studyRevision)"
+    }
+
+    public static let revisionMismatchRepair =
+        "Make an agent at the study's revision (agent create --revision with the study's "
+        + "modelRevision), or pin the study to the agent's revision before attaching it."
+
+    /// Every settings-only rule this attached agent arm breaks, as the
+    /// server's sentences (`agent_identity.arm_problems`).
+    public func armProblems(
+        name: String, modelID: String, modelRevision: String?,
+        outcomeInstruments: [String], capabilities: ModelCapabilities?, workspaceRoot: URL
+    ) -> [String] {
+        let label = "agent arm '\(name)'"
+        if let problem = fileProblem { return ["\(label): \(problem)"] }
+        var problems = effortViolations(capabilities: capabilities).map { "\(label): \($0)" }
+        if adapters.count > 1 {
+            problems.append("\(label): the agent lists \(adapters.count) adapters, and both "
+                + "engines run only the first, so the others would be recorded but never run")
+        }
+        let effort = resolvedReasoningEffort
+        if effort.isOn, !Set(outcomeInstruments).isDisjoint(with: Self.answerTokenInstruments) {
+            problems.append("\(label): the agent thinks (reasoning effort \(effort.rawValue)) "
+                + "but the study declares an answer-token instrument, which reads the answer "
+                + "with no reasoning before it")
+        }
+        if let revision = baseRevision, !revision.isEmpty,
+            let studyRevision = modelRevision, !studyRevision.isEmpty, revision != studyRevision
+        {
+            problems.append("\(label): " + Self.revisionMismatchReason(
+                agent: name, model: baseModelID.isEmpty ? modelID : baseModelID,
+                agentRevision: revision, studyRevision: studyRevision))
+        }
+        problems += injectionProblems(workspaceRoot: workspaceRoot).map { "\(label): \($0)" }
+        return problems
+    }
+
+    private func injectionProblems(workspaceRoot: URL) -> [String] {
+        var problems: [String] = []
+        let half = max(1, bandWidth) / 2
+        for injection in injections where !injection.vectorArtifactID.isEmpty {
+            let reference = injection.vectorArtifactID
+            let base = reference.hasPrefix("/")
+                ? URL(fileURLWithPath: reference) : workspaceRoot.appending(path: reference)
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: base.path + ".json")),
+                let sidecar = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }  // a missing vector is the artifact preflight's refusal
+            guard let countNumber = sidecar["layerCount"] as? NSNumber,
+                CFGetTypeID(countNumber) != CFBooleanGetTypeID()
+            else { continue }
+            let count = countNumber.intValue
+            let concept = injection.concept.isEmpty ? reference : injection.concept
+            guard (0..<count).contains(injection.layer) else {
+                problems.append("its injection of '\(concept)' is at layer \(injection.layer), "
+                    + "which its vector does not have (layers 0 to \(count - 1))")
+                continue
+            }
+            guard injection.effectiveMode != .ablate, alphaInNormUnits else { continue }
+            let norms = (sidecar["residualNormPerLayer"] as? [NSNumber])?.map(\.floatValue)
+            let band = max(0, injection.layer - half)...min(count - 1, injection.layer + half)
+            if let missing = band.first(where: {
+                ResidualNormConvention.residualNormProblem(norms, layer: $0, artifact: concept) != nil
+            }) {
+                problems.append("its injection of '\(concept)' gives a strength in "
+                    + "residual-norm units, but the vector records no residual norm at layer "
+                    + "\(missing)")
+            }
+        }
+        return problems
+    }
+
+    /// `armProblems` over every attached agent arm (a forward reference has
+    /// no file yet), against the record the declaration gates read. Server
+    /// twin: `agent_identity.manifest_arm_problems`.
+    public static func manifestArmProblems(
+        _ manifest: ExperimentManifest, workspaceRoot: URL
+    ) -> [String] {
+        guard manifest.studyKind != .multiAgent else { return [] }
+        let capabilities = manifest.status == .draft
+            ? ModelCapabilitiesStore.resolve(
+                modelID: manifest.modelID, revision: manifest.modelRevision, root: workspaceRoot)
+            : ModelCapabilities.heuristicView(
+                modelID: manifest.modelID, revision: manifest.modelRevision)
+        return manifest.variantConditions.filter { $0.fromPromotion == nil }.flatMap {
+            $0.artifact.armProblems(
+                name: $0.name, modelID: manifest.modelID, modelRevision: manifest.modelRevision,
+                outcomeInstruments: manifest.outcomeInstruments ?? [],
+                capabilities: capabilities, workspaceRoot: workspaceRoot)
+        }
+    }
+
+    /// The repair for `manifestArmProblems`, as this command line spells it.
+    /// Server twin: `agent_identity.arm_problems_repair`.
+    public static func armProblemsRepair(name: String, frozen: Bool) -> String {
+        let program = ExperimentCLIHelp.program
+        let target = frozen ? "\(name)-v2" : name
+        var steps: [String] = []
+        if frozen { steps.append("\(program) experiment duplicate \(name) \(target)") }
+        steps.append("make a corrected agent (\(program) agent create <new-name> --model <id> "
+            + "--revision <sha> …, or the app's agent editor) and attach it in place of the "
+            + "one named: \(program) experiment attach-agent \(target) --artifact <path> "
+            + "--artifact-sha256 <digest> --manifest-sha256 <digest>")
+        return steps.joined(separator: "; then ")
+    }
+
+    /// What `verify` says of a frozen study whose agent arms break a rule
+    /// added since it froze (advisory `refusedWhenRun`). Server twin:
+    /// `agent_identity.frozen_arm_problems_advisory`.
+    public static func frozenArmProblemsAdvisory(
+        _ manifest: ExperimentManifest, workspaceRoot: URL
+    ) -> String? {
+        guard manifest.status != .draft else { return nil }
+        let problems = manifestArmProblems(manifest, workspaceRoot: workspaceRoot)
+        guard !problems.isEmpty else { return nil }
+        return "this study will be refused when its run is submitted or started, because "
+            + problems.joined(separator: "; ") + ". To run it: "
+            + armProblemsRepair(name: manifest.name, frozen: true)
+    }
+
+    /// The refusal a step that runs the study gives on its agent arms, or
+    /// nil: at submission and at run start, before the queue and the model.
+    public static func armRefusal(
+        _ manifest: ExperimentManifest, workspaceRoot: URL
+    ) -> ExperimentError? {
+        let problems = manifestArmProblems(manifest, workspaceRoot: workspaceRoot)
+        guard !problems.isEmpty else { return nil }
+        return .refusing(
+            .studyDeclaration, problems.joined(separator: "; "),
+            repair: armProblemsRepair(name: manifest.name, frozen: manifest.status != .draft))
     }
 }
 
@@ -1012,8 +1272,14 @@ public enum ModelVariantStore {
     ) throws -> SaveChangesOutcome {
         switch AgentEditProvenance.saveChangesPlan(edited: edited, over: selected) {
         case .updateInPlace(let merge):
+            // An edit that changes what the agent does leaves no record that
+            // describes it, so the editor's own record is written (FR6-B
+            // round 2: an agent carries exactly one record). An unedited save
+            // writes the stored content back, record or none, unchanged.
+            let artifact = AgentEditProvenance.doesTheSame(edited, as: selected.artifact)
+                ? merge.artifact : merge.artifact.withEditorRecordIfUnrecorded()
             return .updated(
-                try update(merge.artifact, at: selected.url),
+                try update(artifact, at: selected.url),
                 droppedPromotion: merge.droppedPromotion)
         case .saveAsNewAgent:
             return .savedAsNewAgent(try saveAsNewAgent(edited, takenNames: takenNames))
@@ -1033,7 +1299,7 @@ public enum ModelVariantStore {
         copy.name = AgentEditProvenance.copyName(edited.name, taken: takenNames)
         copy.promotion = nil
         copy.handmade = nil
-        return try save(copy)
+        return try save(copy.withEditorRecordIfUnrecorded())
     }
 
     /// Moves the agent's folder into a `.trash-<time>` folder in the agent

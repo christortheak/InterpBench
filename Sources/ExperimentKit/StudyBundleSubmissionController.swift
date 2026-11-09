@@ -132,6 +132,17 @@ public final class StudyBundleSubmissionController {
             note(line, severity: .error)
             return .failure(StudyBatchSubmission.Failure(reason: line))
         }
+        // An attached agent arm that breaks a settings-only rule (FR6-B
+        // round 2), on every server.
+        if let refusal = SubstrateRouting.agentArmSubmissionRefusal(
+            manifest: manifest, verb: submissionVerb)
+        {
+            let line = "\(refusal.reason). To run it: "
+                + (refusal.lifecycleRefusal?.repairAction ?? "")
+            jobs.remoteStatus = line
+            note(line, severity: .error)
+            return .failure(StudyBatchSubmission.Failure(reason: line))
+        }
         // Old-server guard (round 3 of issue #9) — same rule as
         // UnifiedStudyRunner.submitBundle.
         if let refusal = SubstrateRouting.greedyRulesSubmissionRefusal(

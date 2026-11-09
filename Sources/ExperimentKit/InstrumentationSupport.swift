@@ -88,9 +88,16 @@ extension ClusterClient {
             case .string(let name)? = metadata["experiment"], !name.isEmpty,
             case .string(let hash)? = metadata["experimentContentHash"],
             let manifest = try? ExperimentStore.load(name: name),
-            ExperimentStore.manifestHash(manifest) == hash,
-            let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
-                manifest: manifest, verb: verb)
+            ExperimentStore.manifestHash(manifest) == hash
+        else { return }
+        // The agent-arm rules (FR6-B round 2) ride the same evidence rule.
+        if let armRefusal = SubstrateRouting.agentArmSubmissionRefusal(
+            manifest: manifest, verb: verb)
+        {
+            throw armRefusal
+        }
+        guard let refusal = SubstrateRouting.greedySeedListSubmissionRefusal(
+            manifest: manifest, verb: verb)
         else { return }
         throw ExperimentError.refusing(
             .studyDeclaration, refusal,

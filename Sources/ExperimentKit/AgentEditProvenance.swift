@@ -225,6 +225,13 @@ public enum AgentEditProvenance {
             copy.createdAt = ""
             copy.promotion = nil
             copy.handmade = nil  // the agent create record, like the promotion
+            copy.fileProblemOnRead = nil
+            // The level as it runs, not as spelled: an older file's thinking
+            // switch (true, read as xhigh) and an explicit xhigh are the same
+            // agent, so re-saving one as the other is not an edit.
+            let effort = copy.resolvedReasoningEffort
+            copy.reasoningEffort = effort.rawValue
+            copy.qwenThinkingEnabled = effort.isOn
             copy.neutralPCBasisLabel = nil
             // The prompt is compared as the editor shows it, below: its hash
             // is derived from the text, and a hash-only older file shows as

@@ -26,15 +26,17 @@ public struct AgentArtifactSnapshot: Sendable {
         }
         let snapshot = try ManifestFileTransaction.snapshot(at: url)
         let artifact: ModelVariantArtifact
-        do { artifact = try JSONDecoder().decode(ModelVariantArtifact.self, from: snapshot.data) }
-        catch let problem as AgentFileProblem {
-            // A file whose fields contradict each other says which ones.
-            throw ExperimentError.refusing(.artifactPin, problem.reason,
-                repair: "Make the agent again with agent create or in the app's agent editor, "
-                    + "then attach the new one.")
+        do {
+            artifact = try JSONDecoder().decode(ModelVariantArtifact.self, from: snapshot.data)
         } catch {
             throw ExperimentError.refusing(.artifactPin, "The selected file is not a readable agent artifact.",
                 repair: "Inspect the named file and restore its verified source before attaching it.")
+        }
+        // A file whose fields contradict each other says which ones.
+        if let problem = artifact.fileProblem {
+            throw ExperimentError.refusing(.artifactPin, problem,
+                repair: "Make the agent again with agent create or in the app's agent editor, "
+                    + "then attach the new one.")
         }
         self.workspaceRoot = workspaceRoot.standardizedFileURL
         self.path = path

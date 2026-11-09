@@ -543,10 +543,15 @@ steered agent passes the same freeze gates as a promoted one: the same pins on
 its vectors and adapter, and the same capability-battery evidence. Say in
 METHODS who chose the settings and
 on what basis; the `--reason` is the place to start. `agent create` has no
-temperature: the study sets the temperature for every arm, and an agent's file
-records only the Playground's. Its thinking level (`--reasoning-effort`) is
-the agent's own, and an agent arm of an ordinary study runs at it; the
-reasoning budget stays with the study.
+temperature: the study sets the temperature for every arm, and an agent's
+record says no temperature was chosen. Its thinking level
+(`--reasoning-effort`) is the agent's own, and an agent arm of an ordinary
+study runs at it; the reasoning budget stays with the study and reaches only
+the arms that think, so a study whose own arms do not think may still declare
+one for its thinking agents. A promoted agent thinks at the level the sweep's
+cells ran at. `verify` checks each attached agent arm against the study before
+it can freeze: its level against the model's chat template, its revision
+against the study's, and its vectors' layers and residual norms.
 
 ### 4.6 `freeze` — the preregistration moment
 

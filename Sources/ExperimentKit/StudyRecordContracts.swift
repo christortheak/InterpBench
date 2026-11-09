@@ -298,6 +298,10 @@ extension ExperimentTasks {
         /// `GenerationRecord.factors` (instrument readouts carry the item's
         /// factors too, so stratified analysis never rejoins the input).
         var factors: [String: String]? = nil
+        /// The reasoning effort the agent of a variant condition rendered at
+        /// (cross-engine key, FR6-B round 2; the server stamps it on choice
+        /// records too). nil ⇒ key omitted, so non-agent records are unchanged.
+        var agentReasoningEffort: String? = nil
     }
 
     struct MetricRow {

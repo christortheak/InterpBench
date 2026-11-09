@@ -746,6 +746,44 @@ extension ExperimentStoreTests {
         }
     }
 
+    /// FR6-B round 2: the agent carries the level the sweep's cells ran at,
+    /// and a retry never hands back an agent minted at another level.
+    @Test func promoteMintsAtTheSweepsLevelAndRefusesAStaleReuse() throws {
+        try withTempWorkspace { root in
+            _ = try promotableExperiment(name: "pr")
+            var manifest = try ExperimentStore.load(name: "pr")
+            manifest.reasoningEffort = "medium"
+            manifest.reasoningMaxTokens = 64
+            manifest.qwenThinkingEnabled = nil
+            try ExperimentStore.save(manifest)
+            _ = try plantVectorArtifact(in: root)
+            let record = try AgentPromotion.promote(
+                experimentName: "pr", concept: "fear", log: { _ in })
+            #expect(record.artifact.reasoningEffort == "medium")
+            #expect(record.artifact.qwenThinkingEnabled)
+            // The same promotion again returns that agent…
+            let again = try AgentPromotion.promote(
+                experimentName: "pr", concept: "fear", log: { _ in })
+            #expect(again.url == record.url)
+            // …but not one minted before promotion carried the level (this
+            // engine used to mint such a study's agent with thinking off).
+            var stale = record.artifact
+            stale.reasoningEffort = nil
+            stale.qwenThinkingEnabled = false
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(stale).write(to: record.url)
+            do {
+                _ = try AgentPromotion.promote(
+                    experimentName: "pr", concept: "fear", log: { _ in })
+                Issue.record("a stale reuse must refuse")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains("thinks at reasoning effort off"))
+                #expect(error.lifecycleRefusal?.repairAction.contains("--agent-name") == true)
+            }
+        }
+    }
+
     // MARK: mirrored-pole inheritance (promotion.poleProvenance)
 
     private static let parentStimulusHash = String(repeating: "p", count: 64)

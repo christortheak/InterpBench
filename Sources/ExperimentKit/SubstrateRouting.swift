@@ -233,6 +233,24 @@ public enum SubstrateRouting {
         return StudySampling.greedySeedListProblem(manifest)
     }
 
+    /// The agent-arm rules for a submission of `verb` (FR6-B round 2): a step
+    /// that runs the study refuses, before anything is packaged or queued,
+    /// when an attached agent arm breaks a settings-only rule. Same verb
+    /// rule as `greedySeedListSubmissionRefusal`. Python twin: the client's
+    /// composite `run` and the engine's `_refuse_settings`.
+    public static func agentArmSubmissionRefusal(
+        manifest: ExperimentManifest, verb: String,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
+    ) -> ExperimentError? {
+        guard matrixExecutingVerbs.contains(verb) else { return nil }
+        if verb == "pipeline" {
+            guard let chain = PipelineDraft.parse(manifest.pipeline),
+                chain.stages.contains("run")
+            else { return nil }
+        }
+        return ModelVariantArtifact.armRefusal(manifest, workspaceRoot: workspaceRoot)
+    }
+
     /// Whether submitting `verb` needs an engine with
     /// `remoteStudy.greedyRulesSampledTextOnly`: a step that runs an
     /// ordinary study at temperature 0 listing several seeds or several

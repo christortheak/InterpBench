@@ -923,6 +923,14 @@ struct ModelVariantsPanelView: View {
                     after: origin, current: adapterID)
                 neutralPCBasisID = AgentEditorSelection.dependentSelection(
                     after: origin, current: neutralPCBasisID)
+                // A user's model change resets a declared thinking level the
+                // new model's template does not take (FR6-B round 2); a
+                // definition's own load keeps exactly what it declares.
+                if origin == .userPick, reasoningEffortDeclared,
+                    !thinkingChoices.offered.contains(reasoningEffort)
+                {
+                    reasoningEffort = .off
+                }
                 injections.removeAll { draft in
                     // Refs loaded from the definition are DATA: they survive
                     // a base-model change (and this onChange also fires when
@@ -992,23 +1000,7 @@ struct ModelVariantsPanelView: View {
                     + "template, or as raw completion text. It changes the "
                     + "tokens the model actually sees, so a study must not "
                     + "mix modes across its arms")
-            Picker("Thinking", selection: reasoningEffortSelection) {
-                ForEach(offeredReasoningEfforts, id: \.self) { effort in
-                    Text(Self.reasoningEffortLabel(effort)).tag(effort)
-                }
-            }
-            .disabled(offeredReasoningEfforts.count < 2)
-            .help(
-                "how hard the agent thinks before it answers, wherever a study "
-                    + "casts it; the levels offered are the ones this model's "
-                    + "chat template accepts. The study sets how many tokens "
-                    + "the thinking may use")
-            if offeredReasoningEfforts.count < 2 {
-                Text(thinkingUnavailableCaption)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            thinkingPicker(thinkingChoices)
             AgentTemperatureRow(value: $temperature)
             TextField("System prompt", text: $systemPrompt, axis: .vertical)
                 .lineLimit(1 ... 5)
@@ -1028,15 +1020,51 @@ struct ModelVariantsPanelView: View {
         }
     }
 
-    /// The levels this base model's chat template accepts, from its
-    /// capability record (the id heuristic when none is probed), plus the
-    /// level the agent already has.
-    private var offeredReasoningEfforts: [ReasoningEffort] {
+    /// The base model's capability record and the levels offered from it,
+    /// resolved ONCE per redraw (the record is a file read): the levels its
+    /// chat template accepts, or is assumed to accept, and an older file's
+    /// reading of its thinking switch. A declared level the template rejects
+    /// or ignores is not offered.
+    private struct ThinkingChoices {
+        let record: ModelCapabilities
+        let offered: [ReasoningEffort]
+    }
+
+    private var thinkingChoices: ThinkingChoices {
         let record = ModelCapabilitiesStore.resolve(
             modelID: baseModelID, revision: nilIfEmpty(baseRevision),
             root: ExperimentStore.workspaceRoot)
-        return ModelVariantArtifact.offeredReasoningEfforts(
-            capabilities: record, current: reasoningEffort)
+        return ThinkingChoices(
+            record: record,
+            offered: ModelVariantArtifact.offeredReasoningEfforts(
+                capabilities: record, current: reasoningEffort,
+                currentDeclared: reasoningEffortDeclared))
+    }
+
+    @ViewBuilder
+    private func thinkingPicker(_ choices: ThinkingChoices) -> some View {
+        Picker("Thinking", selection: reasoningEffortSelection) {
+            ForEach(choices.offered, id: \.self) { effort in
+                Text(Self.reasoningEffortLabel(effort, record: choices.record)).tag(effort)
+            }
+        }
+        .disabled(choices.offered.count < 2)
+        .help(
+            "how hard the agent thinks before it answers, in a study that casts it; "
+                + "the levels offered are the ones this model's chat template accepts, "
+                + "and \"assumed\" marks a level taken from the model's family with no "
+                + "probed template. The study sets how many tokens the thinking may use")
+        if !choices.offered.contains(reasoningEffort) {
+            Text(Self.unofferedLevelCaption(reasoningEffort))
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if choices.offered.count < 2 {
+            Text(thinkingUnavailableCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// Picking a level states it, so the saved file declares it.
@@ -1046,12 +1074,21 @@ struct ModelVariantsPanelView: View {
             set: { reasoningEffort = $0; reasoningEffortDeclared = true })
     }
 
-    private static func reasoningEffortLabel(_ effort: ReasoningEffort) -> String {
+    private static func reasoningEffortLabel(
+        _ effort: ReasoningEffort, record: ModelCapabilities
+    ) -> String {
         switch effort {
-        case .off: "Off"
-        case .on: "On (the template's default)"
-        default: effort.rawValue
+        case .off: return "Off"
+        case .on: return "On (the template's default)"
+        default:
+            return record.effortVerdict(effort.rawValue) == .assumed
+                ? "\(effort.rawValue) (assumed)" : effort.rawValue
         }
+    }
+
+    private static func unofferedLevelCaption(_ effort: ReasoningEffort) -> String {
+        "this agent declares the level \(effort.rawValue), which this model's chat "
+            + "template does not accept; choose another level before saving"
     }
 
     /// Built outside the view builder (the `ExperimentsPanelView` rule:
@@ -1675,6 +1712,14 @@ struct ModelVariantsPanelView: View {
         applyAfterSave: Bool = false, asNewAgent: Bool = false
     ) -> (written: Bool, summary: String?) {
         let artifact = artifactFromEditor()
+        // A declared level the model's template does not take is refused
+        // here, by the rule agent create and a study's verify apply.
+        let effortProblems = artifact.effortViolations(capabilities: thinkingChoices.record)
+        guard effortProblems.isEmpty else {
+            let note = "could not save agent: " + effortProblems.joined(separator: "; ")
+            panel.setWarningStatus(note)
+            return (false, note)
+        }
         let selected = panel.selectedVariant
         let takenNames = panel.variants.map(\.artifact.name)
         do {
@@ -1703,8 +1748,8 @@ struct ModelVariantsPanelView: View {
                     summary = (dropped
                         ? AgentEditProvenance.afterSaveNote(agent: updated.artifact.name)
                         : "Updated agent '\(updated.artifact.name)'.")
-                        + (selected.artifact.handmade != nil && updated.artifact.handmade == nil
-                            ? " Its agent create record no longer describes it, so it was removed."
+                        + (selected.artifact.handmade != nil && updated.artifact.handmade != selected.artifact.handmade
+                            ? " Its earlier record no longer describes it, so a new record says the agent editor made it."
                             : "")
                 case .savedAsNewAgent(let copy):
                     record = copy
@@ -1721,7 +1766,7 @@ struct ModelVariantsPanelView: View {
                     return (false, note)
                 }
             } else {
-                record = try ModelVariantStore.save(artifact)
+                record = try ModelVariantStore.save(artifact.withEditorRecordIfUnrecorded())
                 summary = "Saved agent '\(record.artifact.name)'."
             }
             panel.refresh()

@@ -138,10 +138,15 @@ enum ManifestDraftEdits {
             // rejects is refused here, at the declaration, never
             // rendered at the template's default under a manifest that
             // asserts the level. Server twin: `set_protocol`.
+            // An off study may declare a budget for its agent arms that
+            // think; it reaches only those arms (ruling 2026-11-08). Server
+            // twin: draft_protocol_policy.apply_protocol.
+            let budgetForAgents = ModelVariantArtifact.anAttachedAgentArmThinks(manifest)
             let problems = ReasoningEffort.protocolViolations(
                 effort: mergedEffort, reasoningMaxTokens: mergedBudget,
                 modelID: manifest.modelID,
-                capabilities: capabilities)
+                capabilities: capabilities
+            ).filter { !(budgetForAgents && $0 == ReasoningEffort.budgetWithoutEffortReason) }
             guard problems.isEmpty else {
                 throw ExperimentError.malformed(
                     problems.joined(separator: "; "),

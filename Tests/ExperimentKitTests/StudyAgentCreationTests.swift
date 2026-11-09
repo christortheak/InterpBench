@@ -254,28 +254,54 @@ struct StudyAgentCreationTests {
     }
 
     @Test(arguments: [("medium", false), ("off", true)])
-    func aFileWhoseEffortAndSwitchDisagreeIsRefused(_ effort: String, _ thinking: Bool) {
-        do {
-            _ = try decode(["reasoningEffort": effort, "qwenThinkingEnabled": thinking])
-            Issue.record("expected a refusal")
-        } catch let problem as AgentFileProblem {
-            #expect(problem.reason.contains(
-                "one says the agent thinks and the other says it does not"))
-        } catch {
-            Issue.record("unexpected \(error)")
-        }
+    func aFileWhoseEffortAndSwitchDisagreeIsRefused(_ effort: String, _ thinking: Bool) throws {
+        // It still decodes (so a study holding it decodes, and its verify
+        // names the problem); every reader that uses it refuses.
+        let artifact = try decode(["reasoningEffort": effort, "qwenThinkingEnabled": thinking])
+        #expect(artifact.fileProblem?.contains(
+            "one says the agent thinks and the other says it does not") == true)
     }
 
     @Test func anUnknownEffortAndTwoRecordsAreRefused() throws {
-        #expect(throws: AgentFileProblem.self) { _ = try decode(["reasoningEffort": "hgih"]) }
+        #expect(try decode(["reasoningEffort": "hgih"]).fileProblem?.contains(
+            "reasoningEffort \"hgih\" is not a level") == true)
+        // A non-string level gets the server's sentence, not a decode error.
+        #expect(try decode(["reasoningEffort": 5]).fileProblem?.contains(
+            "reasoningEffort 5 is not a level") == true)
         var promoted = try decode([:])
         promoted.promotion = .init(
             experiment: "s", experimentHash: "h", promotedAt: "t", promotedBy: "criterion",
             substrate: "swift-mlx", appVersion: "0")
         promoted.handmade = .object(["madeWith": .string("agent create")])
         let data = try JSONEncoder().encode(promoted)
-        #expect(throws: AgentFileProblem.self) {
-            _ = try JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+        let read = try JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+        #expect(read.fileProblem?.contains("An agent is made one way") == true)
+        // A non-object handmade is no record, on both engines.
+        var odd = try decode([:])
+        odd.handmade = .string("agent create")
+        #expect(odd.kind == .handmade && odd.fileProblem == nil)
+    }
+
+    @Test func theThinkingFieldsReadAsTheServerReadsThem() throws {
+        let url = CodeResources.compiledCheckoutPath.appending(
+            components: "Tests", "Fixtures", "cross-engine", "agent-reasoning-effort.json")
+        let cases = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
+        #expect(cases.count == 33)
+        for entry in cases {
+            let object = try #require(entry["artifact"] as? [String: Any])
+            let artifact = try JSONDecoder().decode(
+                ModelVariantArtifact.self, from: JSONSerialization.data(withJSONObject: object))
+            let label = "\(object)"
+            if let problem = entry["problem"] as? String {
+                #expect(artifact.fileProblem == problem, "\(label)")
+            } else {
+                #expect(artifact.fileProblem == nil, "\(label)")
+                #expect(artifact.resolvedReasoningEffort.rawValue
+                    == entry["reasoningEffort"] as? String, "\(label)")
+                #expect(artifact.qwenThinkingEnabled == entry["qwenThinkingEnabled"] as? Bool,
+                    "\(label)")
+            }
         }
     }
 
@@ -335,9 +361,13 @@ struct StudyAgentCreationTests {
         let none = PromptRendering.capabilities(for: Self.model, explicit: nil)
         #expect(ModelVariantArtifact.offeredReasoningEfforts(
             capabilities: none, current: .off) == [.off])
-        // A stored level stays visible even where it would be refused anew.
+        // A DECLARED level the template does not take is never offered…
         #expect(ModelVariantArtifact.offeredReasoningEfforts(
-            capabilities: none, current: .xhigh) == [.off, .xhigh])
+            capabilities: none, current: .xhigh) == [.off])
+        // …while an older file's thinking switch shows as what it reads as,
+        // so the agent saves unchanged.
+        #expect(ModelVariantArtifact.offeredReasoningEfforts(
+            capabilities: none, current: .xhigh, currentDeclared: false) == [.off, .xhigh])
         let qwen = PromptRendering.capabilities(for: "Qwen/Qwen3.8-27B", explicit: nil)
         let offered = ModelVariantArtifact.offeredReasoningEfforts(capabilities: qwen, current: .off)
         #expect(offered.first == .off && offered.contains(.on))
@@ -394,6 +424,201 @@ struct StudyAgentCreationTests {
                 Issue.record("no agent block"); return
             }
             #expect(agent["kind"] == .string("handmade"))
+        }
+    }
+
+    // MARK: - Round 2
+
+    @Test func aFileOutsideTheWorkspaceIsRecordedByNameAndHash() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-create") { root in
+            let outside = FileManager.default.temporaryDirectory
+                .appending(component: "fr6b-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: outside) }
+            let prompt = outside.appending(component: "persona.txt")
+            try Data("Answer as a careful reviewer.".utf8).write(to: prompt)
+            _ = try create(root, base() + ["--system-prompt-file", prompt.path])
+            let data = try Data(contentsOf: try #require(libraryAgents(root).first))
+            let text = String(decoding: data, as: UTF8.self)
+            let homeRoot = "/" + "Users" + "/"  // spelled apart
+            #expect(!text.contains(outside.path) && !text.contains(NSHomeDirectory())
+                && !text.contains(homeRoot) && !text.contains("~/"))
+            let artifact = try JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+            guard case .object(let record)? = artifact.handmade,
+                case .object(let inputs)? = record["inputs"],
+                case .object(let file)? = inputs["systemPromptFile"],
+                case .array(let command)? = record["command"]
+            else { Issue.record("no record"); return }
+            #expect(file["name"] == .string("persona.txt") && file["path"] == nil)
+            #expect(command.contains(.string("persona.txt")))
+            #expect(inputs["temperature"] == .null)
+            // A `~` path that cannot be read says so without the home folder.
+            do {
+                _ = try run(root, base("other") + ["--system-prompt-file", "~/fr6b-missing.txt"])
+                Issue.record("expected a refusal")
+            } catch let error as ExperimentError {
+                #expect(!error.reason.contains(NSHomeDirectory()))
+                #expect(error.reason.contains("fr6b-missing.txt"))
+            }
+        }
+    }
+
+    @Test func bandWidthCenteringAndNamesFollowTheEditor() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-create") { root in
+            let (reference, digest) = try vector(root)
+            let preview = try run(root, base() + [
+                "--vector", reference, "--vector-sha256", digest, "--layer", "2",
+                "--strength", "1", "--mode", "ablate", "--band-width", "3"])
+            guard case .object(let document)? = preview.payload["document"],
+                case .array(let notes)? = preview.payload["advisories"]
+            else { Issue.record("no document"); return }
+            #expect(document["bandWidth"] == .number(3))
+            #expect(notes.contains { $0.agentRecordString?.contains("ablated without centering") == true })
+            let refused = refusal(root, base() + [
+                "--vector", reference, "--vector-sha256", digest, "--layer", "2",
+                "--strength", "1", "--mode", "ablate", "--centering", "neutralMean"])
+            #expect(refused?.reason.contains("stores no neutral mean") == true)
+            #expect(throws: ExperimentError.self) { _ = try run(root, base() + ["--band-width", "4"]) }
+            _ = try create(root, base("taken"))
+            #expect(refusal(root, base("TAKEN"))?.reason.contains("ignoring case") == true)
+        }
+    }
+
+    @Test func anAdapterTrainedOnABranchIsReadByItsResolvedCommit() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-create") { root in
+            let (path, digest) = try adapter(root)
+            let recordURL = root.appending(path: path + ".json")
+            var record = try #require(
+                try JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
+            record["revision"] = "main"
+            record["revisionResolved"] = Self.revision
+            try JSONSerialization.data(withJSONObject: record).write(to: recordURL)
+            _ = try run(root, base() + ["--adapter", path, "--adapter-sha256", digest])
+        }
+    }
+
+    @Test func theRepairsAreTrueForTheRecordInHand() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-create") { root in
+            let refused = refusal(root, ["create", "a", "--model", Self.model, "--revision", "main"])
+            #expect(refused?.repairAction.contains("model plan \(Self.model) --json") == true)
+            // The command the repair names is one this command line accepts.
+            _ = try ExperimentCLIParser.parse(namespace: "model", ["plan", Self.model, "--json"])
+        }
+        let qwen = PromptRendering.capabilities(for: "Qwen/Qwen3.8-27B", explicit: nil)
+        let repair = StudyAgentCreation.effortRepair(qwen)
+        #expect(!repair.contains("accepts: "))
+        #expect(repair.contains("assumed from the model id, with no probed template: low, medium, xhigh"))
+    }
+
+    private func study(
+        _ root: URL, artifact: ModelVariantArtifact, instruments: [String]? = nil,
+        status: ExperimentManifest.Status = .draft
+    ) throws -> ExperimentManifest {
+        var manifest = try ExperimentStore.create(
+            name: "study", description: "", modelID: artifact.baseModelID,
+            modelRevision: Self.revision)
+        manifest.variantConditions = [.init(
+            name: "arm", artifactPath: "runs/x/a.json",
+            artifactHash: String(repeating: "a", count: 64), artifact: artifact)]
+        manifest.outcomeInstruments = instruments
+        manifest.status = status
+        return manifest
+    }
+
+    @Test func aDraftVerifyNamesEachAgentArmRule() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-arms") { root in
+            func violations(_ object: [String: Any], instruments: [String]? = nil) throws -> [String] {
+                let manifest = try study(root, artifact: try decode(object), instruments: instruments)
+                try? FileManager.default.removeItem(
+                    at: ExperimentRepository(workspaceRoot: root).manifestURL("study")
+                        .deletingLastPathComponent())
+                return ExperimentStore.verify(manifest).filter { $0.contains("agent arm 'arm'") }
+            }
+            #expect(try violations(["reasoningEffort": "medium"]).contains {
+                $0.contains("has no thinking switch") })
+            #expect(try violations(["reasoningEffort": "medium", "qwenThinkingEnabled": false])
+                .contains { $0.contains("one says the agent thinks") })
+            #expect(try violations(["adapters": [["adapterDirectory": "a"], ["adapterDirectory": "b"]]])
+                .contains { $0.contains("lists 2 adapters") })
+            #expect(try violations(["qwenThinkingEnabled": true], instruments: ["answerTokenLogprob"])
+                .contains { $0.contains("answer-token instrument") })
+            #expect(try violations(["baseRevision": String(repeating: "b", count: 40)])
+                .contains { $0.contains("made for revision") })
+            let (reference, _) = try vector(root, name: "bare", norms: false)
+            #expect(try violations(["alphaInNormUnits": true, "injections": [
+                ["concept": "bare", "vectorArtifactID": reference, "layer": 9, "alpha": 0.1]]])
+                .contains { $0.contains("at layer 9, which its vector does not have") })
+            #expect(try violations(["alphaInNormUnits": true, "injections": [
+                ["concept": "bare", "vectorArtifactID": reference, "layer": 2, "alpha": 0.1]]])
+                .contains { $0.contains("records no residual norm at layer 2") })
+        }
+    }
+
+    @Test func aFrozenStudyIsToldAtVerifyAndRefusedAtSubmissionAndRunStart() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-arms") { root in
+            let manifest = try study(
+                root, artifact: try decode(["qwenThinkingEnabled": true]),
+                instruments: ["answerTokenLogprob"], status: .frozen)
+            #expect(!ExperimentStore.verify(manifest).contains { $0.contains("agent arm") })
+            let note = ModelVariantArtifact.frozenArmProblemsAdvisory(manifest, workspaceRoot: root)
+            #expect(note?.hasPrefix("this study will be refused when its run is submitted") == true)
+            #expect(note?.contains("experiment duplicate study study-v2") == true)
+            #expect(SubstrateRouting.agentArmSubmissionRefusal(
+                manifest: manifest, verb: "run", workspaceRoot: root)?.lifecycleRefusal?.gate
+                == .studyDeclaration)
+            #expect(SubstrateRouting.agentArmSubmissionRefusal(
+                manifest: manifest, verb: "analyze", workspaceRoot: root) == nil)
+            #expect(ModelVariantArtifact.armRefusal(manifest, workspaceRoot: root) != nil)
+        }
+    }
+
+    @Test func aRecordStampsWhatReachedTheRenderer() {
+        #expect(ModelVariantArtifact.renderedReasoningEffort(.xhigh, modelID: Self.model) == .off)
+        #expect(ModelVariantArtifact.renderedReasoningEffort(
+            .medium, modelID: "Qwen/Qwen3.8-27B") == .medium)
+        let qwen = ModelCapabilities.heuristicView(modelID: "Qwen/Qwen3.8-27B", revision: nil)
+        let ignoring = ModelCapabilities(
+            modelID: qwen.modelID, revision: nil, source: .probe, systemRole: qwen.systemRole,
+            foldSeparator: qwen.foldSeparator, thinkingSwitch: qwen.thinkingSwitch,
+            thinkOpenInPrompt: qwen.thinkOpenInPrompt, effortVariableRead: false,
+            effortLevels: ["low": .ignored, "medium": .ignored, "xhigh": .ignored],
+            thinkTokens: qwen.thinkTokens, architecture: nil, templateSha256: nil,
+            tokenizerConfigSha256: nil)
+        #expect(ModelVariantArtifact.renderedReasoningEffort(
+            .medium, modelID: "Qwen/Qwen3.8-27B", capabilities: ignoring) == .on)
+    }
+
+    @Test func anOffStudyMayDeclareABudgetForItsThinkingAgents() throws {
+        var manifest = ExperimentManifest(name: "s", description: "", modelID: "Qwen/Qwen3.8-27B")
+        manifest.reasoningEffort = "off"
+        manifest.reasoningMaxTokens = 256
+        #expect(manifest.reasoningProtocolViolations == [ReasoningEffort.budgetWithoutEffortReason])
+        let thinking = try decode(["baseModelID": "Qwen/Qwen3.8-27B", "reasoningEffort": "on"])
+        manifest.variantConditions = [.init(
+            name: "arm", artifactPath: "runs/x/a.json",
+            artifactHash: String(repeating: "a", count: 64), artifact: thinking)]
+        #expect(manifest.reasoningProtocolViolations.isEmpty)
+        // The budget reaches only the arms that think.
+        #expect(StudySampling.reasoningBudget(manifest, variant: thinking) == 256)
+        #expect(StudySampling.reasoningBudget(manifest, variant: nil) == nil)
+        #expect(StudySampling.reasoningBudget(
+            manifest, variant: try decode(["baseModelID": "Qwen/Qwen3.8-27B"])) == nil)
+    }
+
+    @Test func attachRefusesAnAgentMadeForAnotherRevision() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-attach") { root in
+            let written = try create(root, base("plain"))
+            guard case .string(let path)? = written.payload["path"] else { return }
+            var manifest = try ExperimentStore.create(
+                name: "study", description: "", modelID: Self.model,
+                modelRevision: String(repeating: "b", count: 40))
+            let snapshot = try AgentArtifactSnapshot(workspaceRoot: root, path: path)
+            do {
+                try ExperimentStore.attachAgent(snapshot.record, into: &manifest, workspaceRoot: root)
+                Issue.record("expected a refusal")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains("was made for revision"))
+            }
         }
     }
 

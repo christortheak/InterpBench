@@ -28,18 +28,21 @@ public enum StudyAgentCreation {
     /// lists them. `--review-sha256` is the reviewed write.
     public static let definingFlags = [
         "--model", "--revision", "--adapter", "--adapter-sha256", "--vector",
-        "--vector-sha256", "--layer", "--strength", "--mode", "--reasoning-effort",
-        "--system-prompt-file", "--prompt-mode", "--reason",
+        "--vector-sha256", "--layer", "--strength", "--mode", "--centering", "--band-width",
+        "--reasoning-effort", "--system-prompt-file", "--prompt-mode", "--reason",
     ]
+
+    /// The layer bands the app's agent editor offers (odd, 1 to 11).
+    static let bandWidths = Array(stride(from: 1, through: 11, by: 2))
 
     public static let spec = ExperimentCLIVerbSpec(
         namespace: "agent", verb: "create", positional: "<name>",
         purpose: "Preview an agent made by hand: a base model at a pinned revision, at "
-            + "most one adapter, steering vectors at the layers and strengths you choose "
-            + "(in residual-norm units), a thinking level, a system prompt, and a prompt "
-            + "mode. Repeat with --review-sha256 to write it into the agent library with "
-            + "a record of how it was made. The study that casts the agent sets its "
-            + "temperature.",
+            + "most one adapter, vectors at the layers and strengths you choose (a "
+            + "steering strength is in residual-norm units, an ablation's is the fraction "
+            + "removed), a thinking level, a system prompt, and a prompt mode. Repeat with "
+            + "--review-sha256 to write it into the agent library with a record of how it "
+            + "was made. The study that casts the agent sets its temperature.",
         valueFlags: Set(definingFlags + ["--review-sha256"]),
         requiredFlags: ["--model", "--revision"])
 
@@ -65,8 +68,9 @@ public enum StudyAgentCreation {
             for value in flags[flag] ?? [] { command += [flag, value] }
         }
         let root = URL(fileURLWithPath: try ManifestFileTransaction.canonicalPath(workspaceRoot))
-        let planned = try plan(name: name, flags: flags, workspaceRoot: root,
-                               command: [program] + command)
+        // `command` is printed (the confirmation), never stored: the handmade
+        // record keeps its own copy rebuilt from the normalised arguments.
+        let planned = try plan(name: name, flags: flags, workspaceRoot: root)
         let advisories = planned.advisories.map {
             SteerLabCLIEnvelope.Advisory(code: "agentCreateNote", detail: $0)
         }
@@ -146,12 +150,11 @@ public enum StudyAgentCreation {
     /// Every check, and the agent file the write would produce (minus its
     /// timestamps). Writes nothing.
     public static func plan(
-        name rawName: String, flags: [String: [String]], workspaceRoot root: URL,
-        command: [String]
+        name rawName: String, flags: [String: [String]], workspaceRoot root: URL
     ) throws -> Plan {
         func one(_ flag: String) -> String? { flags[flag]?.last }
         for flag in ["--model", "--revision", "--reasoning-effort", "--system-prompt-file",
-                     "--prompt-mode", "--reason", "--review-sha256"]
+                     "--prompt-mode", "--reason", "--review-sha256", "--band-width"]
         where (flags[flag]?.count ?? 0) > 1 {
             throw usage("Give \(flag) once.", "\(program) agent create --help")
         }
@@ -173,9 +176,16 @@ public enum StudyAgentCreation {
                 "--revision \(revision) is not a pinned commit: an agent names the exact "
                     + "weights it runs, as a full 40-character commit hash, not a branch or a "
                     + "tag that can move.",
-                repair: "Give the full 40-character commit hash of the revision (\(program) "
-                    + "model plan \(model) --json shows the revision a prepared model "
-                    + "resolves to).")
+                repair: "Give the full 40-character commit hash of the revision: the model "
+                    + "page's commit history shows it, and \(program) model plan \(model) "
+                    + "--json reports the commit this Mac's copy resolves to.")
+        }
+        let bandText = one("--band-width") ?? "1"
+        guard let bandWidth = Int(bandText), bandWidths.contains(bandWidth) else {
+            throw usage("--band-width \(bandText) is not an odd whole number from 1 to 11.",
+                "Give the layer band as 1, 3, 5, 7, 9, or 11 (each steering injection is "
+                    + "applied at its layer and the layers around it), as the app's agent "
+                    + "editor offers.")
         }
         var notes: [String] = []
 
@@ -212,7 +222,8 @@ public enum StudyAgentCreation {
         var vectorInputs: [JSONValue] = []
         for spec in try grouped(flags) {
             let (injection, recorded) = try vector(
-                root: root, spec: spec, model: model, revision: revision, notes: &notes)
+                root: root, spec: spec, model: model, revision: revision,
+                bandWidth: bandWidth, notes: &notes)
             injections.append(injection)
             vectorInputs.append(recorded)
         }
@@ -236,23 +247,19 @@ public enum StudyAgentCreation {
             temperature: 0, systemPrompt: "", reasoningEffort: effort)
         let problems = probe.effortViolations(capabilities: capabilities)
         guard problems.isEmpty else {
-            let accepted = capabilities.acceptedEfforts.joined(separator: ", ")
             throw ExperimentError.refusing(
                 .studyDeclaration, problems.joined(separator: "; "),
-                repair: capabilities.hasThinkingSwitch
-                    ? "Choose a level the model's chat template accepts (accepted: "
-                        + (accepted.isEmpty ? "none" : accepted) + ") with --reasoning-effort, "
-                        + "or use on (thinking at the template's default) or off."
-                    : "Use --reasoning-effort off: this model's chat template has no thinking "
-                        + "switch.")
+                repair: effortRepair(capabilities))
         }
         notes += ReasoningEffort.protocolAdvisories(
             effort: effort, modelID: model, capabilities: capabilities)
 
         var systemPrompt = ""
         var systemInput: JSONValue = .null
-        if let file = one("--system-prompt-file") {
-            guard let data = FileManager.default.contents(atPath: file),
+        if let raw = one("--system-prompt-file") {
+            let (readable, named) = recordedFile(raw, root: root)
+            let file = named["path"]?.agentRecordString ?? named["name"]?.agentRecordString ?? ""
+            guard let data = FileManager.default.contents(atPath: readable.path),
                 let text = String(data: data, encoding: .utf8)
             else {
                 throw ExperimentError.refusing(
@@ -282,16 +289,21 @@ public enum StudyAgentCreation {
                     repair: "Leave out --system-prompt-file for this model.")
             }
             systemPrompt = text
-            systemInput = .object(["path": .string(file),
-                                   "sha256": .string(ManifestFileTransaction.digest(data))])
+            var recorded = named
+            recorded["sha256"] = .string(ManifestFileTransaction.digest(data))
+            systemInput = .object(recorded)
         }
 
-        let taken = Set(try StudyAgentAuthoring.list(workspaceRoot: root).agents.map(\.artifact.name))
-        guard !taken.contains(name) else {
+        // Compared as the app's agent editor compares names: ignoring case.
+        let taken = try StudyAgentAuthoring.list(workspaceRoot: root).agents.map {
+            $0.artifact.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !taken.contains(where: { $0.compare(name, options: .caseInsensitive) == .orderedSame })
+        else {
             throw ExperimentError.refusing(
                 .studyDeclaration,
-                "An agent named \(name) already exists in this workspace, and a study tells "
-                    + "its agents apart by name.",
+                "An agent named \(name) already exists in this workspace (names are compared "
+                    + "ignoring case), and a study tells its agents apart by name.",
                 repair: "Choose another name (\(program) agent list --json lists the names in "
                     + "use).")
         }
@@ -299,24 +311,28 @@ public enum StudyAgentCreation {
         let reason = one("--reason").flatMap {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
         }
+        let command = recordedCommand(name: name, flags: flags, systemFile: systemInput)
         let record: JSONValue = .object([
-            "schemaVersion": .number(1), "madeWith": .string("agent create"),
+            "schemaVersion": .number(1),
+            "madeWith": .string(ModelVariantArtifact.madeWithAgentCreate),
             "client": .string(program), "command": .array(command.map(JSONValue.string)),
             "reason": reason.map(JSONValue.string) ?? .null,
             "inputs": .object([
                 "model": .object(["id": .string(model), "revision": .string(revision)]),
                 "adapters": .array(adapterInputs), "vectors": .array(vectorInputs),
+                "bandWidth": .number(Double(bandWidth)),
                 "reasoningEffort": .string(effort.rawValue), "promptMode": .string(promptMode),
-                "systemPromptFile": systemInput,
+                "systemPromptFile": systemInput, "temperature": .null,
                 "capabilityRecordSource": .string(capabilities.source.rawValue),
             ]),
         ])
         probe = ModelVariantArtifact(
             name: name, baseModelID: model, baseRevision: revision, adapters: adapterRefs,
-            injections: injections, bandWidth: 1, alphaInNormUnits: true,
+            injections: injections, bandWidth: bandWidth, alphaInNormUnits: true,
             promptMode: promptMode, qwenThinkingEnabled: effort.isOn,
-            // The schema needs a number here; it is the Playground default and
-            // is never the temperature a study runs the agent at.
+            // No temperature was chosen: the study that casts the agent sets
+            // it. The file still says 0 because this agent file type always
+            // writes one; it is the Playground's default, never a run's.
             temperature: 0, systemPrompt: systemPrompt,
             reasoningEffort: effort, handmade: record)
         probe.createdAt = ""
@@ -350,26 +366,30 @@ public enum StudyAgentCreation {
         var layer: Int
         var strength: Double
         var mode: String
+        var centering: String
     }
 
-    /// The k-th --vector-sha256, --layer, --strength, and --mode belong to
-    /// the k-th --vector. --mode may be left out for every vector (each one
-    /// steers).
+    /// The k-th --vector-sha256, --layer, --strength, --mode, and
+    /// --centering belong to the k-th --vector. --mode and --centering may
+    /// each be left out for every vector (each one steers; an ablation keeps
+    /// the raw direction).
     static func grouped(_ flags: [String: [String]]) throws -> [VectorSpec] {
         let vectors = flags["--vector"] ?? []
         let digests = flags["--vector-sha256"] ?? []
         let layers = flags["--layer"] ?? []
         let strengths = flags["--strength"] ?? []
         let modes = flags["--mode"] ?? []
+        let centerings = flags["--centering"] ?? []
         guard digests.count == vectors.count, layers.count == vectors.count,
-            strengths.count == vectors.count, modes.isEmpty || modes.count == vectors.count
+            strengths.count == vectors.count, modes.isEmpty || modes.count == vectors.count,
+            centerings.isEmpty || centerings.count == vectors.count
         else {
             throw usage(
                 "Give each --vector its own --vector-sha256, --layer, and --strength (and "
-                    + "--mode for each vector, or for none).",
+                    + "--mode and --centering for each vector, or for none).",
                 "\(program) agent create <name> --model <id> --revision <sha> --vector "
                     + "<artifact> --vector-sha256 <digest> --layer <n> --strength <alpha> "
-                    + "[--mode add|ablate]")
+                    + "[--mode add|ablate] [--centering none|neutralMean]")
         }
         return try vectors.indices.map { index in
             guard let layer = Int(layers[index]) else {
@@ -378,26 +398,44 @@ public enum StudyAgentCreation {
             }
             guard let strength = Double(strengths[index]), strength.isFinite else {
                 throw usage("--strength \(strengths[index]) is not a number.",
-                    "Give the strength as a number in residual-norm units, such as "
-                        + "--strength 0.12.")
+                    "Give the strength as a number: in residual-norm units when the vector "
+                        + "steers (such as --strength 0.12), or the fraction removed when it "
+                        + "ablates (such as --strength 1).")
             }
             let mode = modes.isEmpty ? "add" : modes[index]
             guard mode == "add" || mode == "ablate" else {
                 throw usage("--mode \(mode) is not add or ablate.",
                     "Use --mode add to steer along the vector, or --mode ablate to remove it.")
             }
+            let centering = centerings.isEmpty ? "none" : centerings[index]
+            guard centering == "none" || centering == "neutralMean" else {
+                throw usage("--centering \(centering) is not none or neutralMean.",
+                    "Use --centering neutralMean to remove the vector's stored neutral mean "
+                        + "from an ablated direction, or none to keep it raw.")
+            }
+            guard centering == "none" || mode == "ablate" else {
+                throw usage("--centering applies only to an ablating vector (--mode ablate).",
+                    "Give --centering none for a steering vector, or leave --centering out.")
+            }
             return VectorSpec(reference: vectors[index], sha256: digests[index], layer: layer,
-                              strength: strength, mode: mode)
+                              strength: strength, mode: mode, centering: centering)
         }
     }
 
-    static func vector(
-        root: URL, spec: VectorSpec, model: String, revision: String, notes: inout [String]
-    ) throws -> (ModelVariantArtifact.InjectionRef, JSONValue) {
-        var reference = spec.reference.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// A vector reference as recorded: trimmed, with no file suffix.
+    static func normalReference(_ raw: String) -> String {
+        var reference = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         for suffix in [".safetensors", ".json"] where reference.hasSuffix(suffix) {
             reference = String(reference.dropLast(suffix.count))
         }
+        return reference
+    }
+
+    static func vector(
+        root: URL, spec: VectorSpec, model: String, revision: String, bandWidth: Int,
+        notes: inout [String]
+    ) throws -> (ModelVariantArtifact.InjectionRef, JSONValue) {
+        let reference = normalReference(spec.reference)
         let tensor = try ordinary(root, reference + ".safetensors", what: "vector")
         let sidecarURL = try ordinary(root, reference + ".json", what: "vector's sidecar")
         guard isFile(tensor), isFile(sidecarURL) else {
@@ -454,7 +492,7 @@ public enum StudyAgentCreation {
         {
             throw ExperimentError.refusing(
                 .artifactPin,
-                "The vector \(reference) is empty at layer \(spec.layer), so steering there "
+                "The vector \(reference) is empty at layer \(spec.layer), so using it there "
                     + "would change nothing.",
                 repair: "Choose a layer where the vector has a direction (its sidecar's "
                     + "normsPerLayer is not zero there).")
@@ -463,17 +501,36 @@ public enum StudyAgentCreation {
             ?? URL(fileURLWithPath: reference).lastPathComponent
         if spec.mode == "add" {
             let norms = (sidecar["residualNormPerLayer"] as? [NSNumber])?.map(\.floatValue)
-            if ResidualNormConvention.residualNormProblem(
-                norms, layer: spec.layer, artifact: concept) != nil
-            {
+            let half = bandWidth / 2
+            let band = max(0, spec.layer - half)...min(count - 1, spec.layer + half)
+            if let missing = band.first(where: {
+                ResidualNormConvention.residualNormProblem(norms, layer: $0, artifact: concept) != nil
+            }) {
                 throw ExperimentError.refusing(
                     .artifactPin,
-                    "The vector \(reference) records no residual norm at layer \(spec.layer), so "
-                        + "a strength in residual-norm units has nothing to be measured against.",
+                    "The vector \(reference) records no residual norm at layer \(missing), so "
+                        + "a strength in residual-norm units has nothing to be measured against "
+                        + "there.",
                     repair: "Measure the vector's residual norms first (steerlab-cli vectors "
                         + "backfill-norms on the Mac, or steerlab-server vectors backfill-norms "
                         + "where the model is installed), then preview again.")
             }
+        } else if spec.centering == "neutralMean" {
+            guard let source = sidecar["neutralMeanSource"] as? String, !source.isEmpty else {
+                throw ExperimentError.refusing(
+                    .artifactPin,
+                    "The vector \(reference) stores no neutral mean, so --centering "
+                        + "neutralMean has nothing to remove.",
+                    repair: "Extract the concept again with a neutral corpus, or use "
+                        + "--centering none.")
+            }
+        } else {
+            // Raw extracted vectors share a large component with the residual
+            // mean, and ablating that at full strength collapses generation
+            // into single-token repetition (2026-08-06 collapse study).
+            notes.append("The vector \(reference) is ablated without centering: a raw "
+                + "direction carries part of the residual mean, and ablating it at strength 1 "
+                + "can collapse generation into repetition. Consider --centering neutralMean.")
         }
         let covers = sidecar["coversModelDepth"] as? Bool
         let method = sidecar["extractionMethod"] as? String ?? ""
@@ -483,13 +540,91 @@ public enum StudyAgentCreation {
         }
         let injection = ModelVariantArtifact.InjectionRef(
             concept: concept, vectorArtifactID: reference, layer: spec.layer,
-            alpha: spec.strength, mode: spec.mode == "ablate" ? .ablate : nil)
+            alpha: spec.strength, mode: spec.mode == "ablate" ? .ablate : nil,
+            centering: spec.mode == "ablate" && spec.centering != "none" ? spec.centering : nil)
         return (injection, .object([
             "artifactID": .string(reference), "artifactSHA256": .string(live),
             "sidecarSHA256": .string(ManifestFileTransaction.digest(sidecarData)),
             "layer": .number(Double(spec.layer)), "strength": .number(spec.strength),
-            "mode": .string(spec.mode),
+            "mode": .string(spec.mode), "centering": .string(spec.centering),
         ]))
+    }
+
+    /// A file input as a handmade record may name it: workspace-relative when
+    /// it is inside the workspace, else by its file name alone, so no home
+    /// folder or other machine path reaches an agent file (and through it a
+    /// frozen study, a bundle, or an export). Returns the file to read and
+    /// the record's `{"path"|"name": …}`. Python twin:
+    /// `agent_creation.recorded_file`.
+    static func recordedFile(_ raw: String, root: URL) -> (URL, [String: JSONValue]) {
+        let expanded = (raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            as NSString).expandingTildeInPath
+        let absolute = expanded.hasPrefix("/")
+            ? URL(fileURLWithPath: expanded)
+            : URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appending(path: expanded)
+        let canonical = (try? ManifestFileTransaction.canonicalPath(absolute))
+            ?? absolute.standardizedFileURL.path
+        let rootPath = (try? ManifestFileTransaction.canonicalPath(root)) ?? root.path
+        if canonical.hasPrefix(rootPath + "/") {
+            return (absolute, ["path": .string(String(canonical.dropFirst(rootPath.count + 1)))])
+        }
+        return (absolute, ["name": .string(absolute.lastPathComponent)])
+    }
+
+    /// The command a handmade record keeps: rebuilt from the normalised
+    /// arguments, never raw argv, so a typed absolute path is never stored.
+    static func recordedCommand(
+        name: String, flags: [String: [String]], systemFile: JSONValue
+    ) -> [String] {
+        var command = [program, "agent", "create", name]
+        for flag in definingFlags {
+            for value in flags[flag] ?? [] {
+                var recorded = value
+                switch flag {
+                case "--system-prompt-file":
+                    if case .object(let file) = systemFile {
+                        recorded = file["path"]?.agentRecordString
+                            ?? file["name"]?.agentRecordString ?? ""
+                    }
+                case "--adapter":
+                    recorded = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    while recorded.hasSuffix("/") { recorded.removeLast() }
+                case "--vector": recorded = normalReference(value)
+                case "--model", "--revision":
+                    recorded = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                default: break
+                }
+                command += [flag, recorded]
+            }
+        }
+        return command
+    }
+
+    /// The repair for an agent level the template does not take, true for
+    /// the record in hand. Python twin: `agent_identity.effort_repair`.
+    static func effortRepair(_ capabilities: ModelCapabilities) -> String {
+        guard capabilities.hasThinkingSwitch else {
+            return "Use --reasoning-effort off: this model's chat template has no thinking "
+                + "switch."
+        }
+        let accepted = ReasoningEffort.levels.filter {
+            capabilities.effortVerdict($0.rawValue) == .accepted
+        }.map(\.rawValue)
+        let assumed = ReasoningEffort.levels.filter {
+            capabilities.effortVerdict($0.rawValue) == .assumed
+        }.map(\.rawValue)
+        var parts: [String] = []
+        if !accepted.isEmpty {
+            parts.append("levels its chat template accepts: " + accepted.joined(separator: ", "))
+        }
+        if !assumed.isEmpty {
+            parts.append("levels assumed from the model id, with no probed template: "
+                + assumed.joined(separator: ", "))
+        }
+        let listing = parts.isEmpty ? "no level is known to be accepted" : parts.joined(separator: "; ")
+        return "Choose another level with --reasoning-effort (\(listing)), or use on (thinking "
+            + "at the template's default) or off."
     }
 
     private static let weightsByFormat = [
@@ -551,7 +686,10 @@ public enum StudyAgentCreation {
                                     name: recordURL.lastPathComponent, what: "adapter record")
             name = (record["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 ?? path.lastPathComponent
-            declaredRevision = record["revision"] as? String
+            // Training records the requested revision under `revision` (which can
+            // be a branch) and the commit it resolved to under `revisionResolved`
+            // (lora_train); the commit is what the adapter was trained on.
+            declaredRevision = record["revisionResolved"] as? String ?? record["revision"] as? String
             declaredWeights = record["adapterBytesHash"] as? String
             declaredConfig = record["adapterConfigHash"] as? String
         } else {
@@ -630,7 +768,7 @@ public enum StudyAgentCreation {
             name: name, artifactPath: recordPath, adapterDirectory: relative,
             adapterHash: weights, configHash: config)
         return (ref, .object([
-            "path": .string(reference), "adapterDirectory": .string(relative),
+            "path": .string(try relativePath(path, root: root)), "adapterDirectory": .string(relative),
             "weightsFile": .string(weightsName), "adapterSHA256": .string(weights),
             "configSHA256": .string(config),
             "recordSHA256": .string(ManifestFileTransaction.digest(try Data(contentsOf: recordURL))),

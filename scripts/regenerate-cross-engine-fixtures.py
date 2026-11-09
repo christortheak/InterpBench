@@ -438,6 +438,37 @@ def ablation_layers() -> None:
             "cases": cases})
 
 
+def agent_reasoning_effort() -> None:
+    """How an agent file's thinking fields read (FR6-B): for every spelling
+    of ``reasoningEffort`` (absent, null, each level, an unknown string, and
+    non-strings) beside every spelling of ``qwenThinkingEnabled`` (absent,
+    true, false), the refusal sentence, or the level
+    ``agent_identity.variant_reasoning_effort`` reads and the boolean it
+    implies. Swift's ``ModelVariantArtifact`` decoding must agree on each."""
+    from steerlab_server.experiment import agent_identity, model_variant
+
+    absent = object()
+    efforts = [absent, None, "off", "on", "low", "medium", "high", "xhigh", "hgih",
+               5, True]
+    switches = [absent, True, False]
+    cases = []
+    for effort in efforts:
+        for switch in switches:
+            artifact = {"name": "agent", "baseModelID": "test/model"}
+            if effort is not absent:
+                artifact["reasoningEffort"] = effort
+            if switch is not absent:
+                artifact["qwenThinkingEnabled"] = switch
+            problem = agent_identity.agent_file_problem(artifact)
+            case = {"artifact": artifact, "problem": problem}
+            if problem is None:
+                variant = model_variant.ModelVariant.from_dict(artifact)
+                case["reasoningEffort"] = agent_identity.variant_reasoning_effort(variant)
+                case["qwenThinkingEnabled"] = variant.qwen_thinking_enabled
+            cases.append(case)
+    _write(os.path.join(FIXTURES, "agent-reasoning-effort.json"), cases)
+
+
 def choice_margins() -> None:
     """The D3 margin arithmetic. Quantile interpolation and clamp detection
     are the parts two implementations silently disagree on."""
@@ -3197,6 +3228,7 @@ def main() -> int:
     validation_layers()
     ablation_layers()
     choice_margins()
+    agent_reasoning_effort()
     auto_prompt_ids()
     row_hashes()
     evidence_bundle()

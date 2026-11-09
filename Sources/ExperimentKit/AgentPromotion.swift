@@ -349,6 +349,24 @@ public enum AgentPromotion {
         if let existing = ModelVariantStore.scan().first(
             where: { $0.artifact.promotion?.promotionKey == key })
         {
+            // The key leaves the thinking level out, so an agent minted
+            // before promotion carried the sweep's level can match it while
+            // thinking at another. Never hand that back silently (FR6-B round
+            // 2). Server twin: `promote._mint`'s reuse check.
+            let want = manifest.resolvedReasoningEffort
+            let have = existing.artifact.resolvedReasoningEffort
+            guard have == want else {
+                throw ExperimentError.refusing(
+                    .promotionEvidence,
+                    "promote '\(concept)': the agent already minted for this promotion "
+                        + "(\(existing.url.lastPathComponent)) thinks at reasoning effort "
+                        + "\(have.rawValue), but the sweep's cells ran at \(want.rawValue); "
+                        + "returning it would hand back an agent at a level the sweep never "
+                        + "measured",
+                    repair: "promote again under a new name, which mints an agent at "
+                        + "\(want.rawValue): \(ExperimentCLIHelp.program) experiment promote "
+                        + "\(experimentName) \(concept) --agent-name \(variantName)-\(want.rawValue)")
+            }
             log(
                 "promote '\(concept)': an agent for this exact promotion "
                     + "already exists (\(existing.url.path)) — returning it "

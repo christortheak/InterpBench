@@ -32,26 +32,34 @@ reconstructing an attachment request.
 **Agents made by hand:** `{{cli}} agent create <name> --model <id> --revision <sha>`
 makes an agent without a sweep: the base model at a pinned 40-character commit,
 and optionally one adapter (`--adapter <folder-or-fine-tune.json> --adapter-sha256 <weights digest>`),
-any number of steering vectors (`--vector <runs/<run>/<name>> --vector-sha256 <artifactSHA256> --layer <n> --strength <alpha> [--mode add|ablate]`,
-once per vector; the k-th `--vector-sha256`, `--layer`, `--strength`, and
-`--mode` belong to the k-th `--vector`), `--reasoning-effort <level>`,
-`--system-prompt-file <file>`, `--prompt-mode <mode>`, and `--reason <text>`.
-Strengths are in residual-norm units, as the app's agent editor uses. It previews
-first and writes nothing: show the researcher the agent file and the checks,
-then repeat the command with `--review-sha256 <reviewSHA256>`
-(`result.confirmCommand` is the exact command). It refuses a revision that is
-not a pinned commit, an adapter or vector whose bytes do not match the digest
-you give or that belongs to another model or revision, a layer the vector does
-not have, a vector with no residual norm at that layer, more than one adapter
-(both engines run only the first), and a thinking level the model's chat
-template does not accept. Get vector digests from `{{cli}} experiment inspect-artifact`.
+any number of vectors (`--vector <runs/<run>/<name>> --vector-sha256 <artifactSHA256> --layer <n> --strength <alpha> [--mode add|ablate] [--centering none|neutralMean]`,
+once per vector; the k-th `--vector-sha256`, `--layer`, `--strength`, `--mode`,
+and `--centering` belong to the k-th `--vector`), `--band-width <1|3|…|11>`,
+`--reasoning-effort <level>`, `--system-prompt-file <file>`,
+`--prompt-mode <mode>`, and `--reason <text>`. A steering strength is in
+residual-norm units, as the app's agent editor uses; an ablation's strength is
+the fraction of the direction removed, and the preview advises when an
+ablation keeps the raw direction (`--centering neutralMean` removes the
+vector's stored neutral mean first). It previews first and writes nothing: show
+the researcher the agent file and the checks, then repeat the command with
+`--review-sha256 <reviewSHA256>` (`result.confirmCommand` is the exact
+command). It refuses a revision that is not a pinned commit, an adapter or
+vector whose bytes do not match the digest you give or that belongs to another
+model or revision, a layer the vector does not have, a vector with no residual
+norm at that layer, more than one adapter (both engines run only the first), a
+thinking level the model's chat template does not accept, and a name another
+agent has (ignoring case). Get vector digests from `{{cli}} experiment inspect-artifact`.
 The agent lands in `runs/model-variants/` with a `handmade` record: the
-command, each input and its hash, when it was made, and the reason. Attach it
-with the returned `artifactFileSHA256`. There is no `--temperature`: the study
+command, each input and its hash, when it was made, and the reason. The record
+names a file inside the workspace by its workspace path and a file outside it
+by its name and SHA-256 only, never by a home-folder path. Attach it with the
+returned `artifactFileSHA256`; attach refuses an agent made for another
+revision of the model than the study's. There is no `--temperature`: the study
 sets the temperature every arm runs at. `agent inspect`, `agent list`, and
 `attach-agent` say whether an agent is `swept` (a sweep chose its settings and
 `experiment promote` made it) or `handmade`, and its thinking level
-(`result.agent`). A handmade steered agent passes the same freeze gates as a
+(`result.agent`). The app's agent editor records the agents it saves as
+handmade too. A handmade steered agent passes the same freeze gates as a
 promoted one; say in METHODS who chose its settings and why.
 
 **Renaming and deleting:** `{{cli}} experiment rename <name> <new-name>`,

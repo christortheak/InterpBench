@@ -3755,6 +3755,14 @@ public enum ExperimentStore {
         {
             violations.append(greedySeeds)
         }
+        // The settings-only rules of each attached agent arm (FR6-B round 2):
+        // a DRAFT only, by the same pattern, so freeze refuses it; a study
+        // frozen before them meets them at submission and run start
+        // (`ModelVariantArtifact.armRefusal`). Server twin: Manifest.verify.
+        if manifest.status == .draft {
+            violations += ModelVariantArtifact.manifestArmProblems(
+                manifest, workspaceRoot: workspaceRoot)
+        }
         // The declared prompt reading (issue #6): a block outside the
         // contract is a violation, never a silent fallback to a device
         // default. Server twin: Manifest.verify's promptReading block, same
