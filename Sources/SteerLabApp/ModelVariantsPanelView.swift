@@ -1728,7 +1728,8 @@ struct ModelVariantsPanelView: View {
             var droppedPromotion = false
             var savedACopy = asNewAgent
             if asNewAgent {
-                record = try ModelVariantStore.saveAsNewAgent(artifact, takenNames: takenNames)
+                record = try ModelVariantStore.saveAsNewAgent(
+                    artifact, takenNames: takenNames, source: selected)
                 summary = selected.map {
                     AgentEditProvenance.savedAsNewAgentNote(
                         agent: record.artifact.name, original: $0.artifact.name,
@@ -1749,7 +1750,7 @@ struct ModelVariantsPanelView: View {
                         ? AgentEditProvenance.afterSaveNote(agent: updated.artifact.name)
                         : "Updated agent '\(updated.artifact.name)'.")
                         + (selected.artifact.handmade != nil && updated.artifact.handmade != selected.artifact.handmade
-                            ? " Its earlier record no longer describes it, so a new record says the agent editor made it."
+                            ? " Its earlier record no longer describes it, so a new record says the agent editor made it from that agent, and what changed."
                             : "")
                 case .savedAsNewAgent(let copy):
                     record = copy

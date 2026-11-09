@@ -32,7 +32,8 @@ enum StudyAgentCLI {
             let studySHA = flag("--manifest-sha256") else { throw usage() }
         let reviewed = try DraftAuthoringSnapshot.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: studySHA)
         let artifact = try StudyAgentAuthoring.reviewArtifact(path: path, workspaceRoot: workspaceRoot, expectedFileSHA256: artifactSHA)
-        let saved = try StudyAgentAuthoring.attach(artifact, reviewed: reviewed)
+        let saved = try StudyAgentAuthoring.attach(
+            artifact, reviewed: reviewed, replacing: flag("--replace"))
         var attached = try result(StudyAuthoringHTTP.Document(saved), message: "Agent attached to reviewed draft.",
             changed: saved.file.sha256 != reviewed.file.sha256, sink: sink)
         // Swept or handmade, and its thinking level, said on arrival.

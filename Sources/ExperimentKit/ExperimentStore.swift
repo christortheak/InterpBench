@@ -1939,8 +1939,24 @@ public enum ExperimentStore {
     /// model produced the text.
     public static func attachAgent(
         _ record: ModelVariantRecord, into manifest: inout ExperimentManifest,
-        workspaceRoot: URL? = nil, expectedArtifactFileSHA256: String? = nil
+        workspaceRoot: URL? = nil, expectedArtifactFileSHA256: String? = nil,
+        replacing arm: String? = nil
     ) throws {
+        // `--replace`: the agent takes the named arm's place, at its
+        // position. Server twin: `study_agents.attach`.
+        var position = manifest.variantConditions.count
+        if let arm {
+            guard let index = manifest.variantConditions.firstIndex(where: { $0.name == arm })
+            else {
+                let listed = manifest.variantConditions.map(\.name).joined(separator: ", ")
+                throw ExperimentError.refusing(.missingPrerequisite,
+                    "Study \(manifest.name) has no agent arm named \(arm) to replace (its agent "
+                        + "arms: \(listed.isEmpty ? "none" : listed)).",
+                    repair: "Name an attached arm with --replace, or leave --replace out to add "
+                        + "the agent as a new arm.")
+            }
+            position = index
+        }
         guard record.artifact.baseModelID == manifest.modelID else {
             throw ExperimentError.refusing(.artifactPin,
                 "agent '\(record.artifact.name)' uses "
@@ -1948,26 +1964,31 @@ public enum ExperimentStore {
                     + "model \(manifest.modelID)",
                 repair: "Choose an agent for this study's base model, or deliberately revise the draft's model before attaching it.")
         }
-        // The revision too (FR6-B round 2): an agent made for one commit of
-        // the model and run under another is not the agent it describes. An
-        // agent written before agents recorded a revision is not judged.
+        // The revision too: refused only when both name commits and they
+        // differ; a revision the spelling cannot check is a verify note.
         // Server twin: `study_agents.attach`.
         if let agentRevision = record.artifact.baseRevision, !agentRevision.isEmpty,
             let studyRevision = manifest.modelRevision, !studyRevision.isEmpty,
-            agentRevision != studyRevision
+            ModelVariantArtifact.compareRevisions(agentRevision, studyRevision) == .differ
         {
             throw ExperimentError.refusing(.artifactPin,
                 ModelVariantArtifact.revisionMismatchReason(
-                    agent: record.artifact.name, model: record.artifact.baseModelID,
-                    agentRevision: agentRevision, studyRevision: studyRevision),
+                    model: record.artifact.baseModelID, agentRevision: agentRevision,
+                    studyRevision: studyRevision, agent: record.artifact.name),
                 repair: ModelVariantArtifact.revisionMismatchRepair)
         }
         let condition = try agentCondition(for: record, workspaceRoot: workspaceRoot,
             expectedArtifactFileSHA256: expectedArtifactFileSHA256)
-        manifest.variantConditions.removeAll {
-            $0.artifactPath == condition.artifactPath || $0.name == condition.name
+        var kept: [ExperimentManifest.VariantCondition] = []
+        for (index, existing) in manifest.variantConditions.enumerated() where index != position {
+            if existing.artifactPath == condition.artifactPath || existing.name == condition.name {
+                if index < position { position -= 1 }
+                continue
+            }
+            kept.append(existing)
         }
-        manifest.variantConditions.append(condition)
+        kept.insert(condition, at: min(position, kept.count))
+        manifest.variantConditions = kept
     }
 
     @discardableResult

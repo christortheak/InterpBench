@@ -119,8 +119,12 @@ public enum StudyAgentAuthoring {
     }
 
     @discardableResult
+    /// Attaches the reviewed agent to the reviewed draft. `replacing` names
+    /// an attached arm the agent takes the place of, at the same position
+    /// (`attach-agent --replace`). Server twin: `study_agents.attach`.
     public static func attach(_ agent: AgentArtifactSnapshot, reviewed: DraftAuthoringSnapshot,
-                              baseModelChoice: String? = nil) throws -> DraftAuthoringSnapshot {
+                              baseModelChoice: String? = nil,
+                              replacing arm: String? = nil) throws -> DraftAuthoringSnapshot {
         guard try ManifestFileTransaction.canonicalPath(agent.workspaceRoot)
             == ManifestFileTransaction.canonicalPath(reviewed.workspaceRoot) else {
             throw ExperimentError.refusing(.artifactPin, "The selected agent belongs to another workspace.",
@@ -133,7 +137,7 @@ public enum StudyAgentAuthoring {
             var manifest = reviewed.manifest
             if let choice = baseModelChoice { StudyProtocolAuthoring.applyBaseModelChoice(choice, to: &manifest) }
             try ExperimentStore.attachAgent(agent.record, into: &manifest, workspaceRoot: reviewed.workspaceRoot,
-                expectedArtifactFileSHA256: agent.file.sha256)
+                expectedArtifactFileSHA256: agent.file.sha256, replacing: arm)
             return try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
         }
     }

@@ -338,6 +338,15 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// own repair.
     case refusedWhenRun
 
+    /// An attached agent's model revision could not be checked against the
+    /// revision the study pins: the agent records none (saved before agents
+    /// recorded one), or one side is a branch, a tag, or a shortened hash
+    /// the other begins with. Said at `verify`, never a refusal; two commits
+    /// that differ are refused instead. The detail is
+    /// `ModelVariantArtifact.revisionNote` (server twin
+    /// `agent_identity.revision_note`), byte for byte.
+    case agentRevisionNotChecked
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

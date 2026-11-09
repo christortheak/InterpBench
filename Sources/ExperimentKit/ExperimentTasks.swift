@@ -4059,20 +4059,25 @@ public enum ExperimentTasks {
                         let cell = truncationCell(
                             rows: rows, condition: condition.name,
                             promptID: prompt.id)
+                        // The budget THIS arm ran under: the study's own arms
+                        // think only when the study does, so a budget declared
+                        // for thinking agents is not theirs to name. Server
+                        // twin: `condition_execution.study_arm_budget`.
+                        let armBudget = StudySampling.studyArmBudget(manifest)
                         if let problem = lengthStoppedRefusal(
                             classified: cell.classified,
                             lengthStopped: cell.lengthStopped,
                             threshold: ceiling, condition: condition.name,
                             promptID: prompt.id, maxTokens: manifest.maxTokens,
                             lengthStoppedInReasoning: cell.inReasoning,
-                            reasoningMaxTokens: manifest.reasoningMaxTokens)
+                            reasoningMaxTokens: armBudget)
                         {
                             throw ExperimentError.refusing(
                                 .lengthStopped, problem,
                                 repair: lengthStoppedRepair(
                                     experiment: manifest.name,
                                     maxTokens: manifest.maxTokens,
-                                    reasoningMaxTokens: manifest.reasoningMaxTokens))
+                                    reasoningMaxTokens: armBudget))
                         }
                     }
                 }
@@ -5022,19 +5027,26 @@ public enum ExperimentTasks {
                                 let cell = truncationCell(
                                     rows: rows, condition: condition.name,
                                     promptID: prompt.id)
+                                // The budget THIS agent arm ran under, as its
+                                // generation was given it.
+                                let armBudget = StudySampling.reasoningBudget(
+                                    pinnedManifest, variant: condition.variant)
                                 if let problem = lengthStoppedRefusal(
                                     classified: cell.classified,
                                     lengthStopped: cell.lengthStopped,
                                     threshold: ceiling,
                                     condition: condition.name,
                                     promptID: prompt.id,
-                                    maxTokens: pinnedManifest.maxTokens)
+                                    maxTokens: pinnedManifest.maxTokens,
+                                    lengthStoppedInReasoning: cell.inReasoning,
+                                    reasoningMaxTokens: armBudget)
                                 {
                                     throw ExperimentError.refusing(
                                         .lengthStopped, problem,
                                         repair: lengthStoppedRepair(
                                             experiment: pinnedManifest.name,
-                                            maxTokens: pinnedManifest.maxTokens))
+                                            maxTokens: pinnedManifest.maxTokens,
+                                            reasoningMaxTokens: armBudget))
                                 }
                             }
                         }

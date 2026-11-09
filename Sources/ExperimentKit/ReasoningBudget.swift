@@ -132,9 +132,9 @@ extension ExperimentManifest {
     ) -> [String] {
         // A study whose own effort is off may still declare a budget when an
         // attached agent arm thinks; it reaches only the arms that think
-        // (ruling 2026-11-08). The predicate is kept separate so a panel
-        // seat's twin can join it. Server twin: Manifest.verify.
-        let budgetForAgents = ModelVariantArtifact.anAttachedAgentArmThinks(self)
+        // (ruling 2026-11-08), as the one predicate says (a panel seat
+        // joins it there). Server twin: Manifest.verify.
+        let budgetForAgents = ModelVariantArtifact.budgetPermittedWithoutEffort(self)
         if reasoningEffort != nil {
             return ReasoningEffort.protocolViolations(
                 effort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens,

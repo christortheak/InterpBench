@@ -37,6 +37,13 @@ public enum StudySampling {
         reasoningEffort(manifest, variant: variant).isOn ? manifest.reasoningMaxTokens : nil
     }
 
+    /// The reasoning budget the study's own arms (baseline, concept, and SAE
+    /// latent arms) run under: the declared budget when the study itself
+    /// thinks, else none. Server twin: `condition_execution.study_arm_budget`.
+    public static func studyArmBudget(_ manifest: ExperimentManifest) -> Int? {
+        manifest.resolvedReasoningEffort.isOn ? manifest.reasoningMaxTokens : nil
+    }
+
     public static func deriveSeed(
         experimentHash: String, condition: String, promptID: String, sampleIndex: Int
     ) -> UInt64 {

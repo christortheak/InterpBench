@@ -129,7 +129,7 @@ import Testing
             "capabilityControlNotApplied", "computeCannotRun",
             "storedChoicesReadDifferently", "validationOverlapsExtraction",
             "unfinishedSourceAnalyzed", "seedSettingNotUsed", "clientUpdateAvailable",
-            "baselineOnlyStudy", "refusedWhenRun",
+            "baselineOnlyStudy", "refusedWhenRun", "agentRevisionNotChecked",
         ]
         #expect(CLIAdvisory.vocabulary == serverLiteral)
     }

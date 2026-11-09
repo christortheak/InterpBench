@@ -376,19 +376,28 @@ struct StudyAgentCreationTests {
         }
     }
 
-    @Test func promotionKeepsTheStudysDeclaredLevel() {
-        var declared = ExperimentManifest(name: "s", description: "", modelID: "m")
-        declared.reasoningEffort = "medium"
-        declared.reasoningMaxTokens = 64
-        #expect(AgentPromotion.promotedReasoningEffort(declared) == .medium)
-        // A manifest from before the effort existed spells only the boolean.
-        var legacy = ExperimentManifest(name: "s", description: "", modelID: "m")
-        legacy.reasoningEffort = nil
-        legacy.qwenThinkingEnabled = true
-        #expect(AgentPromotion.promotedReasoningEffort(legacy) == nil)
-        var off = ExperimentManifest(name: "s", description: "", modelID: "m")
-        off.reasoningEffort = "off"
-        #expect(AgentPromotion.promotedReasoningEffort(off) == nil)
+    @Test func promotionTakesTheLevelTheSweepRanAt() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "sweep-level") { _ in
+            for (run, snapshot) in [
+                ("declared", ["reasoningEffort": "medium", "reasoningMaxTokens": 64] as [String: Any]),
+                ("legacy", ["qwenThinkingEnabled": true]),
+                ("off", ["reasoningEffort": "off"]),
+            ] {
+                let directory = ExperimentStore.runsDirectory.appending(component: run)
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true)
+                try JSONSerialization.data(withJSONObject: snapshot)
+                    .write(to: directory.appending(component: "experiment.json"))
+            }
+            func level(_ run: String) throws -> (ReasoningEffort?, Bool) {
+                try AgentPromotion.sweepRunLevel(sweepRun: run, experimentName: "s", concept: "c")
+            }
+            #expect(try level("declared") == (.medium, true))
+            // The bytes such a sweep always promoted.
+            #expect(try level("legacy") == (nil, true))
+            #expect(try level("off") == (nil, false))
+            #expect(throws: ExperimentError.self) { _ = try level("missing") }
+        }
     }
 
     // MARK: - Swept and handmade, everywhere
@@ -429,13 +438,14 @@ struct StudyAgentCreationTests {
 
     // MARK: - Round 2
 
-    @Test func aFileOutsideTheWorkspaceIsRecordedByNameAndHash() throws {
+    @Test func aFileOutsideTheWorkspaceIsRecordedByItsHashAlone() throws {
         try ExperimentRootOverrideLock.withTempRoot(prefix: "agent-create") { root in
             let outside = FileManager.default.temporaryDirectory
                 .appending(component: "fr6b-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: outside) }
-            let prompt = outside.appending(component: "persona.txt")
+            // The file's own name can carry a private name, so it is not recorded.
+            let prompt = outside.appending(component: "notes-for-dr-example.txt")
             try Data("Answer as a careful reviewer.".utf8).write(to: prompt)
             _ = try create(root, base() + ["--system-prompt-file", prompt.path])
             let data = try Data(contentsOf: try #require(libraryAgents(root).first))
@@ -449,8 +459,10 @@ struct StudyAgentCreationTests {
                 case .object(let file)? = inputs["systemPromptFile"],
                 case .array(let command)? = record["command"]
             else { Issue.record("no record"); return }
-            #expect(file["name"] == .string("persona.txt") && file["path"] == nil)
-            #expect(command.contains(.string("persona.txt")))
+            #expect(!text.contains("dr-example"))
+            #expect(file["outsideWorkspace"] == .bool(true) && file["path"] == nil
+                && file["name"] == nil)
+            #expect(command.contains(.string(StudyAgentCreation.outsideWorkspace)))
             #expect(inputs["temperature"] == .null)
             // A `~` path that cannot be read says so without the home folder.
             do {
@@ -473,7 +485,9 @@ struct StudyAgentCreationTests {
                 case .array(let notes)? = preview.payload["advisories"]
             else { Issue.record("no document"); return }
             #expect(document["bandWidth"] == .number(3))
-            #expect(notes.contains { $0.agentRecordString?.contains("ablated without centering") == true })
+            #expect(notes.contains {
+                $0.agentRecordString?.contains("ablated at layer 2 only without centering") == true
+            })
             let refused = refusal(root, base() + [
                 "--vector", reference, "--vector-sha256", digest, "--layer", "2",
                 "--strength", "1", "--mode", "ablate", "--centering", "neutralMean"])

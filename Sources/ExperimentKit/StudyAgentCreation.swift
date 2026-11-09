@@ -35,6 +35,19 @@ public enum StudyAgentCreation {
     /// The layer bands the app's agent editor offers (odd, 1 to 11).
     static let bandWidths = Array(stride(from: 1, through: 11, by: 2))
 
+    /// `--layer all`: an ablation of every layer, as the app's agent editor
+    /// and the Playground ablate. Python twin: `agent_creation.ALL_LAYERS`.
+    public static let allLayers = "all"
+
+    /// How a handmade record's command names a file outside the workspace:
+    /// by no name at all (a file name can carry a person's or a machine's
+    /// name); the hash recorded beside it identifies the file. Python twin:
+    /// `agent_creation.OUTSIDE_WORKSPACE`.
+    public static let outsideWorkspace = "<a file outside the workspace>"
+
+    /// The macOS home root, spelled apart so this file never carries it.
+    static let homeRoot = "/" + "Users" + "/"
+
     public static let spec = ExperimentCLIVerbSpec(
         namespace: "agent", verb: "create", positional: "<name>",
         purpose: "Preview an agent made by hand: a base model at a pinned revision, at "
@@ -258,7 +271,7 @@ public enum StudyAgentCreation {
         var systemInput: JSONValue = .null
         if let raw = one("--system-prompt-file") {
             let (readable, named) = recordedFile(raw, root: root)
-            let file = named["path"]?.agentRecordString ?? named["name"]?.agentRecordString ?? ""
+            let file = named["path"]?.agentRecordString ?? readable.lastPathComponent
             guard let data = FileManager.default.contents(atPath: readable.path),
                 let text = String(data: data, encoding: .utf8)
             else {
@@ -310,6 +323,12 @@ public enum StudyAgentCreation {
 
         let reason = one("--reason").flatMap {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+        }
+        if let reason, namesAHomePath(reason) {
+            notes.append("The --reason text names a home folder or a path under \(homeRoot), "
+                + "and it is kept word for word in the agent file, which travels with every "
+                + "study, bundle, and export that uses the agent. Reword it before writing if "
+                + "that path should not.")
         }
         let command = recordedCommand(name: name, flags: flags, systemFile: systemInput)
         let record: JSONValue = .object([
@@ -363,7 +382,8 @@ public enum StudyAgentCreation {
     struct VectorSpec {
         var reference: String
         var sha256: String
-        var layer: Int
+        /// nil for `--layer all`: an ablation of every layer.
+        var layer: Int?
         var strength: Double
         var mode: String
         var centering: String
@@ -392,9 +412,16 @@ public enum StudyAgentCreation {
                     + "[--mode add|ablate] [--centering none|neutralMean]")
         }
         return try vectors.indices.map { index in
-            guard let layer = Int(layers[index]) else {
-                throw usage("--layer \(layers[index]) is not a whole number.",
-                    "Give the layer as a whole number, such as --layer 14.")
+            let layerText = layers[index].trimmingCharacters(in: .whitespaces)
+            let layer: Int?
+            if layerText == allLayers {
+                layer = nil
+            } else if let number = Int(layerText) {
+                layer = number
+            } else {
+                throw usage("--layer \(layers[index]) is not a whole number or all.",
+                    "Give the layer as a whole number, such as --layer 14, or --layer all for "
+                        + "an ablation of every layer.")
             }
             guard let strength = Double(strengths[index]), strength.isFinite else {
                 throw usage("--strength \(strengths[index]) is not a number.",
@@ -416,6 +443,11 @@ public enum StudyAgentCreation {
             guard centering == "none" || mode == "ablate" else {
                 throw usage("--centering applies only to an ablating vector (--mode ablate).",
                     "Give --centering none for a steering vector, or leave --centering out.")
+            }
+            guard layer != nil || mode == "ablate" else {
+                throw usage("--layer all applies only to an ablating vector (--mode ablate): a "
+                    + "steering vector acts at one layer and the band around it.",
+                    "Give the steering vector one layer, such as --layer 14.")
             }
             return VectorSpec(reference: vectors[index], sha256: digests[index], layer: layer,
                               strength: strength, mode: mode, centering: centering)
@@ -466,45 +498,60 @@ public enum StudyAgentCreation {
                     + "\(model): steering one model with another model's vector has no meaning.",
                 repair: "Choose a vector extracted from the agent's base model.")
         }
-        if let recorded = sidecar["revision"] as? String {
-            guard recorded == revision else {
+        try checkRevision(
+            "The vector \(reference)", verb: "extracted from",
+            recorded: sidecar["revision"] as? String, model: model, revision: revision,
+            notes: &notes, redo: "extract the concept again at this revision")
+        guard let countNumber = sidecar["layerCount"] as? NSNumber,
+            CFGetTypeID(countNumber) != CFBooleanGetTypeID()
+        else {
+            throw ExperimentError.refusing(
+                .artifactPin,
+                "The vector \(reference) does not say how many layers it has, so SteerLab "
+                    + "cannot check where it acts.",
+                repair: "Restore the vector's sidecar from its extraction run, then preview "
+                    + "again.")
+        }
+        let count = countNumber.intValue
+        let vectorNorms = (sidecar["normsPerLayer"] as? [NSNumber])?.map(\.doubleValue)
+        if let layer = spec.layer {
+            guard (0..<count).contains(layer) else {
                 throw ExperimentError.refusing(
                     .artifactPin,
-                    "The vector \(reference) was extracted from revision \(recorded) of "
-                        + "\(model), not \(revision).",
-                    repair: "Use the vector's revision with --revision, or extract the concept "
-                        + "again at this revision.")
+                    "Layer \(layer) is not in the vector \(reference), which has layers 0 to "
+                        + "\(count - 1).",
+                    repair: "Choose a layer the vector has, with --layer.")
             }
-        } else {
-            notes.append("The vector \(reference) does not record which revision of \(model) "
-                + "it was extracted from, so SteerLab cannot confirm it matches \(revision).")
-        }
-        let count = (sidecar["layerCount"] as? NSNumber)?.intValue
-        guard let count, (0..<count).contains(spec.layer) else {
+            if let vectorNorms, layer < vectorNorms.count, vectorNorms[layer] == 0 {
+                throw ExperimentError.refusing(
+                    .artifactPin,
+                    "The vector \(reference) is empty at layer \(layer), so using it there "
+                        + "would change nothing.",
+                    repair: "Choose a layer where the vector has a direction (its sidecar's "
+                        + "normsPerLayer is not zero there).")
+            }
+        } else if let vectorNorms, !vectorNorms.isEmpty, vectorNorms.allSatisfy({ $0 == 0 }) {
             throw ExperimentError.refusing(
                 .artifactPin,
-                "Layer \(spec.layer) is not in the vector \(reference), which has layers 0 to "
-                    + "\(count.map { String($0 - 1) } ?? "?").",
-                repair: "Choose a layer the vector has, with --layer.")
+                "The vector \(reference) is empty at every layer, so ablating it would change "
+                    + "nothing.",
+                repair: "Choose a vector extracted with a direction.")
         }
-        if let norms = sidecar["normsPerLayer"] as? [NSNumber], spec.layer < norms.count,
-            norms[spec.layer].doubleValue == 0
-        {
-            throw ExperimentError.refusing(
-                .artifactPin,
-                "The vector \(reference) is empty at layer \(spec.layer), so using it there "
-                    + "would change nothing.",
-                repair: "Choose a layer where the vector has a direction (its sidecar's "
-                    + "normsPerLayer is not zero there).")
-        }
+        let scope = spec.layer.map { "at layer \($0) only" } ?? "at every layer"
         let concept = (sidecar["concept"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? URL(fileURLWithPath: reference).lastPathComponent
-        if spec.mode == "add" {
+        if spec.mode == "add", let layer = spec.layer {
             let norms = (sidecar["residualNormPerLayer"] as? [NSNumber])?.map(\.floatValue)
             let half = bandWidth / 2
-            let band = max(0, spec.layer - half)...min(count - 1, spec.layer + half)
-            if let missing = band.first(where: {
-                ResidualNormConvention.residualNormProblem(norms, layer: $0, artifact: concept) != nil
+            let band = max(0, layer - half)...min(count - 1, layer + half)
+            if let missing = band.first(where: { bandLayer in
+                // A layer where the vector is zero adds nothing (the engine
+                // skips it), so it needs no residual norm.
+                if let vectorNorms, bandLayer < vectorNorms.count, vectorNorms[bandLayer] == 0 {
+                    return false
+                }
+                return ResidualNormConvention.residualNormProblem(
+                    norms, layer: bandLayer, artifact: concept) != nil
             }) {
                 throw ExperimentError.refusing(
                     .artifactPin,
@@ -528,33 +575,47 @@ public enum StudyAgentCreation {
             // Raw extracted vectors share a large component with the residual
             // mean, and ablating that at full strength collapses generation
             // into single-token repetition (2026-08-06 collapse study).
-            notes.append("The vector \(reference) is ablated without centering: a raw "
-                + "direction carries part of the residual mean, and ablating it at strength 1 "
-                + "can collapse generation into repetition. Consider --centering neutralMean.")
+            notes.append("The vector \(reference) is ablated \(scope) without centering: a "
+                + "raw direction carries part of the residual mean, and ablating it at strength "
+                + "1 can collapse generation into repetition. Consider --centering neutralMean.")
         }
         let covers = sidecar["coversModelDepth"] as? Bool
         let method = sidecar["extractionMethod"] as? String ?? ""
         if !(covers ?? !SteeringVectorSidecar.partialDepthMethods.contains(method)) {
-            notes.append("The vector \(reference) covers only some of the model's layers; "
-                + "layer \(spec.layer) is one it has.")
+            notes.append("The vector \(reference) covers only some of the model's layers"
+                + (spec.layer.map { "; layer \($0) is one it has." }
+                    ?? "; an ablation of every layer acts on the layers it has."))
         }
+        if spec.mode == "ablate" {
+            notes.append("The vector \(reference) is ablated \(scope)"
+                + (spec.layer == nil
+                    ? ", as the app's agent editor ablates."
+                    : ": the layers above can restore what it removes; use --layer all to "
+                        + "ablate every layer."))
+        }
+        // An ablation of every layer names no layer of its own; both engines
+        // leave its `layer` unused, and it is written at the vector's middle
+        // layer, as the editor seeds a new row.
         let injection = ModelVariantArtifact.InjectionRef(
-            concept: concept, vectorArtifactID: reference, layer: spec.layer,
+            concept: concept, vectorArtifactID: reference, layer: spec.layer ?? count / 2,
             alpha: spec.strength, mode: spec.mode == "ablate" ? .ablate : nil,
+            layers: spec.mode == "ablate" ? spec.layer.map { [$0] } : nil,
             centering: spec.mode == "ablate" && spec.centering != "none" ? spec.centering : nil)
         return (injection, .object([
             "artifactID": .string(reference), "artifactSHA256": .string(live),
             "sidecarSHA256": .string(ManifestFileTransaction.digest(sidecarData)),
-            "layer": .number(Double(spec.layer)), "strength": .number(spec.strength),
+            "layer": spec.layer.map { .number(Double($0)) } ?? .string(allLayers),
+            "strength": .number(spec.strength),
             "mode": .string(spec.mode), "centering": .string(spec.centering),
         ]))
     }
 
     /// A file input as a handmade record may name it: workspace-relative when
-    /// it is inside the workspace, else by its file name alone, so no home
-    /// folder or other machine path reaches an agent file (and through it a
-    /// frozen study, a bundle, or an export). Returns the file to read and
-    /// the record's `{"path"|"name": …}`. Python twin:
+    /// it is inside the workspace, else by no name, so no home folder,
+    /// machine path, or outside file name reaches an agent file (and through
+    /// it a frozen study, a bundle, or an export); its SHA-256 identifies it.
+    /// Returns the file to read and the record's `{"path": …}` or
+    /// `{"outsideWorkspace": true}`. Python twin:
     /// `agent_creation.recorded_file`.
     static func recordedFile(_ raw: String, root: URL) -> (URL, [String: JSONValue]) {
         let expanded = (raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -569,7 +630,7 @@ public enum StudyAgentCreation {
         if canonical.hasPrefix(rootPath + "/") {
             return (absolute, ["path": .string(String(canonical.dropFirst(rootPath.count + 1)))])
         }
-        return (absolute, ["name": .string(absolute.lastPathComponent)])
+        return (absolute, ["outsideWorkspace": .bool(true)])
     }
 
     /// The command a handmade record keeps: rebuilt from the normalised
@@ -584,8 +645,7 @@ public enum StudyAgentCreation {
                 switch flag {
                 case "--system-prompt-file":
                     if case .object(let file) = systemFile {
-                        recorded = file["path"]?.agentRecordString
-                            ?? file["name"]?.agentRecordString ?? ""
+                        recorded = file["path"]?.agentRecordString ?? outsideWorkspace
                     }
                 case "--adapter":
                     recorded = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -599,6 +659,48 @@ public enum StudyAgentCreation {
             }
         }
         return command
+    }
+
+    /// An input's recorded model revision against the agent's commit, by the
+    /// rule `ModelVariantArtifact.compareRevisions` sets: refused only when
+    /// both are commits and they differ; a branch, a tag, or a shortened hash
+    /// the commit begins with is a note, because the spelling cannot say which
+    /// commit it named. Python twin: `agent_creation._check_revision`.
+    static func checkRevision(
+        _ what: String, verb: String, recorded: String?, model: String, revision: String,
+        notes: inout [String], redo: String
+    ) throws {
+        guard let recorded, !recorded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            notes.append("\(what) does not record which revision of \(model) it was \(verb), "
+                + "so SteerLab cannot confirm it matches \(revision).")
+            return
+        }
+        switch ModelVariantArtifact.compareRevisions(recorded, revision) {
+        case .unchecked:
+            notes.append("\(what) records revision \(recorded) of \(model), which is not a full "
+                + "commit, so SteerLab cannot confirm it matches \(revision).")
+        case .differ:
+            let full = recorded.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            throw ExperimentError.refusing(
+                .artifactPin,
+                "\(what) was \(verb) revision \(recorded) of \(model), not \(revision).",
+                repair: (isHex(full, count: 40)
+                    ? "Use its revision with --revision \(full), or "
+                    : "Give --revision the full 40-character commit it names, or ")
+                    + "\(redo).")
+        case .match:
+            break
+        }
+    }
+
+    /// Whether text names a home folder: `~/`, this machine's home, or a
+    /// path under the macOS or Linux home root. Python twin:
+    /// `agent_creation._names_a_home_path`.
+    static func namesAHomePath(_ text: String) -> Bool {
+        let home = NSHomeDirectory()
+        return text.contains("~/") || (home.count > 1 && text.contains(home))
+            || text.contains(homeRoot) || text.contains("/home/")
     }
 
     /// The repair for an agent level the template does not take, true for
@@ -708,19 +810,10 @@ public enum StudyAgentCreation {
                     + "an adapter only fits the model it was trained on.",
                 repair: "Choose an adapter trained on the agent's base model.")
         }
-        if let declaredRevision {
-            guard declaredRevision == revision else {
-                throw ExperimentError.refusing(
-                    .artifactPin,
-                    "The adapter \(reference) was trained on revision \(declaredRevision) of "
-                        + "\(model), not \(revision).",
-                    repair: "Use the adapter's revision with --revision, or train it again at "
-                        + "this revision.")
-            }
-        } else {
-            notes.append("The adapter \(reference) does not record which revision of \(model) "
-                + "it was trained on, so SteerLab cannot confirm it matches \(revision).")
-        }
+        try checkRevision(
+            "The adapter \(reference)", verb: "trained on", recorded: declaredRevision,
+            model: model, revision: revision, notes: &notes,
+            redo: "train it again at this revision")
         let present = weightFiles.filter { isFile(directory.appending(component: $0)) }
         let declaredFile = (record["adapterFormat"] as? String).flatMap { weightsByFormat[$0] }
         let weightsName: String
