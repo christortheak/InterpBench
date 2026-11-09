@@ -709,6 +709,16 @@ def test_a_withheld_turn_exposes_nobody():
     assert panel_effects.exposure_by_turn(scenario, {"a"}, withheld)["t2"] is False
 
 
+@pytest.mark.parametrize("status", ["cutOff", "unfinished", "unclear"])
+def test_the_transcript_says_a_withheld_turn_passed_nothing_on(status):
+    text = multi_agent._transcript(_panel_plain(), [
+        {"turnIndex": 1, "title": "Ava votes", "speakerName": "Ava", "output": "",
+         "reasoning": "weighing it", "reasoningStatus": status}])
+    assert (f"_Nothing from this turn was passed on (reasoning status {status}). "
+            "What it wrote:_") in text
+    assert "weighing it" in text
+
+
 def test_the_judge_reads_thinking_and_attributed_closes_as_text():
     """N4: ``<thinking>`` is not an opening tag and ``</think attr>`` is not
     a closing one, on this engine as on the Swift twin."""

@@ -1914,10 +1914,12 @@ public enum MultiAgentRunner {
             lines.append("")
             // A thinking turn's reasoning, shown for the reader and labelled
             // as what it is: the other seats never read it (issue #15).
-            if result.reasoningStatus == ReasoningStatus.cutOff.rawValue {
+            if let status = result.reasoningStatus,
+                ReasoningStatus(rawValue: status)?.withheld == true
+            {
                 lines.append(
-                    "_Reasoning, cut off before it finished. Nothing from this "
-                        + "turn was passed on:_")
+                    "_Nothing from this turn was passed on (reasoning status "
+                        + "\(status)). What it wrote:_")
                 lines.append("")
                 lines.append(result.reasoning ?? "")
                 lines.append("")

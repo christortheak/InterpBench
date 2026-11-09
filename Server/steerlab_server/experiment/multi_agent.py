@@ -1409,12 +1409,11 @@ def _substitute_contract_text(text: str, scenario: Scenario, turn: Turn,
 def _render_prompt(scenario: Scenario, turn: Turn, speaker_context: str,
                    speaker_name: str, outputs_by_label: dict[str, str],
                    reasoning_by_label: dict[str, str] | None = None) -> str:
-    """The turn's prompt. One renderer per turn, chosen by ``turn.contract``.
-
-    ``outputs_by_label`` holds each earlier turn's ANSWER, never its
-    reasoning (issue #15). ``reasoning_by_label`` is read only by a contract
-    turn's own-authored inputs, and only when the panel declares
-    ``includeOwnReasoning``; templates never see it."""
+    """The turn's prompt. One renderer per turn, chosen by ``turn.contract``."""
+    # ``outputs_by_label`` holds each earlier turn's ANSWER, never its
+    # reasoning (issue #15). ``reasoning_by_label`` is read only by a contract
+    # turn's own-authored inputs, and only when the panel declares
+    # ``includeOwnReasoning``; templates never see it.
     if turn.contract is not None:
         return _render_contract_prompt(scenario, turn, speaker_context,
                                        speaker_name, outputs_by_label,
@@ -2165,10 +2164,10 @@ def _transcript(scenario: Scenario, results: list[dict]) -> str:
                   ""]
         # A thinking turn's reasoning, shown for the reader and labelled as
         # what it is: the other seats never read it (issue #15).
-        if r.get("reasoningStatus") == REASONING_CUT_OFF:
-            lines += ["_Reasoning, cut off before it finished. Nothing from "
-                      "this turn was passed on:_", "",
-                      r.get("reasoning") or "", ""]
+        if r.get("reasoningStatus") in WITHHELD_STATUSES:
+            lines += [f"_Nothing from this turn was passed on (reasoning "
+                      f"status {r.get('reasoningStatus')}). What it wrote:_",
+                      "", r.get("reasoning") or "", ""]
         elif r.get("reasoning"):
             lines += ["_Reasoning (not passed on to the other seats):_", "",
                       r.get("reasoning") or "", "", "_Answer:_", ""]
