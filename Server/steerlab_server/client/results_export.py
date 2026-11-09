@@ -1560,7 +1560,7 @@ def _describe_condition(name, snapshot):
         if artifact:
             # How the agent was made and how hard it thinks, as its own file
             # states them (public issues #16 and #17): read, never inferred.
-            from ..experiment.model_variant import agent_origin
+            from ..experiment.agent_identity import agent_origin
             origin = agent_origin(artifact)
             text += (f" How it was made ({_code(origin['kind'])}): {origin['summary']}"
                      + (f" Its file declares reasoning effort {_code(origin['reasoningEffort'])}."

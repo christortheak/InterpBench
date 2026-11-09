@@ -12,7 +12,7 @@ from .. import memory_diagnostic
 from ..steering import vector_math as vm
 from ..steering import residual_norm_convention as norm_convention
 from . import command_vocabulary as vocabulary
-from . import judicial, lifecycle_gates, paths, prompt_reading, prompt_render
+from . import agent_identity, judicial, lifecycle_gates, paths, prompt_reading, prompt_render
 from . import response_format
 from . import resume as resume_mod
 from . import system_prompt as system_prompt_mod
@@ -587,7 +587,7 @@ def effective_variant_condition(vc, manifest, model, root, *,
     # How hard the agent thinks is the agent's (public issue #16): its own
     # declared level, else the legacy boolean's meaning. The one reading both
     # ordinary studies and panel seats use.
-    effort = model_variant.variant_reasoning_effort(variant)
+    effort = agent_identity.variant_reasoning_effort(variant)
     thinking = effort != prompt_render.REASONING_OFF
     if wants_choice and thinking:
         # Same rule the manifest enforces for its own arms: thinking-mode
@@ -702,7 +702,7 @@ def run_arm_render_settings(manifest, root) -> list[dict]:
     def render(prompt_mode, system_prompt, thinking, effort, budget) -> dict:
         return {"prompt_mode": prompt_mode, "system_prompt": system_prompt,
                 "qwen_thinking_enabled": thinking,
-                "reasoning_effort": (effort if model_variant.effort_reaches_renderer(
+                "reasoning_effort": (effort if agent_identity.effort_reaches_renderer(
                     effort, budget) else None)}
 
     frame = manifest.system_prompt
@@ -717,7 +717,7 @@ def run_arm_render_settings(manifest, root) -> list[dict]:
                            paths.resolve_artifact(vc.artifact_path, root)))
         except (OSError, KeyError, ValueError, RuntimeError):
             continue  # surfaces as the loop's per-condition error record
-        effort = model_variant.variant_reasoning_effort(variant)
+        effort = agent_identity.variant_reasoning_effort(variant)
         thinking = effort != prompt_render.REASONING_OFF
         setting = render(
             variant.prompt_mode,
@@ -866,7 +866,6 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
     # other arm's generate() call stays byte-for-byte unchanged, so the test
     # fakes built against it keep working. The `</think>` id is the split the
     # finish reason is read at, resolved once per condition.
-    from . import model_variant
     reasoning_kwargs = {}
     think_close_id = None
     if eff.reasoning_max_tokens:
@@ -874,7 +873,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                             "reasoning_max_tokens": eff.reasoning_max_tokens}
         think_close_id = truncation_gate.think_close_token_id(
             getattr(model, "tokenizer", None))
-    elif model_variant.effort_reaches_renderer(eff.reasoning_effort, None):
+    elif agent_identity.effort_reaches_renderer(eff.reasoning_effort, None):
         # An agent that declares a level the legacy boolean cannot express
         # (`medium`, `on`) in a study with no reasoning budget: the level
         # reaches the template, so the agent thinks at its own level rather

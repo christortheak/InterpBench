@@ -19,7 +19,7 @@ public enum StudySampling {
     /// (`ModelVariantArtifact.resolvedReasoningEffort` — its declared level,
     /// else its thinking switch's meaning, public issue #16), the baseline at
     /// the study's. Python twin: `effective_variant_condition`'s
-    /// `model_variant.variant_reasoning_effort`.
+    /// `agent_identity.variant_reasoning_effort`.
     public static func reasoningEffort(
         _ manifest: ExperimentManifest, variant: ModelVariantArtifact?
     ) -> ReasoningEffort {

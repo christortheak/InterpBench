@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from steerlab_server import client_cli
-from steerlab_server.experiment import (condition_execution, experiment_store as store,
+from steerlab_server.experiment import (agent_identity, condition_execution, experiment_store as store,
                                         model_variant, prompt_render)
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import ConceptVectors, SteeringVectorSidecar, save
@@ -287,11 +287,11 @@ def test_an_unknown_effort_and_two_records_are_refused():
 def test_the_helper_reads_the_level_or_the_legacy_switch(document, expected):
     variant = model_variant.ModelVariant.from_dict(
         {"name": "a", "baseModelID": MODEL, **document})
-    assert model_variant.variant_reasoning_effort(variant) == expected
+    assert agent_identity.variant_reasoning_effort(variant) == expected
     assert variant.qwen_thinking_enabled is (expected != "off")
     # Round trip: the writer keeps the level and writes the agreeing shadow.
     again = model_variant.ModelVariant.from_dict(variant.to_dict())
-    assert model_variant.variant_reasoning_effort(again) == expected
+    assert agent_identity.variant_reasoning_effort(again) == expected
 
 
 def test_a_legacy_agent_file_round_trips_without_a_new_key():
@@ -335,11 +335,11 @@ def test_a_declared_level_reaches_the_renderer_without_a_budget():
     # No study budget: the agent's medium is handed to the template, not
     # dropped back to the legacy boolean's xhigh. Off and xhigh keep the
     # exact historical call.
-    assert model_variant.effort_reaches_renderer("medium", None) is True
-    assert model_variant.effort_reaches_renderer("on", None) is True
-    assert model_variant.effort_reaches_renderer("xhigh", None) is False
-    assert model_variant.effort_reaches_renderer("off", None) is False
-    assert model_variant.effort_reaches_renderer("off", 128) is True
+    assert agent_identity.effort_reaches_renderer("medium", None) is True
+    assert agent_identity.effort_reaches_renderer("on", None) is True
+    assert agent_identity.effort_reaches_renderer("xhigh", None) is False
+    assert agent_identity.effort_reaches_renderer("off", None) is False
+    assert agent_identity.effort_reaches_renderer("off", 128) is True
     manifest, _ = effective({"reasoningEffort": "medium"})
     manifest.raw["variantConditions"] = []
     settings = condition_execution.run_arm_render_settings(
@@ -395,9 +395,9 @@ def test_the_template_rule_is_the_study_rule():
     record = qwen_capabilities()
     ok = model_variant.ModelVariant(name="a", base_model_id="Qwen/Qwen3.8-27B",
                                     reasoning_effort="medium")
-    assert model_variant.variant_effort_violations(ok, record) == []
+    assert agent_identity.variant_effort_violations(ok, record) == []
     none = model_variant.ModelVariant(name="a", base_model_id=MODEL, reasoning_effort="on")
-    assert model_variant.variant_effort_violations(none) == [
+    assert agent_identity.variant_effort_violations(none) == [
         prompt_render.effort_without_thinking_mode_reason("on", MODEL)]
 
 
@@ -429,7 +429,7 @@ def test_inspect_list_and_attach_name_the_kind(tmp_path, capsys):
     swept = dict(json.loads((tmp_path / result["path"]).read_text()))
     swept.pop("handmade")
     swept["promotion"] = {"experiment": "screen", "promotedBy": "criterion"}
-    assert model_variant.agent_origin(swept)["summary"] == (
+    assert agent_identity.agent_origin(swept)["summary"] == (
         "A sweep chose this agent's settings: experiment promote made it from study "
         "screen, using the cell the study's declared rule selected.")
 

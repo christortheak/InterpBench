@@ -586,7 +586,7 @@ extension ModelVariantArtifact {
     /// settings and `experiment promote` minted it. `handmade`: it carries
     /// none, so a researcher chose its settings — with `agent create`, which
     /// leaves a `handmade` record, or in the app's agent editor, which leaves
-    /// none. Server twin: `model_variant.AGENT_KIND_SWEPT`/`_HANDMADE`.
+    /// none. Server twin: `agent_identity.AGENT_KIND_SWEPT`/`_HANDMADE`.
     public enum Kind: String, Codable, Sendable {
         case swept, handmade
     }
@@ -597,7 +597,7 @@ extension ModelVariantArtifact {
     /// `reasoningEffort` is in the study's vocabulary and agrees with its
     /// legacy `qwenThinkingEnabled` when both are spelled; and it carries at
     /// most one of `promotion` and `handmade`. The sentences are the
-    /// server's (`model_variant.agent_file_problem`), byte for byte.
+    /// server's (`agent_identity.agent_file_problem`), byte for byte.
     public static func fileProblem(
         reasoningEffort: String?, qwenThinkingEnabled: Bool?,
         hasPromotion: Bool, hasHandmade: Bool
@@ -630,7 +630,7 @@ extension ModelVariantArtifact {
     /// template's default effort, xhigh; false: off). Ordinary studies read
     /// it through `StudySampling.reasoningEffort(_:variant:)`; a panel seat
     /// backed by an agent reads it where the panel runtime resolves the
-    /// seat's thinking. Server twin: `model_variant.variant_reasoning_effort`.
+    /// seat's thinking. Server twin: `agent_identity.variant_reasoning_effort`.
     public var resolvedReasoningEffort: ReasoningEffort {
         reasoningEffort.flatMap(ReasoningEffort.init(rawValue:))
             ?? ReasoningEffort.legacy(qwenThinkingEnabled: qwenThinkingEnabled)
@@ -641,7 +641,7 @@ extension ModelVariantArtifact {
     /// switch, and a level must be one the model's chat template accepts.
     /// The reasoning budget belongs to the study that casts the agent, so it
     /// is not checked here; a legacy agent with no declared effort is not
-    /// judged anew. Server twin: `model_variant.variant_effort_violations`.
+    /// judged anew. Server twin: `agent_identity.variant_effort_violations`.
     public func effortViolations(capabilities: ModelCapabilities? = nil) -> [String] {
         guard let declared = reasoningEffort.flatMap(ReasoningEffort.init(rawValue:)),
             declared.isOn
@@ -678,7 +678,7 @@ extension ModelVariantArtifact {
 
     /// What every surface says about an agent, from the file alone: how it
     /// was made and how hard it thinks. Same keys and sentences as the
-    /// server's `model_variant.agent_origin`.
+    /// server's `agent_identity.agent_origin`.
     public struct Origin: Codable, Sendable, Equatable {
         public var kind: Kind
         public var summary: String

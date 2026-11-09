@@ -327,7 +327,7 @@ def _adapter(root: Path, reference: str, expected: str, model: str, revision: st
 def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
     """Every check, and the agent file the write would produce (minus its
     timestamps). Writes nothing."""
-    from ..experiment import model_capabilities, model_variant, prompt_render
+    from ..experiment import agent_identity, model_capabilities, model_variant, prompt_render
     from . import study_agents
 
     one = lambda flag: (flags.get(flag) or [None])[-1]  # noqa: E731
@@ -392,7 +392,7 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
     capabilities = model_capabilities.resolve(model, revision, str(root))
     probe = model_variant.ModelVariant(name=name, base_model_id=model,
                                        reasoning_effort=effort)
-    problems = model_variant.variant_effort_violations(probe, capabilities)
+    problems = agent_identity.variant_effort_violations(probe, capabilities)
     if problems:
         _refuse("; ".join(problems),
                 ("Choose a level the model's chat template accepts (accepted: "
@@ -465,12 +465,12 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
     if system_prompt is not None:
         document["systemPrompt"] = system_prompt
         document["systemPromptHash"] = _sha256(system_prompt.encode("utf-8"))
-    problem = model_variant.agent_file_problem(document)
+    problem = agent_identity.agent_file_problem(document)
     if problem is not None:      # pragma: no cover - the plan is built to agree
         _refuse(problem, "Report this: agent create built a file it cannot read.")
     model_variant.ModelVariant.from_dict(document)
     return {"document": document, "reviewSHA256": _sha256(_canonical(document)),
-            "origin": model_variant.agent_origin(document),
+            "origin": agent_identity.agent_origin(document),
             "reasoningEffort": effort, "advisories": notes}
 
 
@@ -518,7 +518,7 @@ def write(planned: dict, *, root: Path) -> dict:
 def run(invocation) -> CLIResult:
     import shlex
     from ..cli_envelope import next_action
-    from ..experiment import model_variant
+    from ..experiment import agent_identity
     from . import authoring_files as files
     args = invocation.positionals
     if len(args) != 1 or invocation.one("--model") is None or invocation.one("--revision") is None:
@@ -563,4 +563,4 @@ def run(invocation) -> CLIResult:
                 "experiment attach-agent and its artifactFileSHA256.",
         changed=True, advisories=advisories,
         payload={**planned, **written, "written": True,
-                 "origin": model_variant.agent_origin(written["document"])})
+                 "origin": agent_identity.agent_origin(written["document"])})
