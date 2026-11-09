@@ -12,6 +12,81 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Panels pass on what a seat says, not what it thinks** (public issue #15).
+  - **Answers, not reasoning.** A thinking seat's turn is split into its
+    reasoning and its answer. Other seats, `{{outputs.<label>}}`, and
+    contract inputs read only the answer, and endpoints and the voice lint
+    are read from it. An endpoint notes `markerInReasoning` when the
+    reasoning also wrote the marker.
+  - **When in doubt, nothing is passed on.** A turn whose reasoning a token
+    limit cut off, that stopped before its reasoning finished, or that has a
+    reasoning tag where the answer should be passes nothing on, and its
+    `reasoningStatus` says why. Whether the reasoning block opened in the
+    prompt is read from the prompt each turn rendered.
+  - **A seat's own reasoning.** A panel may declare `includeOwnReasoning` to
+    show each seat its own earlier reasoning. It is off by default, as chat
+    templates drop earlier turns' reasoning.
+  - **Thinking and its budget.** A thinking seat gets the study's
+    `reasoningMaxTokens`, and a baseline seat now follows the study's
+    `reasoningEffort` (before, it never thought). A seat cast with an agent
+    that asks to think is taken to think unless a probe of its template says
+    it cannot.
+  - **Temperature.** A seat may declare its own `temperature` in the panel.
+    Every other seat runs at the study's, and an agent file's temperature is
+    never used. `verify` names a seat temperature that equals the study's
+    (`seatTemperatureChangesNothing`), and the seed rule reads each seat's
+    temperature.
+  - **Records.** Every thinking turn records its `reasoningStatus` and,
+    when it has one, its `reasoning`. Every turn records its
+    `reasoningEffort`, `reasoningMaxTokens`, `temperature`, and
+    `temperatureSource`. The results export adds `reasoning`,
+    `reasoning_status`, and `withheld_text` columns.
+  - **Older engines.** Both clients refuse to send a panel that would run
+    differently to an engine without `remoteStudy.panelAnswerRouting`, and a
+    bundle that plays such a panel requires `panel-answer-routing-v1`. A run
+    an older engine started is not resumed or merged under the new rule
+    where that changes what its seats read.
+- **An agent's own thinking level** (public issue #16). An agent file can
+  now store `reasoningEffort`, checked against the model's chat template by
+  the rule a study's `set-sampling --reasoning-effort` uses. A study runs
+  the agent at that level, in an agent arm and in a panel seat alike. A
+  level the older thinking switch cannot say (`on`, `low`, `medium`, or
+  `high`) reaches the template even with no reasoning budget, and records
+  stamp the level the template rendered (`agentReasoningEffort` on an arm's
+  records, `reasoningEffort` on a panel turn). `qwenThinkingEnabled` reads
+  as before, and a file whose two fields disagree is refused.
+  - **The study keeps the budget and the temperature.** A study whose own
+    effort is off may declare `reasoningMaxTokens` when an attached agent
+    arm, or an agent cast in one of its panel's seats, thinks. The budget
+    reaches only the arms and seats that think.
+  - **Promotion.** New promoted agents carry the thinking level their sweep
+    ran at.
+  - **The app's agent editor** replaces the "Qwen thinking mode" switch
+    with a picker of the levels the model's chat template accepts (or, with
+    no probed record, is assumed to accept).
+- **Agents made by hand** (public issue #17). `agent create`, on both
+  clients, makes an agent from a pinned model revision, one adapter, any
+  steering vectors at chosen layers and strengths in residual-norm units, a
+  thinking level, a system prompt, and a prompt mode. It previews first,
+  writes only with the reviewed digest, and records how the agent was made
+  and why (`handmade`). It has no `--temperature`, because the study sets
+  every arm's temperature.
+  - **Swept or handmade.** Agent inspection, attachment, results pages, and
+    exports name each agent `swept` or `handmade`. A handmade steered agent
+    passes the same freeze gates as a promoted one.
+  - **Agent rules at every step.** `verify` names an attached agent arm
+    that breaks a rule: a level the template does not accept, fields that
+    disagree, more than one adapter, a thinking agent beside an answer-token
+    instrument, a commit other than the study's, or a vector without that
+    layer or its residual norm. It names every agent a panel's seats are
+    cast with by the same rules, less the answer-token and revision ones,
+    and `panel check` refuses such a seat. A study frozen before these rules
+    is noted at `verify` (`refusedWhenRun`), and refused at submission and
+    at run start. A revision the spelling cannot check gets an
+    `agentRevisionNotChecked` note.
+  - **Repairs.** `attach-agent --replace <arm>` puts a corrected agent in an
+    arm's place on a draft.
+
 ## [0.9.22] — 2026-11-08
 
 - **A study that cannot run is refused before the queue, not after it**
