@@ -51,9 +51,12 @@ Key fields:
 - `temperature` / `maxTokens` — scenario-wide generation settings for a
   panel run on its own. A study that runs the panel sets the temperature of
   every seat that declares none. Whether a seat thinks is its occupant's: a
-  cast agent's own setting, or the study's `reasoningEffort` for a seat cast
-  as baseline. A thinking seat gets the study's `reasoningMaxTokens` when
-  the study declares one.
+  cast agent's own level (its file's `reasoningEffort`, else its older
+  thinking switch), or the study's `reasoningEffort` for a seat cast as
+  baseline. A thinking seat gets the study's `reasoningMaxTokens` when the
+  study declares one. A cast agent meets the agent rules (`panel check`
+  names a seat whose agent breaks one), less an agent arm's answer-token and
+  revision rules.
 
 ## Where the file lives in a workspace
 

@@ -146,7 +146,8 @@ draft study (`workspace guide methods` covers the roster checks).
 belongs to the agent: its file's `reasoningEffort` (set with `agent create
 --reasoning-effort`, in the app's agent editor, or by promotion from a sweep, which
 gives the agent the level the sweep's cells ran at, read from the sweep run's
-own `experiment.json`) is the level an agent arm of an ordinary study runs at. An
+own `experiment.json`) is the level it runs at, in an agent arm of an
+ordinary study and in a panel seat alike. An
 agent file that spells only the older `qwenThinkingEnabled` reads as before
 (true is the template's default effort, false is off); a file whose two fields
 disagree is refused. The study keeps the reasoning budget
@@ -155,13 +156,18 @@ that does not, and the temperature, which applies to every arm: an agent
 file's `temperature` is a Playground setting, stamped on records as
 `agentPlaygroundTemperature` and never used for a measured run. A study whose
 own effort is off may still declare a reasoning budget when an attached agent
-arm thinks. Each response of an agent arm stamps `agentReasoningEffort`, the
-level that reached the chat template (a level the template ignores is stamped
-`on`). `verify` names each attached agent arm that breaks a rule, so freeze
-refuses it: a level the template does not accept, a file whose fields
-disagree, more than one adapter, an agent that thinks beside an answer-token
-instrument, a commit other than the study's, or a vector without that layer
-or its residual norm. A revision is refused only when both the agent and the
+arm, or an agent cast in one of its panel's seats, thinks. Each response of an
+agent arm stamps `agentReasoningEffort`, and each panel turn its
+`reasoningEffort`: the level that reached the chat template (a level the
+template ignores is stamped `on`). `verify` names each attached agent arm that
+breaks a rule, so freeze refuses it: a level the template does not accept, a
+file whose fields disagree, more than one adapter, an agent that thinks beside
+an answer-token instrument, a commit other than the study's, or a vector
+without that layer or its residual norm. It names each agent a panel's seats
+are cast with by the same rules, less the answer-token and revision ones (a
+panel reads its seats' generated turns, and loads each seat at its own
+revision), and `panel check` refuses such a seat too; to fix one, make the
+corrected agent and compile the panel again with it in that seat. A revision is refused only when both the agent and the
 study name full commits that differ (or a shortened hash the study's commit
 does not begin with); a branch, a tag, a shortened hash the other begins with,
 or an agent that records no revision gets an `agentRevisionNotChecked` note

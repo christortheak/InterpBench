@@ -545,13 +545,17 @@ METHODS who chose the settings and
 on what basis; the `--reason` is the place to start. `agent create` has no
 temperature: the study sets the temperature for every arm, and an agent's
 record says no temperature was chosen. Its thinking level
-(`--reasoning-effort`) is the agent's own, and an agent arm of an ordinary
-study runs at it; the reasoning budget stays with the study and reaches only
-the arms that think, so a study whose own arms do not think may still declare
-one for its thinking agents. A promoted agent thinks at the level the sweep's
-cells ran at. `verify` checks each attached agent arm against the study before
-it can freeze: its level against the model's chat template, its revision
-against the study's, and its vectors' layers and residual norms.
+(`--reasoning-effort`) is the agent's own, and it runs at that level in an
+agent arm of an ordinary study and in a panel seat alike; the reasoning budget
+stays with the study and reaches only the arms and seats that think, so a
+study whose own arms do not think may still declare one for its thinking
+agents. A promoted agent thinks at the level the sweep's cells ran at.
+`verify` checks each attached agent arm against the study before it can
+freeze: its level against the model's chat template, its revision against the
+study's, and its vectors' layers and residual norms. It checks each agent a
+panel's seats are cast with the same way, except the revision (a panel loads
+each seat at its own revision) and the answer-token instruments (a panel reads
+generated turns).
 
 ### 4.6 `freeze` — the preregistration moment
 
@@ -1166,11 +1170,12 @@ routing record has to describe exactly what happened.
   declare `includeOwnReasoning` in the panel to show it, and report that you
   did. It is off by default.
 - **Thinking belongs to the seat, the reasoning budget to the study.** A cast
-  agent thinks by its own setting, and a baseline seat follows the study's
-  `reasoningEffort`. Declare the study's `reasoningMaxTokens` whenever a seat
-  thinks, so a long reasoning block cannot use up the room for the answer;
-  a study whose own effort is off may declare it when its panel casts an
-  agent that thinks.
+  agent thinks at its own level (§4.5), and a baseline seat follows the
+  study's `reasoningEffort`; each turn records the level its template
+  rendered. Declare the study's `reasoningMaxTokens` whenever a seat thinks,
+  so a long reasoning block cannot use up the room for the answer; a study
+  whose own effort is off may declare it when its panel casts an agent that
+  thinks.
 - **Temperature belongs to the study.** A seat that should sample differently
   declares its own `temperature` in the panel, which makes the difference a
   stated part of the design; each turn records whether its temperature came

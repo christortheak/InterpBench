@@ -44,7 +44,10 @@ names a file inside the workspace by its workspace path and a file outside it
 by its SHA-256 alone, never by its name or a home-folder path. Attach it with
 the returned `artifactFileSHA256`, adding `--replace <arm>` to put it in place
 of an attached arm on a draft; attach refuses an agent made for another commit
-of the model than the study's. There is no `--temperature`: the study
+of the model than the study's. To cast it in a panel seat instead, compile the
+panel with it in that seat (`workspace guide panels`); a seat may hold an agent
+made for another commit, because a panel loads each seat at its own revision.
+There is no `--temperature`: the study
 sets the temperature every arm runs at. `agent inspect`, `agent list`, and
 `attach-agent` say whether an agent is `swept` (a sweep chose its settings and
 promotion from that sweep made it) or `handmade`, and its thinking level
@@ -52,10 +55,10 @@ promotion from that sweep made it) or `handmade`, and its thinking level
 handmade too; an agent it saves from an edited one records where the chain of
 edits began (`editedFrom`: that agent's kind, and for a promoted agent the
 study and sweep run, beside the SHA-256 of the file the edit started from)
-and the fields the researcher changed along the way, or that it is an
-unchanged copy. A
-handmade steered agent passes the same freeze gates as a
-promoted one; say in METHODS who chose its settings and why.
+and the fields its edits touched along the way (a field a later edit set
+back is still listed), or that it is an unchanged copy. A handmade steered
+agent passes the same freeze gates as a promoted one, in an arm or in a panel
+seat; say in METHODS who chose its settings and why.
 
 **Renaming and deleting:** `steerlab experiment rename <name> <new-name>`,
 `steerlab experiment delete <name>`, `steerlab design rename <name> <new-name>`,

@@ -64,15 +64,32 @@ made before that key existed lack it; join `turns.jsonl` for those.
 ## What a seat passes on
 
 Whether a seat thinks belongs to whoever sits in it: a cast agent's own
-setting, or, for a baseline seat, the study's `reasoningEffort` (so a
-baseline seat in a thinking study thinks, as an ordinary study's baseline
-does). A seat thinks only when its model's chat template can. The reasoning
+level (its file's `reasoningEffort`, else its older thinking switch, as in an
+agent arm: `workspace guide settings`), or, for a baseline seat, the study's
+`reasoningEffort` (so a baseline seat in a thinking study thinks, as an
+ordinary study's baseline does). A seat thinks only when its model's chat
+template can. A level the older switch cannot say (`on`, `low`, `medium`,
+`high`) reaches the template even when the study declares no budget, and each
+turn's `reasoningEffort` is the level the template rendered (a level it
+ignores is recorded `on`). The reasoning
 budget is the study's `reasoningMaxTokens`: a thinking seat gets it when the
 study declares one, and its turn's `maxTokens` is then the budget for its
 answer. A study whose own effort is off may still declare
 `reasoningMaxTokens` when its panel casts an agent that thinks; with nothing
 in the panel thinking, a budget is refused. To cast a thinking judge beside a
-study that does not think, cast an agent with no steering and thinking on.
+study that does not think, cast an agent with no steering and a thinking level
+(`agent create <name> --model <id> --revision <sha> --reasoning-effort on`).
+
+**A seat's agent meets the agent rules.** `panel check`, `experiment verify`
+(a violation on a draft, a `refusedWhenRun` note on a frozen study),
+submission, and run start refuse a seat whose agent file says two things
+(fields that disagree, or both a promotion and a handmade record), names a
+level its model's chat template does not accept, lists more than one adapter,
+or steers at a layer its vector does not have or without that layer's
+residual norm. The answer-token and revision rules of an agent arm do not
+apply to a seat. A seat whose agent file says two things also refuses when it
+plays, on either engine. To fix a seat, make its agent again and compile the
+panel again with the new agent in that seat.
 
 **Other seats read a thinking seat's answer, never its reasoning.** Each such
 turn is split into the two: `output` on its record is the answer, and

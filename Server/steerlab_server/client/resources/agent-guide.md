@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guide version: 10
+Guide version: 11
 
 You are a coding assistant working inside a **SteerLab data workspace**. This
 file is the core contract: read it before running anything. It is short on
@@ -180,8 +180,11 @@ Where each file lives, and its exact shape, is the `workspace` topic.
 | Evaluate and analyze | Judge the responses and compute effect sizes. Lead a summary with the outcome the study is about, and say how it was chosen; the `verbs` card names the export and report commands | `evaluation` |
 | Keep the evidence | Verify what came home, and what it proves | `custody` |
 
-Study packs and attaching existing agents or vectors are the `assembly` topic.
-Templates, multi-agent panels, and model preparation have their own topics.
+Study packs, attaching agents or vectors, and making an agent without a sweep
+(`agent create`, previewed first) are the `assembly` topic; templates, panels,
+and model preparation have their own. An agent owns its thinking level; the
+study owns the reasoning budget and the temperature. In a panel, other seats
+read a thinking seat's answer, never its reasoning.
 
 ## The machine contract, in brief
 
@@ -235,10 +238,8 @@ topic.
   `error.gate`, `error.gates[]`, `advisories[].code`, and `result`.
 - **Do not retry a `refused` (65) without performing the repair.** It will
   refuse identically. Read `error.repairAction`.
-- **Do not `--force` a freeze to get past a gate.** It is stamped, loud, and
-  permanent: the skipped gates travel with every report of the study. Fix the
-  gate instead. If a human explicitly asks for a forced freeze, report every id
-  in `forcedGatesSkipped`.
+- **Do not `--force` a freeze to get past a gate.** Fix the gate instead: a
+  forced freeze records each skipped gate, permanently.
 - **Do not write into `runs/`**, and do not edit a frozen manifest or a
   `pinned/` snapshot.
 - **Do not edit a manifest to iterate.** `duplicate`, then edit the copy.
@@ -248,7 +249,6 @@ topic.
 - **Never acknowledge custom code on the researcher's behalf.** A study can
   carry an intervention policy's custom code; show them the notice and the
   code (`experiment acknowledge-custom-code <study>`) and let them decide.
-- **Do not treat an advisory as a failure**, and do not ignore one.
 - **Do not leave a lettered choice to be guessed from prose.** For items
   with letter options and free-text replies, ask the model to end with
   "Final answer: A" (or to answer in JSON), so the choice is read from that
