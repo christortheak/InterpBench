@@ -277,35 +277,6 @@ def require_declared_seed_policy(staged, verb, capabilities, where: str,
         repair_action=sampling.outdated_engine_repair())
 
 
-def require_panel_answer_routing(staged, verb, capabilities, where: str,
-                                 workspace_root) -> None:
-    """Refuse BEFORE submitting a staged bundle whose panel an engine from
-    before issue #15 would run differently: it passed a thinking seat's
-    reasoning on, and ignores a seat's declared temperature and
-    ``includeOwnReasoning``. Read from the local workspace only when the
-    bundle's study hash matches, as the seed-policy check does. Swift twin:
-    ``ClusterClient.requirePanelAnswerRouting``."""
-    from ..experiment import multi_agent, sampling
-    from ..experiment.manifest import Manifest
-    name = staged.get("experiment") if isinstance(staged, dict) else None
-    if not workspace_root or not isinstance(name, str) or not name:
-        return
-    try:
-        manifest = Manifest.load(name, workspace_root)
-    except (OSError, ValueError, KeyError, TypeError):
-        return
-    if manifest.content_hash() != staged.get("experimentContentHash"):
-        return
-    reasons = multi_agent.submission_panel_rule_changes(
-        manifest, verb, workspace_root)
-    if not reasons or multi_agent.remote_has_panel_answer_routing(capabilities):
-        return
-    raise RunnerRefusal(
-        multi_agent.outdated_panel_engine_reason(where, reasons),
-        code=multi_agent.PANEL_ANSWER_ROUTING_UNSUPPORTED_CODE,
-        repair_action=sampling.outdated_engine_repair())
-
-
 def require_greedy_seed_list(staged, verb, workspace_root) -> None:
     """Refuse BEFORE submitting a staged bundle whose study runs at
     temperature 0 with several seeds (public issue #9): every seed gives the
@@ -1178,8 +1149,6 @@ class RunnerClient:
                                          self.base_url, workspace_root)
             require_prompt_reading(staged, verb, self.capabilities(),
                                    self.base_url, workspace_root)
-            require_panel_answer_routing(staged, verb, self.capabilities(),
-                                         self.base_url, workspace_root)
         if expected is not None:
             actual = str(staged.get("bundleSha256") or "")
             if actual != expected:

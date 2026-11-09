@@ -202,8 +202,8 @@ def greedy_rules_submission_refusal(manifest, where: str) -> tuple[str, str, str
         return (lifecycle_gates.STUDY_DECLARATION, problem,
                 greedy_seed_list_repair(manifest.name, frozen=frozen))
     problem = greedy_samples_problem(
-        manifest.temperature, manifest.samples_per_item, manifest.study_kind,
-        manifest.outcome_instruments)
+        generating_temperature(manifest), manifest.samples_per_item,
+        manifest.study_kind, manifest.outcome_instruments)
     if problem:
         return (lifecycle_gates.STUDY_DECLARATION, problem,
                 greedy_samples_repair(manifest.name, frozen=frozen))
@@ -244,6 +244,21 @@ def sample_count(manifest) -> int:
     return max(1, len(manifest.seeds))
 
 
+def generating_temperature(manifest, root: str | None = None) -> float:
+    """The highest temperature any generation of this study runs at: the
+    study's own, or, for a panel, the highest of its seats' effective
+    temperatures (a seat's own declaration, else the study's; issue #15).
+    Every rule that asks "is this run greedy?" reads it, so a greedy study
+    with one warm seat is not mistaken for a greedy run. Swift twin:
+    ``StudySampling.generatingTemperature``."""
+    temperature = float(getattr(manifest, "temperature", 0.0) or 0.0)
+    if getattr(manifest, "study_kind", None) != "multiAgent":
+        return temperature
+    from . import multi_agent
+    seats = multi_agent.panel_seat_temperatures(manifest, root)
+    return max(seats) if seats else temperature
+
+
 def run_seed_policy(manifest) -> str:
     """The seed policy a generating run's ``config.json`` stamps: the
     OPERATIVE one, not the declaration. For an ordinary study it is the
@@ -255,7 +270,9 @@ def run_seed_policy(manifest) -> str:
     ``seedPolicy`` argument ``ExperimentTasks`` passes to
     ``RunMetadata.write`` (``StudySampling.policy``, and the panel rule)."""
     if manifest.study_kind == "multiAgent":
-        derived = bool(manifest.temperature) and manifest.temperature > 0
+        # A panel seeds the turns of every seat above temperature 0, so a
+        # greedy study with a warm seat derives seeds for that seat's turns.
+        derived = generating_temperature(manifest) > 0
     else:
         derived = manifest_derives_seeds(manifest)
     return DERIVED_SHA256 if derived else MANIFEST_SEEDS

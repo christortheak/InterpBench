@@ -242,7 +242,7 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
     from . import science_placement
     from ..experiment import choice_reread, instrumentation_contract
     return {
-        "instrumentation": list(instrumentation_contract.SUPPORTED),
+        "instrumentation": list(instrumentation_contract.OFFERED),
         # Analysis options this engine honours when a client asks for them
         # (an older engine ignores an unknown request key, so a client checks
         # here before asking): `rereadChoices` is `analyze --reread-choices`,

@@ -1448,17 +1448,24 @@ class Manifest:
         # under — so no frozen study stops verifying over a fact probed after
         # its freeze; ``capability_advisories`` says those out loud instead.
         record = self._capabilities_for_gates(root)
+        # A panel study whose cast agents think may declare the budget they
+        # think under although its own effort is off (FR6 round 2, panel
+        # only); a budget nothing in the study would read is still refused.
+        from . import multi_agent as _multi_agent
         if self.reasoning_effort_declared:
-            violations += prompt_render.reasoning_protocol_violations(
-                effort=self.raw.get(prompt_render.REASONING_EFFORT_KEY),
-                reasoning_max_tokens=self.raw.get(
-                    prompt_render.REASONING_MAX_TOKENS_KEY),
-                model_id=self.model_id, capabilities=record)
+            violations += _multi_agent.permit_panel_budget(
+                prompt_render.reasoning_protocol_violations(
+                    effort=self.raw.get(prompt_render.REASONING_EFFORT_KEY),
+                    reasoning_max_tokens=self.raw.get(
+                        prompt_render.REASONING_MAX_TOKENS_KEY),
+                    model_id=self.model_id, capabilities=record),
+                self, base)
         elif (self.raw.get(prompt_render.REASONING_MAX_TOKENS_KEY) is not None
               and not self.qwen_thinking_enabled):
             # A budget beside no effort at all: meaningless unless the legacy
             # boolean already says the study reasons (then the run honours it).
-            violations.append(prompt_render.BUDGET_WITHOUT_EFFORT_REASON)
+            violations += _multi_agent.permit_panel_budget(
+                [prompt_render.BUDGET_WITHOUT_EFFORT_REASON], self, base)
         violations += prompt_render.system_prompt_violations(
             system_prompt=self.system_prompt, model_id=self.model_id,
             prompt_mode=self.prompt_mode, capabilities=record)
@@ -1572,8 +1579,8 @@ class Manifest:
         # StudySampling.samplesPerItemProblems, same sentences.
         from . import sampling as _sampling
         violations += _sampling.samples_per_item_problems(
-            self.temperature, self.samples_per_item, self.seed_policy,
-            self.study_kind, self.outcome_instruments)
+            _sampling.generating_temperature(self, base), self.samples_per_item,
+            self.seed_policy, self.study_kind, self.outcome_instruments)
         # …and at temperature 0 an ordinary study lists exactly one seed
         # (public issue #9): every seed gives the same greedy response, so
         # each extra seed writes an identical record per item. A DRAFT only,

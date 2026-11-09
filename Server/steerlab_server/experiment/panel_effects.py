@@ -101,7 +101,8 @@ def treated_agent_ids(scenario) -> set[str]:
     return treated
 
 
-def exposure_by_turn(scenario, treated: set[str]) -> dict[str, bool]:
+def exposure_by_turn(scenario, treated: set[str],
+                     withheld: frozenset = frozenset()) -> dict[str, bool]:
     """Whether each turn's SPEAKER had, at that point in the script, received
     routed context tracing back to a treated seat.
 
@@ -146,13 +147,24 @@ def exposure_by_turn(scenario, treated: set[str]) -> dict[str, bool]:
 
         # This turn's own output carries the treatment when its speaker is
         # treated, or when the speaker read treated material to produce it.
-        if speaker in treated or exposed_here:
+        # A turn that passed nothing on (issue #15: its reasoning was cut off,
+        # unfinished, or unclear) carried nothing to anyone, whoever spoke it.
+        if (speaker in treated or exposed_here) and turn.id not in withheld:
             label = turn.output_label.strip() or f"turn_{index + 1}"
             carrier_labels.add(label)
             for listener in multi_agent._routed_ids(turn, agents):
                 if listener != speaker:
                     context_exposed.add(listener)
     return out
+
+
+def withheld_turn_ids(turns: list[dict]) -> frozenset:
+    """The turns of a transcript that passed nothing on (issue #15), read
+    from their records' ``reasoningStatus``. Swift twin:
+    ``PanelEffects.withheldTurnIDs``."""
+    from . import multi_agent
+    return frozenset(t.get("turnID") for t in turns
+                     if t.get("reasoningStatus") in multi_agent.WITHHELD_STATUSES)
 
 
 def compute(configured_turns: list[dict], baseline_turns: list[dict],
@@ -224,7 +236,7 @@ def write_panel_effects(run_directory: str, scenario, *,
     if not configured or not baseline:
         return rows
     treated = treated_agent_ids(scenario)
-    exposed = exposure_by_turn(scenario, treated)
+    exposed = exposure_by_turn(scenario, treated, withheld_turn_ids(configured))
     for name, parse in endpoints.items():
         rows.append(compute(configured, baseline, treated, endpoint_name=name,
                             parse=parse, group_turn_id=group_turn_id,

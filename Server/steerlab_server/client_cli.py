@@ -4725,7 +4725,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
                  seed_rule_changed: bool = False,
                  greedy_rules_refusal: tuple | None = None,
                  reading_declared: bool = False,
-                 panel_rule_changes: list | None = None) -> CLIResult:
+                 panel_rule_changes: list | None = []) -> CLIResult:
     """Stages 2–9. Split from :func:`_run` only so the stage-table decoration
     above has one place to sit."""
     import time
@@ -4790,7 +4790,7 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
               seed_rule_changed: bool = False,
               greedy_rules_refusal: tuple | None = None,
               reading_declared: bool = False,
-              panel_rule_changes: list | None = None) -> CLIResult:
+              panel_rule_changes: list | None = []) -> CLIResult:
     """Stages 3–9: everything that touches the wire or the workspace."""
 
     # ---- stage 3: what is this runner, and can it do this? -----------------
@@ -4837,7 +4837,7 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             facts={"runnerOffers": {
                 "engineVersion": identity.get("engineVersion")}})
     from .experiment import multi_agent as _multi_agent
-    if panel_rule_changes and not _multi_agent.remote_has_panel_answer_routing(
+    if panel_rule_changes != [] and not _multi_agent.remote_has_panel_answer_routing(
             capabilities):
         # An older engine would pass a thinking seat's reasoning on and
         # ignore the panel's new declarations. Swift twin:

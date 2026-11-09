@@ -125,6 +125,33 @@ def _first_open(text: str) -> int:
     return -1
 
 
+def first_close(text: str, start: int = 0) -> int | None:
+    """Where the first closing tag at or after ``start`` begins, or None.
+    Swift twin: ``ReasoningSplit.firstClose``."""
+    found = _first_close(text or "", start)
+    return None if found < 0 else found
+
+
+def leading_open_end(text: str) -> int | None:
+    """The index just past an opening tag that leads the text (whitespace
+    allowed before it), or None. Swift twin:
+    ``ReasoningSplit.leadingOpenEnd``."""
+    text = text or ""
+    start = 0
+    while start < len(text) and is_space(text[start]):
+        start += 1
+    return _open_tag_end(text, start)
+
+
+def has_tag(text: str) -> bool:
+    """Whether ``<think`` or ``</think`` appears anywhere in ``text``, ASCII
+    case folded — the test that keeps a panel from passing on text that
+    might still hold reasoning. Wider than the tag grammar on purpose: when
+    in doubt, nothing is passed on. Swift twin: ``ReasoningSplit.hasTag``."""
+    folded = _ascii_lower(text or "")
+    return "<think" in folded or "</think" in folded
+
+
 def split(text: str) -> ReasoningSplit:
     """The reasoning block in ``text``, and the answer after it."""
     text = text or ""

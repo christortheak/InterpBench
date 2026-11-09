@@ -123,6 +123,15 @@ PANEL_TURN_PASSTHROUGH = ("reasoning", "reasoningStatus", "reasoningEffort",
                           "reasoningMaxTokens", "temperatureSource")
 
 
+def _panel_seed_fields(temperature) -> dict:
+    """``seedInert`` and ``seedPolicy`` for one panel turn, from the
+    temperature it ran at. Swift twin: the same two fields
+    ``ExperimentTasks.panelGenerationRecord`` writes."""
+    warm = bool(temperature) and float(temperature) > 0
+    return {"seedInert": not warm,
+            "seedPolicy": "derivedSHA256" if warm else "greedy"}
+
+
 def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                         replicate: int) -> list[dict]:
     """Flatten one transcript's turns.jsonl into study generation records.
@@ -188,6 +197,9 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                 # duplicated cells.
                 "sampleIndex": replicate,
                 "temperature": turn.get("temperature", manifest.temperature),
+                # Read from the TURN's temperature, not the study's: a seat may
+                # declare its own (issue #15). A greedy turn drew no seed.
+                **_panel_seed_fields(turn.get("temperature", manifest.temperature)),
                 "prompt": turn.get("prompt", ""), "output": output,
                 # What the seat thought, beside what it said (issue #15), and
                 # the protocol and temperature source the turn ran under —

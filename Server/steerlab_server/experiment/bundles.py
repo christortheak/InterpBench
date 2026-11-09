@@ -234,6 +234,12 @@ def package_experiment(name: str, *, output_path: str | None = None,
     }
     with tarfile.open(output_path, "w:gz") as tar:
         entries = _add_files(tar, files, runtime_requirements=required_runtime)
+        # A panel an engine from before issue #15 would run differently, or
+        # one this packager cannot read, needs an engine that routes answers
+        # only: computed from the same workspace files the bundle carries.
+        from . import instrumentation_contract, multi_agent
+        if multi_agent.submission_panel_rule_changes(manifest, "run", base) != []:
+            required_runtime.add(instrumentation_contract.PANEL_ANSWER_ROUTING)
         meta["runtimeRequirements"] = sorted(required_runtime)
         meta["entries"] = [entry.to_dict() for entry in entries]
         _add_json(tar, "steerlab-bundle.json", meta)

@@ -257,6 +257,10 @@ def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None) -> No
             effort=merged_effort, reasoning_max_tokens=merged_budget,
             model_id=str(d.get("modelID") or ""),
             capabilities=capabilities)
+        # A panel study whose cast agents think may declare the budget they
+        # think under although its own effort is off (FR6 round 2).
+        from . import multi_agent
+        problems = multi_agent.permit_panel_budget(problems, d)
         if problems:
             raise ExperimentStoreError(
                 "; ".join(problems),

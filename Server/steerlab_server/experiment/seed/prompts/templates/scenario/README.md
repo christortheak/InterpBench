@@ -49,8 +49,10 @@ Key fields:
   endpoint is read from its answer, never its reasoning; the stamp says
   `markerInReasoning: true` when the reasoning also wrote the marker.
 - `temperature` / `maxTokens` — scenario-wide generation settings for a
-  panel run on its own. A study that runs the panel sets the temperature
-  (and its reasoning protocol) for every seat that declares none.
+  panel run on its own. A study that runs the panel sets the temperature of
+  every seat that declares none. Whether a seat thinks is its occupant's: a
+  cast agent's own setting, or the study's `reasoningEffort` for a seat cast
+  as baseline. Every thinking seat gets the study's `reasoningMaxTokens`.
 
 ## Where the file lives in a workspace
 

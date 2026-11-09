@@ -33,7 +33,7 @@ AVA_ANSWER = "Final answer: reverse. The error was not harmless."
 
 def _thinking_agent(tmp_path, name="thinker"):
     artifact = model_variant.ModelVariant(
-        name=name, base_model_id="m", qwen_thinking_enabled=True)
+        name=name, base_model_id="test/qwen-panel", qwen_thinking_enabled=True)
     path = os.path.join(str(tmp_path), f"{name}.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(artifact.to_dict(), handle)
@@ -41,14 +41,14 @@ def _thinking_agent(tmp_path, name="thinker"):
 
 
 def _panel(tmp_path, *, include_own_reasoning=False, endpoint=True):
-    ava = multi_agent.Agent(id="a", name="Ava", base_model_id="m",
+    ava = multi_agent.Agent(id="a", name="Ava", base_model_id="test/qwen-panel",
                             variant_artifact_path=_thinking_agent(tmp_path))
-    ben = multi_agent.Agent(id="b", name="Ben", base_model_id="m")
+    ben = multi_agent.Agent(id="b", name="Ben", base_model_id="test/qwen-panel")
     vote = (turn_endpoint.TurnEndpoint.from_dict(
         {"name": "vote", "kind": "choice", "marker": "Final answer:",
          "vocabulary": ["affirm", "reverse"]}) if endpoint else None)
     return multi_agent.Scenario(
-        name="p", base_model_id="m", include_own_reasoning=include_own_reasoning,
+        name="p", base_model_id="test/qwen-panel", include_own_reasoning=include_own_reasoning,
         agents=[ava, ben],
         turns=[
             multi_agent.Turn(id="t1", title="Ava votes", speaker_agent_id="a",
@@ -84,7 +84,7 @@ def _run(tmp_path, scenario, outputs, **kwargs):
     multi_agent.generate = stub
     try:
         multi_agent.run_scenario(kwargs.pop("model", SimpleNamespace(
-            model_id="m", revision="r")), scenario, run_dir=run_dir, **kwargs)
+            model_id="test/qwen-panel", revision="r")), scenario, run_dir=run_dir, **kwargs)
     finally:
         multi_agent.generate = original
     with open(os.path.join(run_dir, "turns.jsonl"), encoding="utf-8") as handle:
@@ -177,18 +177,24 @@ class _Tokenizer:
         return 7 if token == "</think>" else None
 
 
-@pytest.mark.parametrize("text,token_ids,budget", [
-    # The block opened with a tag and never closed.
-    ("<think>weighing affirm against reverse, Final answer: affirm", [], None),
+@pytest.mark.parametrize("text,token_ids,budget,status", [
+    # The block opened with a tag and the seat stopped before closing it.
+    ("<think>weighing affirm against reverse, Final answer: affirm", [], None,
+     "unfinished"),
     # Prompt-opened thinking that spent its whole reasoning budget: no tag.
-    ("weighing affirm against reverse, Final answer: affirm", [5] * 4, 4),
+    ("weighing affirm against reverse, Final answer: affirm", [5] * 4, 4,
+     "cutOff"),
     # Prompt-opened thinking cut off by the turn's own token limit.
-    ("weighing affirm against reverse, Final answer: affirm", [5] * 64, None),
+    ("weighing affirm against reverse, Final answer: affirm", [5] * 64, None,
+     "cutOff"),
+    # Prompt-opened thinking that stopped by itself mid-reasoning (B1 a).
+    ("weighing it, Final answer: affirm", [], None, "unfinished"),
 ])
 def test_reasoning_that_never_closed_passes_nothing_on(tmp_path, text,
-                                                       token_ids, budget):
+                                                       token_ids, budget,
+                                                       status):
     scenario = _panel(tmp_path)
-    model = SimpleNamespace(model_id="m", revision="r", tokenizer=_Tokenizer())
+    model = SimpleNamespace(model_id="test/qwen-panel", revision="r", tokenizer=_Tokenizer())
     prompts, _calls, records = _run(
         tmp_path, scenario, [(text, token_ids), ("ok", []), ("ok", [])],
         model=model, reasoning_max_tokens=budget)
@@ -196,7 +202,7 @@ def test_reasoning_that_never_closed_passes_nothing_on(tmp_path, text,
     assert "weighing" not in prompts[1]
     assert "weighing" not in prompts[2]
     first = records[0]
-    assert first["reasoningStatus"] == "cutOff"
+    assert first["reasoningStatus"] == status
     assert first["output"] == ""
     assert first["routedAgentIDs"] == []
     assert "weighing" in first["reasoning"]
@@ -205,14 +211,131 @@ def test_reasoning_that_never_closed_passes_nothing_on(tmp_path, text,
     assert "{{outputs.ava1}}" not in prompts[1]
 
 
-def test_a_thinking_seat_with_no_reasoning_block_that_finished_is_its_answer(
-        tmp_path):
+def test_a_thinking_seat_with_no_block_is_its_answer_only_where_the_template_says_so(
+        tmp_path, monkeypatch):
+    # The template leaves the opening tag to the model and no tag appears:
+    # the whole text is the answer, and the record has no reasoning key, as
+    # Swift writes it.
+    monkeypatch.setattr(multi_agent, "seat_template", lambda model: (True, False))
     scenario = _panel(tmp_path, endpoint=False)
     prompts, _calls, records = _run(
         tmp_path, scenario, [("Plain answer.", []), ("ok", []), ("ok", [])])
     assert "Plain answer." in prompts[1]
     assert records[0]["reasoningStatus"] == "notFound"
-    assert records[0]["reasoning"] is None
+    assert "reasoning" not in records[0]
+
+
+@pytest.mark.parametrize("opens", [True, None])
+def test_with_a_prompt_opened_or_unknown_template_no_close_tag_passes_nothing(
+        tmp_path, monkeypatch, opens):
+    monkeypatch.setattr(multi_agent, "seat_template", lambda model: (True, opens))
+    scenario = _panel(tmp_path, endpoint=False)
+    prompts, _calls, records = _run(
+        tmp_path, scenario, [("Plain answer.", []), ("ok", []), ("ok", [])])
+    assert "Plain answer." not in prompts[1]
+    assert records[0]["reasoningStatus"] == "unfinished"
+
+
+def test_a_seat_whose_template_cannot_think_is_never_split(tmp_path, monkeypatch):
+    """N3: an agent with thinking on, cast on a template without a thinking
+    switch, writes plain text: nothing is split or budgeted, and the record
+    says the turn did not think."""
+    monkeypatch.setattr(multi_agent, "seat_template", lambda model: (False, None))
+    scenario = _panel(tmp_path, endpoint=False)
+    text = "weighing it</think> my words"
+    prompts, calls, records = _run(
+        tmp_path, scenario, [(text, []), ("ok", []), ("ok", [])],
+        reasoning_max_tokens=300)
+    assert text in prompts[1]
+    assert calls[0]["qwen_thinking_enabled"] is False
+    assert "reasoning_max_tokens" not in calls[0]
+    assert records[0]["reasoningEffort"] == "off"
+    assert "reasoningStatus" not in records[0]
+
+
+# Written by hand: the three leaks of review round 2 (B1).
+LEAKS = [
+    ("weighing it, Final answer: affirm", "stop"),
+    ("Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+     "stop"),
+    ("Sure. <think>secret plan</think>Final answer: reverse.", "stop"),
+]
+
+
+@pytest.mark.parametrize("opens", [True, False, None])
+def test_a_routed_answer_never_carries_a_reasoning_tag_or_leaked_reasoning(opens):
+    corpus = [text for text, _ in LEAKS] + [
+        AVA_TEXT, "<think>a</think>b", "a</think>b</think>c", "x <think>y",
+        "answer <think>aside</think> more", "a</THINK>b", "<think>a</think>b <think",
+        "plain words", "</think>", "<think>", ""]
+    for text in corpus:
+        for finish in ("stop", "length", "lengthInReasoning"):
+            said = multi_agent.turn_text(text, thinking=True, finish=finish,
+                                         opens_in_prompt=opens)
+            if said.passed_on:
+                folded = said.answer.lower()
+                assert "<think" not in folded and "</think" not in folded, text
+                assert "secret plan" not in said.answer
+                if opens is not False:  # a model-opened template: plain text is an answer
+                    assert "weighing it" not in said.answer
+
+
+def test_the_three_leaks_are_closed():
+    # (a) prompt-opened, stopped mid-reasoning: nothing passed on.
+    said = multi_agent.turn_text(LEAKS[0][0], thinking=True, finish="stop",
+                                 opens_in_prompt=True)
+    assert (said.passed_on, said.status) == (False, "unfinished")
+    # (b) a <think> mention inside prompt-opened reasoning: the first
+    # </think> is still the boundary.
+    said = multi_agent.turn_text(LEAKS[1][0], thinking=True, finish="stop",
+                                 opens_in_prompt=True)
+    assert (said.answer, said.status) == ("Final answer: reverse.", "complete")
+    assert said.reasoning == "Should I write a <think> tag? No.\n"
+    # (c) a tag mid-text with a model-opened template: unclear, withheld.
+    said = multi_agent.turn_text(LEAKS[2][0], thinking=True, finish="stop",
+                                 opens_in_prompt=False)
+    assert (said.passed_on, said.status) == (False, "unclear")
+
+
+def test_one_per_turn_function_decides_routing_endpoint_and_lint():
+    """S4: the live path and the replay path share ``turn_outcome``; this
+    drives ``play_turn`` with the raw text and checks every reader of it."""
+    scenario = _panel_plain()
+    turn = scenario.turns[0]
+    outcome = multi_agent.play_turn(scenario, turn, 0, text=AVA_TEXT,
+                                    thinking=True, finish="stop",
+                                    opens_in_prompt=True)
+    assert outcome.label == "ava1" and outcome.routed == ["a", "b"]
+    readers = dict(outcome.entries)
+    assert AVA_ANSWER in readers["b"] and "I first lean" not in readers["b"]
+    assert "I first lean" not in readers["a"]
+    assert outcome.fields["output"] == AVA_ANSWER
+    assert outcome.fields["endpoint"]["value"] == "reverse"
+    # The voice lint read the answer, not the reasoning: a reasoning line
+    # spoken as a colleague would otherwise be flagged.
+    lint = outcome.fields["voiceLint"]
+    assert lint == multi_agent.voice_lint.stamp(
+        AVA_ANSWER, speaker="Ava", others=["Ben"])
+    # Replaying the record gives the same routing.
+    record = {"output": outcome.fields["output"],
+              "reasoning": outcome.fields["reasoning"],
+              "reasoningStatus": outcome.fields["reasoningStatus"]}
+    replayed = multi_agent.turn_outcome(scenario, turn, 0,
+                                        multi_agent._record_text(record))
+    assert replayed.entries == outcome.entries
+
+
+def _panel_plain():
+    ava = multi_agent.Agent(id="a", name="Ava", base_model_id="test/qwen-panel")
+    ben = multi_agent.Agent(id="b", name="Ben", base_model_id="test/qwen-panel")
+    vote = turn_endpoint.TurnEndpoint.from_dict(
+        {"name": "vote", "kind": "choice", "marker": "Final answer:",
+         "vocabulary": ["affirm", "reverse"]})
+    return multi_agent.Scenario(
+        name="p", base_model_id="test/qwen-panel", agents=[ava, ben],
+        turns=[multi_agent.Turn(id="t1", title="Ava votes", speaker_agent_id="a",
+                                prompt_template="Vote.", output_label="ava1",
+                                routing="all", endpoint=vote)])
 
 
 # --- 4. a bare seat follows the study's effort ---------------------------------
@@ -257,7 +380,7 @@ def test_an_ad_hoc_run_says_the_panel_file_set_the_temperature(tmp_path):
 
 def test_a_seat_temperature_round_trips_and_is_validated():
     document = {"name": "p", "agents": [
-        {"id": "a", "name": "Ava", "baseModelID": "m", "systemPrompt": "",
+        {"id": "a", "name": "Ava", "baseModelID": "test/qwen-panel", "systemPrompt": "",
          "temperature": 0.6}], "turns": [], "includeOwnReasoning": True}
     scenario = multi_agent.Scenario.from_dict(document)
     assert scenario.agents[0].temperature == 0.6
@@ -268,7 +391,7 @@ def test_a_seat_temperature_round_trips_and_is_validated():
     # A seat with none, and a panel with the setting off, write no key: every
     # panel from before these existed keeps its pinned bytes.
     plain = multi_agent._scenario_to_dict(multi_agent.Scenario.from_dict(
-        {"name": "p", "agents": [{"id": "a", "name": "Ava", "baseModelID": "m",
+        {"name": "p", "agents": [{"id": "a", "name": "Ava", "baseModelID": "test/qwen-panel",
                                   "systemPrompt": ""}], "turns": []}))
     assert "temperature" not in plain["agents"][0]
     assert "includeOwnReasoning" not in plain
@@ -335,8 +458,9 @@ def test_a_transcript_an_older_engine_started_with_a_thinking_seat_refuses(
     generated = []
     monkeypatch.setattr(multi_agent, "generate",
                         lambda *a, **k: generated.append(1) or "never")
-    with pytest.raises(resume.ResumeRefusal, match="seat 'Ava' thinks") as caught:
-        multi_agent.run_scenario(SimpleNamespace(model_id="m", revision="r"),
+    with pytest.raises(resume.ResumeRefusal,
+                       match="the reasoning of seat 'Ava' was passed on") as caught:
+        multi_agent.run_scenario(SimpleNamespace(model_id="test/qwen-panel", revision="r"),
                                  scenario, run_dir=run_dir)
     assert generated == [], "refused before any turn was generated"
     assert caught.value.gate == "manifestEpoch"
@@ -356,7 +480,7 @@ def test_the_parked_run_is_refused_before_the_model_loads(tmp_path):
         handle.write(json.dumps(_old_engine_turn("t1", "a", AVA_TEXT)) + "\n")
     problem = multi_agent.run_resume_rule_problem(run_dir, _manifest(), root)
     assert isinstance(problem, resume.ResumeRefusal)
-    assert "seat 'Ava' thinks" in str(problem)
+    assert "the reasoning of seat 'Ava' was passed on" in str(problem)
     # Turns this engine wrote carry their effort, and the run resumes.
     with open(os.path.join(transcript, "turns.jsonl"), "w") as handle:
         handle.write(json.dumps({**_old_engine_turn("t1", "a", AVA_ANSWER),
@@ -393,7 +517,7 @@ def test_a_transcript_an_older_engine_started_without_thinking_resumes(
     prompts = []
     monkeypatch.setattr(multi_agent, "generate",
                         lambda model, prompt, **k: prompts.append(prompt) or "ok")
-    multi_agent.run_scenario(SimpleNamespace(model_id="m", revision="r"),
+    multi_agent.run_scenario(SimpleNamespace(model_id="test/qwen-panel", revision="r"),
                              scenario, run_dir=run_dir)
     assert len(prompts) == 2 and "plain" in prompts[0]
 
@@ -414,9 +538,11 @@ def test_the_reasoning_split_fixture_is_current():
         found = reasoning_split.split(case["text"])
         assert [found.reasoning, found.answer, found.state] == [
             case["reasoning"], case["answer"], case["state"]], case["label"]
+    assert {case["opensInPrompt"] for case in fixture["turnText"]} == {True, False, None}
     for case in fixture["turnText"]:
         said = multi_agent.turn_text(case["text"], thinking=case["thinking"],
-                                     finish=case["finishReason"])
+                                     finish=case["finishReason"],
+                                     opens_in_prompt=case["opensInPrompt"])
         assert [said.answer, said.reasoning, said.status] == [
             case["answer"], case["reasoning"], case["status"]], case["label"]
     for case in fixture["ownReasoning"]:
@@ -450,37 +576,141 @@ def test_a_panel_the_rule_changes_is_named_and_one_it_does_not_is_not(tmp_path):
     thinking = _manifest()
     thinking.reasoning_effort = "on"
     assert multi_agent.submission_panel_rule_changes(thinking, "run", root) == [
-        "seat 'Ava' thinks", "seat 'Ben' thinks"]
+        ("seatWouldNotThink", "Ava"), ("seatWouldNotThink", "Ben")]
+    assert multi_agent.outdated_panel_engine_reason(
+        "http://runner", [("seatWouldNotThink", "Ava")]) == (
+        "The engine at http://runner predates answer-only panel routing (its "
+        "capabilities do not list remoteStudy.panelAnswerRouting), so on it seat "
+        "'Ava' would not think. Nothing was submitted.")
     # A verb that plays no turns is never refused.
     assert multi_agent.submission_panel_rule_changes(thinking, "analyze", root) == []
     scenario.agents[1].temperature = 0.5
     root = _workspace_with_panel(tmp_path / "second", scenario)
     assert multi_agent.submission_panel_rule_changes(_manifest(), "pipeline", root) == [
-        "seat 'Ben' declares its own temperature"]
+        ("temperatureIgnored", "Ben")]
+    # N2: a seat temperature equal to the study's, and includeOwnReasoning
+    # with no thinking seat, change nothing.
+    scenario.agents[1].temperature = 0.0
+    scenario.include_own_reasoning = True
+    root = _workspace_with_panel(tmp_path / "third", scenario)
+    assert multi_agent.submission_panel_rule_changes(_manifest(), "run", root) == []
+    # A panel that cannot be read here is None: the caller refuses.
+    missing = _manifest()
+    missing.multi_agent_scenario_path = "prompts/panels/gone.json"
+    assert multi_agent.submission_panel_rule_changes(missing, "run", root) is None
 
 
-def test_the_client_refuses_to_send_such_a_panel_to_an_engine_without_the_capability(
+def test_a_bundle_requires_answer_routing_only_where_the_panel_needs_it(
         tmp_path, monkeypatch):
-    from steerlab_server.client import runner
-    from steerlab_server.experiment import manifest as manifest_module
+    """S5: the requirement is computed from the files the bundle carries,
+    so a staged bundle is refused by an older engine whatever the local
+    workspace holds."""
+    import tarfile
+    from steerlab_server.experiment import bundles, instrumentation_contract
     scenario = _panel(tmp_path, endpoint=False)
+    scenario.agents[0].variant_artifact_path = None
     scenario.agents[1].temperature = 0.5
     root = _workspace_with_panel(tmp_path, scenario)
-    monkeypatch.setattr(manifest_module.Manifest, "load",
-                        classmethod(lambda cls, name, root=None: _manifest()))
-    staged = {"experiment": "s", "experimentContentHash": "h"}
-    with pytest.raises(runner.RunnerRefusal) as caught:
-        runner.require_panel_answer_routing(staged, "run", {}, "http://runner", root)
-    assert caught.value.code == "panelAnswerRoutingUnsupported"
-    assert "remoteStudy.panelAnswerRouting" in str(caught.value)
-    assert "seat 'Ben' declares its own temperature" in str(caught.value)
-    # An engine that has it, nested or dotted, is sent the bundle.
-    runner.require_panel_answer_routing(
-        staged, "run", {"remoteStudy": {"panelAnswerRouting": True}},
-        "http://runner", root)
-    runner.require_panel_answer_routing(
-        staged, "run", {"features": {"remoteStudy.panelAnswerRouting": True}},
-        "http://runner", root)
+    manifest = _manifest()
+    manifest.content_hash = lambda: "h"
+    manifest.validation_scope_hash = lambda: "v"
+    manifest.verify = lambda root=None: []
+    monkeypatch.setattr(bundles.Manifest, "load",
+                        classmethod(lambda cls, name, root=None: manifest))
+    monkeypatch.setattr(bundles, "_experiment_files", lambda *a, **k: [])
+
+    def requirements(root):
+        meta = bundles.package_experiment(
+            "s", root=root, output_path=os.path.join(root, "b.tar.gz"))
+        return meta["runtimeRequirements"]
+
+    assert instrumentation_contract.PANEL_ANSWER_ROUTING in requirements(root)
+    scenario.agents[1].temperature = None
+    plain = _workspace_with_panel(tmp_path / "plain", scenario)
+    assert instrumentation_contract.PANEL_ANSWER_ROUTING not in requirements(plain)
+    # An older engine (no such entry in its instrumentation list) refuses it.
+    with pytest.raises(ValueError, match="predates answer-only panel routing"):
+        instrumentation_contract.require(
+            [instrumentation_contract.PANEL_ANSWER_ROUTING],
+            {"instrumentation": ["policy-v1"]})
+    instrumentation_contract.require(
+        [instrumentation_contract.PANEL_ANSWER_ROUTING],
+        {"instrumentation": list(instrumentation_contract.OFFERED)})
+
+
+def test_verify_allows_a_budget_only_where_a_cast_seat_thinks(tmp_path):
+    """S1: a study whose effort is off may declare reasoningMaxTokens when
+    its panel casts an agent that thinks; with nothing thinking it is still
+    refused."""
+    from steerlab_server.experiment import prompt_render
+    scenario = _panel(tmp_path, endpoint=False)
+    root = _workspace_with_panel(tmp_path, scenario)
+    document = {"studyKind": "multiAgent", "temperature": 0.0,
+                "multiAgentScenarioPath": "prompts/panels/p.json"}
+    refusal = [prompt_render.BUDGET_WITHOUT_EFFORT_REASON]
+    assert multi_agent.permit_panel_budget(refusal, document, root) == []
+    scenario.agents[0].variant_artifact_path = None
+    plain = _workspace_with_panel(tmp_path / "plain", scenario)
+    assert multi_agent.permit_panel_budget(refusal, document, plain) == refusal
+    assert multi_agent.permit_panel_budget(
+        refusal, {**document, "studyKind": "modelOutput"}, root) == refusal
+
+
+def test_the_seats_temperatures_decide_a_panels_seed_rule(tmp_path):
+    """S3: a greedy study with one warm seat is not a greedy run."""
+    from steerlab_server.experiment import panel_workflow, sampling
+    scenario = _panel(tmp_path, endpoint=False)
+    scenario.agents[1].temperature = 0.7
+    root = _workspace_with_panel(tmp_path, scenario)
+    manifest = _manifest(samples_per_item=3)
+    assert sampling.generating_temperature(manifest, root) == 0.7
+    assert sampling.greedy_samples_problem(
+        sampling.generating_temperature(manifest, root), 3, "multiAgent") is None
+    scenario.agents[1].temperature = None
+    cold = _workspace_with_panel(tmp_path / "cold", scenario)
+    assert sampling.generating_temperature(manifest, cold) == 0.0
+    assert sampling.greedy_samples_problem(
+        sampling.generating_temperature(manifest, cold), 3, "multiAgent")
+    # Each flattened turn states its own seed facts.
+    assert panel_workflow._panel_seed_fields(0.7) == {
+        "seedInert": False, "seedPolicy": "derivedSHA256"}
+    assert panel_workflow._panel_seed_fields(0.0) == {
+        "seedInert": True, "seedPolicy": "greedy"}
+    # And the export states a mixed panel's policy as what it is.
+    from steerlab_server.client import results_export as rx
+    text = rx._seed_policy_text({"seedPolicy": "derivedSHA256"}, {},
+                                {"seedPolicy": ["greedy", "derivedSHA256"]},
+                                code=lambda v: v)
+    assert text == ("seed policy derivedSHA256 for the turns generated above "
+                    "temperature 0, and no seed for the greedy turns at "
+                    "temperature 0")
+
+
+def test_a_withheld_turn_exposes_nobody():
+    """N6: script-level exposure ignores a turn that passed nothing on."""
+    from steerlab_server.experiment import panel_effects
+    scenario = _panel_plain()
+    scenario.turns.append(multi_agent.Turn(
+        id="t2", title="Ben", speaker_agent_id="b", prompt_template="Go.",
+        output_label="ben1", routing="all"))
+    assert panel_effects.exposure_by_turn(scenario, {"a"})["t2"] is True
+    withheld = panel_effects.withheld_turn_ids(
+        [{"turnID": "t1", "reasoningStatus": "cutOff"},
+         {"turnID": "t2", "reasoningStatus": "complete"}])
+    assert withheld == {"t1"}
+    assert panel_effects.exposure_by_turn(scenario, {"a"}, withheld)["t2"] is False
+
+
+def test_the_judge_reads_thinking_and_attributed_closes_as_text():
+    """N4: ``<thinking>`` is not an opening tag and ``</think attr>`` is not
+    a closing one, on this engine as on the Swift twin."""
+    from steerlab_server.experiment import paired_judge
+    body = '{"winner": "A"}'
+    assert paired_judge.strip_leading_think_block("<thinking>x</thinking>" + body) == (
+        "<thinking>x</thinking>" + body)
+    assert paired_judge.strip_leading_think_block("x</think attr>" + body) == (
+        "x</think attr>" + body)
+    assert paired_judge.strip_leading_think_block("<thinking>x</think>" + body) == body
 
 
 def test_this_engine_advertises_answer_only_panel_routing():

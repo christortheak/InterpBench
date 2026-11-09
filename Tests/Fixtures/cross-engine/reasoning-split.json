@@ -167,6 +167,27 @@
       "answer": "<think>a</think>b",
       "finishReason": "stop",
       "label": "not-thinking-is-never-split",
+      "opensInPrompt": true,
+      "reasoning": null,
+      "status": null,
+      "text": "<think>a</think>b",
+      "thinking": false
+    },
+    {
+      "answer": "<think>a</think>b",
+      "finishReason": "stop",
+      "label": "not-thinking-is-never-split",
+      "opensInPrompt": false,
+      "reasoning": null,
+      "status": null,
+      "text": "<think>a</think>b",
+      "thinking": false
+    },
+    {
+      "answer": "<think>a</think>b",
+      "finishReason": "stop",
+      "label": "not-thinking-is-never-split",
+      "opensInPrompt": null,
       "reasoning": null,
       "status": null,
       "text": "<think>a</think>b",
@@ -176,6 +197,27 @@
       "answer": "b",
       "finishReason": "stop",
       "label": "thinking-closed",
+      "opensInPrompt": true,
+      "reasoning": "a\n",
+      "status": "complete",
+      "text": "a\n</think>\n\n  b",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "thinking-closed",
+      "opensInPrompt": false,
+      "reasoning": "a\n</think>\n\n  b",
+      "status": "unclear",
+      "text": "a\n</think>\n\n  b",
+      "thinking": true
+    },
+    {
+      "answer": "b",
+      "finishReason": "stop",
+      "label": "thinking-closed",
+      "opensInPrompt": null,
       "reasoning": "a\n",
       "status": "complete",
       "text": "a\n</think>\n\n  b",
@@ -185,6 +227,7 @@
       "answer": "b",
       "finishReason": "length",
       "label": "thinking-closed-answer-cut",
+      "opensInPrompt": true,
       "reasoning": "a",
       "status": "complete",
       "text": "a</think>b",
@@ -192,10 +235,81 @@
     },
     {
       "answer": "",
+      "finishReason": "length",
+      "label": "thinking-closed-answer-cut",
+      "opensInPrompt": false,
+      "reasoning": "a</think>b",
+      "status": "unclear",
+      "text": "a</think>b",
+      "thinking": true
+    },
+    {
+      "answer": "b",
+      "finishReason": "length",
+      "label": "thinking-closed-answer-cut",
+      "opensInPrompt": null,
+      "reasoning": "a",
+      "status": "complete",
+      "text": "a</think>b",
+      "thinking": true
+    },
+    {
+      "answer": "b",
+      "finishReason": "stop",
+      "label": "thinking-leading-block",
+      "opensInPrompt": true,
+      "reasoning": "a",
+      "status": "complete",
+      "text": "<think>a</think>\n\nb",
+      "thinking": true
+    },
+    {
+      "answer": "b",
+      "finishReason": "stop",
+      "label": "thinking-leading-block",
+      "opensInPrompt": false,
+      "reasoning": "a",
+      "status": "complete",
+      "text": "<think>a</think>\n\nb",
+      "thinking": true
+    },
+    {
+      "answer": "b",
+      "finishReason": "stop",
+      "label": "thinking-leading-block",
+      "opensInPrompt": null,
+      "reasoning": "a",
+      "status": "complete",
+      "text": "<think>a</think>\n\nb",
+      "thinking": true
+    },
+    {
+      "answer": "",
       "finishReason": "stop",
       "label": "thinking-unclosed-tag",
+      "opensInPrompt": true,
       "reasoning": "a",
-      "status": "cutOff",
+      "status": "unfinished",
+      "text": "<think>a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "thinking-unclosed-tag",
+      "opensInPrompt": false,
+      "reasoning": "a",
+      "status": "unfinished",
+      "text": "<think>a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "thinking-unclosed-tag",
+      "opensInPrompt": null,
+      "reasoning": "a",
+      "status": "unfinished",
       "text": "<think>a",
       "thinking": true
     },
@@ -203,6 +317,27 @@
       "answer": "",
       "finishReason": "lengthInReasoning",
       "label": "thinking-no-block-cut-by-budget",
+      "opensInPrompt": true,
+      "reasoning": "a",
+      "status": "cutOff",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "a",
+      "finishReason": "lengthInReasoning",
+      "label": "thinking-no-block-cut-by-budget",
+      "opensInPrompt": false,
+      "reasoning": null,
+      "status": "notFound",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "lengthInReasoning",
+      "label": "thinking-no-block-cut-by-budget",
+      "opensInPrompt": null,
       "reasoning": "a",
       "status": "cutOff",
       "text": "a",
@@ -212,6 +347,7 @@
       "answer": "",
       "finishReason": "length",
       "label": "thinking-no-block-cut-by-limit",
+      "opensInPrompt": true,
       "reasoning": "a",
       "status": "cutOff",
       "text": "a",
@@ -219,11 +355,202 @@
     },
     {
       "answer": "a",
-      "finishReason": "stop",
-      "label": "thinking-no-block-finished",
+      "finishReason": "length",
+      "label": "thinking-no-block-cut-by-limit",
+      "opensInPrompt": false,
       "reasoning": null,
       "status": "notFound",
       "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "length",
+      "label": "thinking-no-block-cut-by-limit",
+      "opensInPrompt": null,
+      "reasoning": "a",
+      "status": "cutOff",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "thinking-no-block-finished",
+      "opensInPrompt": true,
+      "reasoning": "a",
+      "status": "unfinished",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "a",
+      "finishReason": "stop",
+      "label": "thinking-no-block-finished",
+      "opensInPrompt": false,
+      "reasoning": null,
+      "status": "notFound",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "thinking-no-block-finished",
+      "opensInPrompt": null,
+      "reasoning": "a",
+      "status": "unfinished",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "stopped-mid-reasoning",
+      "opensInPrompt": true,
+      "reasoning": "weighing it, Final answer: affirm",
+      "status": "unfinished",
+      "text": "weighing it, Final answer: affirm",
+      "thinking": true
+    },
+    {
+      "answer": "weighing it, Final answer: affirm",
+      "finishReason": "stop",
+      "label": "stopped-mid-reasoning",
+      "opensInPrompt": false,
+      "reasoning": null,
+      "status": "notFound",
+      "text": "weighing it, Final answer: affirm",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "stopped-mid-reasoning",
+      "opensInPrompt": null,
+      "reasoning": "weighing it, Final answer: affirm",
+      "status": "unfinished",
+      "text": "weighing it, Final answer: affirm",
+      "thinking": true
+    },
+    {
+      "answer": "Final answer: reverse.",
+      "finishReason": "stop",
+      "label": "open-tag-mentioned-in-reasoning",
+      "opensInPrompt": true,
+      "reasoning": "Should I write a <think> tag? No.\n",
+      "status": "complete",
+      "text": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "open-tag-mentioned-in-reasoning",
+      "opensInPrompt": false,
+      "reasoning": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+      "status": "unclear",
+      "text": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+      "thinking": true
+    },
+    {
+      "answer": "Final answer: reverse.",
+      "finishReason": "stop",
+      "label": "open-tag-mentioned-in-reasoning",
+      "opensInPrompt": null,
+      "reasoning": "Should I write a <think> tag? No.\n",
+      "status": "complete",
+      "text": "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+      "thinking": true
+    },
+    {
+      "answer": "Final answer: reverse.",
+      "finishReason": "stop",
+      "label": "tag-after-some-text",
+      "opensInPrompt": true,
+      "reasoning": "Sure. <think>secret plan",
+      "status": "complete",
+      "text": "Sure. <think>secret plan</think>Final answer: reverse.",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "tag-after-some-text",
+      "opensInPrompt": false,
+      "reasoning": "Sure. <think>secret plan</think>Final answer: reverse.",
+      "status": "unclear",
+      "text": "Sure. <think>secret plan</think>Final answer: reverse.",
+      "thinking": true
+    },
+    {
+      "answer": "Final answer: reverse.",
+      "finishReason": "stop",
+      "label": "tag-after-some-text",
+      "opensInPrompt": null,
+      "reasoning": "Sure. <think>secret plan",
+      "status": "complete",
+      "text": "Sure. <think>secret plan</think>Final answer: reverse.",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "second-close-in-answer",
+      "opensInPrompt": true,
+      "reasoning": "a</think>b</think>c",
+      "status": "unclear",
+      "text": "a</think>b</think>c",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "second-close-in-answer",
+      "opensInPrompt": false,
+      "reasoning": "a</think>b</think>c",
+      "status": "unclear",
+      "text": "a</think>b</think>c",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "second-close-in-answer",
+      "opensInPrompt": null,
+      "reasoning": "a</think>b</think>c",
+      "status": "unclear",
+      "text": "a</think>b</think>c",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "open-tag-in-answer",
+      "opensInPrompt": true,
+      "reasoning": "a</think>b <think>c",
+      "status": "unclear",
+      "text": "a</think>b <think>c",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "open-tag-in-answer",
+      "opensInPrompt": false,
+      "reasoning": "a</think>b <think>c",
+      "status": "unclear",
+      "text": "a</think>b <think>c",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "open-tag-in-answer",
+      "opensInPrompt": null,
+      "reasoning": "a</think>b <think>c",
+      "status": "unclear",
+      "text": "a</think>b <think>c",
       "thinking": true
     }
   ]

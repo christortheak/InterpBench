@@ -710,15 +710,18 @@ def _prove_one_panel_rule(name: str, manifest, stamps: list[dict],
     # refused.
     if not old or not new:
         return
-    reasons = multi_agent.submission_panel_rule_changes(manifest, "run", root)
-    if not reasons:
+    changes = multi_agent.submission_panel_rule_changes(manifest, "run", root)
+    if changes == []:
         return
+    under = ("; ".join(multi_agent.rule_change_clauses(changes, past=True))
+             if changes is not None else
+             "rules this engine cannot check, because the panel or one of its "
+             "agent files could not be read here")
     raise ShardMergeRefusal(
         f"shard merge refused: shard(s) {', '.join(str(i) for i in old)} of "
-        f"'{name}' were played by an engine that passed each turn's whole text "
-        "on, reasoning included, and this engine passes on only the answer, "
-        f"which changes this panel ({'; '.join(reasons)}) — merging would mix "
-        "two routing rules in one run; the shard partials are untouched",
+        f"'{name}' were played by an earlier engine, under which {under}, and "
+        "this engine plays the panel differently — merging would mix two "
+        "routing rules in one run; the shard partials are untouched",
         gate=MANIFEST_EPOCH,
         repair=(f"steerlab-server study submit {name} --verb run --executor "
                 f"slurm --parallel {len(stamps)}  (a fresh fan-out on one "

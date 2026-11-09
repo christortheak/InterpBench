@@ -587,64 +587,193 @@ def remote_has_panel_answer_routing(capabilities) -> bool:
         "remoteStudy." + PANEL_ANSWER_ROUTING_CAPABILITY) is True)
 
 
+#: The ways an engine from before issue #15 plays a panel differently, as the
+#: first element of a ``(kind, seat name)`` change. Swift twin:
+#: ``MultiAgentRunner.RuleChange``.
+RULE_REASONING_PASSED_ON = "reasoningPassedOn"
+RULE_SEAT_WOULD_NOT_THINK = "seatWouldNotThink"
+RULE_TEMPERATURE_IGNORED = "temperatureIgnored"
+
+
+class PanelUnreadable(Exception):
+    """A panel, or one of its agent files, that could not be read, so what an
+    older engine would do with it cannot be told."""
+
+
+def _template_thinks(model_id: str, root: str | None) -> bool:
+    """Whether ``model_id``'s chat template has a thinking switch, by its
+    workspace capability record, else the id heuristic."""
+    from . import model_capabilities
+    try:
+        return bool(model_capabilities.resolve(model_id, None, root).has_thinking_switch)
+    except Exception:  # noqa: BLE001 - an unreadable record: assume it can think
+        return True
+
+
 def panel_rule_changes(scenario: Scenario, *, study_effort: str | None,
-                       root: str | None = None) -> list[str]:
+                       study_temperature: float, root: str | None = None,
+                       seats=None) -> list[tuple[str, str]]:
     """What an engine from before issue #15 would run differently in this
-    panel, as short reasons, or [] when the two engines run it alike: a seat
-    that thinks (an agent with thinking on, or a bare seat under a thinking
-    study), a seat that declares its own temperature, or
-    ``includeOwnReasoning``. Reads agent files, never a model."""
-    reasons: list[str] = []
-    if scenario.include_own_reasoning:
-        reasons.append("the panel shows each seat its own earlier reasoning")
+    panel, as ``(kind, seat name)`` pairs in seat order, or [] when the two
+    engines run it alike.
+
+    * a seat cast with an agent that thinks (on a template that can):
+      that engine passes its reasoning on to the other seats;
+    * a bare seat under a study that thinks: that engine does not let it
+      think;
+    * a seat whose declared temperature differs from the study's: that
+      engine ignores it.
+
+    A seat temperature equal to the study's, and ``includeOwnReasoning``
+    without a thinking seat, change nothing and are not changes. ``seats``
+    limits the answer to those seat IDs. Raises :class:`PanelUnreadable`
+    when an agent file cannot be read. Swift twin:
+    ``MultiAgentRunner.panelRuleChanges``."""
+    wanted = None if seats is None else set(seats)
+    out: list[tuple[str, str]] = []
     for agent in scenario.agents:
-        if agent.temperature is not None:
-            reasons.append(f"seat '{agent.name}' declares its own temperature")
-    for agent in scenario.agents:
+        if wanted is not None and agent.id not in wanted:
+            continue
+        if agent.temperature is not None and agent.temperature != study_temperature:
+            out.append((RULE_TEMPERATURE_IGNORED, agent.name))
         try:
             variant = _runtime_settings(agent, True, root=root)[0]
-        except (OSError, KeyError, ValueError, TypeError):
-            continue
+        except (OSError, KeyError, ValueError, TypeError) as exc:
+            raise PanelUnreadable(
+                f"the agent file of seat '{agent.name}' could not be read") from exc
         effort, _ = seat_reasoning(variant, study_effort=study_effort or "",
                                    study_budget=None)
-        if effort != prompt_render.REASONING_OFF:
-            reasons.append(f"seat '{agent.name}' thinks")
-    return reasons
+        if effort == prompt_render.REASONING_OFF:
+            continue
+        model_id = (variant.base_model_id if variant else None) or agent.base_model_id
+        if not _template_thinks(model_id, root):
+            continue
+        out.append((RULE_REASONING_PASSED_ON if variant is not None
+                    else RULE_SEAT_WOULD_NOT_THINK, agent.name))
+    return out
+
+
+def rule_change_clauses(changes: list[tuple[str, str]], *, past: bool) -> list[str]:
+    """One true consequence clause per change: what the older engine would
+    do (``past=False``, a submission refusal) or did (``past=True``, a
+    resume or merge refusal). Swift twin:
+    ``MultiAgentRunner.ruleChangeClauses``."""
+    out = []
+    for kind, name in changes:
+        if kind == RULE_REASONING_PASSED_ON:
+            out.append(f"the reasoning of seat '{name}' "
+                       + ("was" if past else "would be")
+                       + " passed on to the other seats")
+        elif kind == RULE_SEAT_WOULD_NOT_THINK:
+            out.append(f"seat '{name}' " + ("did not think" if past
+                                             else "would not think"))
+        else:
+            out.append(f"the temperature of seat '{name}' "
+                       + ("was" if past else "would be") + " ignored")
+    return out
 
 
 def submission_panel_rule_changes(manifest, verb: str,
-                                  root: str | None = None) -> list[str]:
+                                  root: str | None = None):
     """:func:`panel_rule_changes` for the panel a study pins, when ``verb``
-    plays its turns; [] for every other study, verb, or an unreadable panel
-    (``verify`` reports that). Swift twin:
-    ``MultiAgentRunner.submissionPanelRuleChanges``."""
-    spath = getattr(manifest, "multi_agent_scenario_path", None)
-    if (verb not in PANEL_ROUTING_VERBS or not spath
+    plays its turns: [] for every other study or verb, and None when the
+    study is a panel whose panel or agent files cannot be read here — the
+    caller refuses on an engine without the capability, since it cannot
+    tell. Swift twin: ``MultiAgentRunner.submissionPanelRuleChanges``."""
+    if (verb not in PANEL_ROUTING_VERBS
             or getattr(manifest, "study_kind", None) != "multiAgent"):
         return []
+    spath = getattr(manifest, "multi_agent_scenario_path", None)
+    if not spath:
+        return None
     base = paths.project_root() if root is None else root
     if not os.path.isabs(spath):
         spath = os.path.join(base, spath)
     try:
         scenario, _ = load_scenario(spath)
+        # Agent files are workspace-relative: resolve them against this
+        # study's workspace, not whatever the process happens to point at.
+        return panel_rule_changes(
+            scenario, study_effort=manifest.reasoning_effort,
+            study_temperature=float(manifest.temperature or 0.0), root=base)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            ScenarioError, PanelUnreadable):
+        return None
+
+
+def panel_seat_thinks(manifest, root: str | None = None) -> bool:
+    """Whether a panel study casts an agent that thinks (on a template that
+    can): the case in which the study may declare a ``reasoningMaxTokens``
+    for those seats although its own ``reasoningEffort`` is off (maintainer
+    decision, FR6 round 2). False for every other study, and for a panel
+    that cannot be read. Swift twin: ``MultiAgentRunner.panelSeatThinks``."""
+    document = getattr(manifest, "raw", manifest)
+    if not isinstance(document, dict) or document.get("studyKind") != "multiAgent":
+        return False
+    spath = document.get("multiAgentScenarioPath")
+    if not isinstance(spath, str) or not spath:
+        return False
+    base = paths.project_root() if root is None else root
+    if not os.path.isabs(spath):
+        spath = os.path.join(base, spath)
+    try:
+        scenario, _ = load_scenario(spath)
+        changes = panel_rule_changes(
+            scenario, study_effort=prompt_render.REASONING_OFF,
+            study_temperature=float(document.get("temperature") or 0.0), root=base)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            ScenarioError, PanelUnreadable):
+        return False
+    return any(kind == RULE_REASONING_PASSED_ON for kind, _ in changes)
+
+
+def permit_panel_budget(problems: list[str], manifest, root: str | None = None) -> list[str]:
+    """``problems`` without the budget-without-effort refusal when a panel
+    study casts a thinking agent (:func:`panel_seat_thinks`): the budget is
+    then the one those seats think under. Every other refusal stands."""
+    if (prompt_render.BUDGET_WITHOUT_EFFORT_REASON in problems
+            and panel_seat_thinks(manifest, root)):
+        return [p for p in problems if p != prompt_render.BUDGET_WITHOUT_EFFORT_REASON]
+    return problems
+
+
+def panel_seat_temperatures(manifest, root: str | None = None) -> list[float]:
+    """Each seat's effective temperature in the panel a study pins: its own
+    declaration, else the study's. [] when the study is not a panel or the
+    panel cannot be read. Swift twin:
+    ``MultiAgentRunner.panelSeatTemperatures``."""
+    if getattr(manifest, "study_kind", None) != "multiAgent":
+        return []
+    spath = getattr(manifest, "multi_agent_scenario_path", None)
+    if not spath:
+        return []
+    if not os.path.isabs(spath):
+        spath = os.path.join(paths.project_root() if root is None else root, spath)
+    try:
+        scenario, _ = load_scenario(spath)
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             ScenarioError):
         return []
-    # Agent files are workspace-relative: resolve them against this study's
-    # workspace, not whatever the process happens to point at.
-    return panel_rule_changes(scenario, study_effort=manifest.reasoning_effort,
-                              root=base)
+    study = float(manifest.temperature or 0.0)
+    return [float(a.temperature) if a.temperature is not None else study
+            for a in scenario.agents]
 
 
-def outdated_panel_engine_reason(where: str, reasons: list[str]) -> str:
+def outdated_panel_engine_reason(where: str, changes) -> str:
     """Why a client refuses to submit, in the same words on both clients
-    (Swift twin ``SubstrateRouting.panelAnswerRoutingSubmissionRefusal``)."""
-    return (f"The engine at {where} predates answer-only panel routing: its "
+    (Swift twin ``SubstrateRouting.panelAnswerRoutingSubmissionRefusal``).
+    ``changes`` None means the panel could not be read here."""
+    head = (f"The engine at {where} predates answer-only panel routing (its "
             "capabilities do not list "
-            f"remoteStudy.{PANEL_ANSWER_ROUTING_CAPABILITY}, so it would pass "
-            "each turn's whole text on to the other seats, a thinking seat's "
-            "reasoning included, and would ignore what this panel declares "
-            f"({'; '.join(reasons)}). Nothing was submitted.")
+            f"remoteStudy.{PANEL_ANSWER_ROUTING_CAPABILITY})")
+    if changes is None:
+        return (head + ", and this study's panel or one of its agent files "
+                "could not be read here, so this client cannot tell whether "
+                "that engine would run the panel as this one does. Nothing "
+                "was submitted.")
+    return (head + ", so on it "
+            + "; ".join(rule_change_clauses(changes, past=False))
+            + ". Nothing was submitted.")
 
 
 def study_seat_temperature_advisories(manifest, root: str | None = None) -> list[str]:
@@ -915,15 +1044,24 @@ def own_reasoning_text(reasoning: str, answer: str) -> str:
             f"{OWN_ANSWER_HEADING}\n{answer}")
 
 
-#: ``reasoningStatus`` on a thinking turn's record. ``complete``: the
-#: reasoning block closed and what followed it is the answer. ``cutOff``: the
-#: reasoning never closed (it hit its budget, or the turn's token limit), so
-#: there is no answer and NOTHING was passed on. ``notFound``: the seat was
-#: thinking but its text carried no reasoning block, so the whole text is the
-#: answer. A turn whose seat was not thinking has no such key.
+#: ``reasoningStatus`` on a thinking turn's record (issue #15).
+#: ``complete``: the reasoning block closed and what followed it is the answer.
+#: ``notFound``: the seat was thinking, its template does not open the block
+#: in the prompt, and its text carries no reasoning tag anywhere, so the whole
+#: text is the answer. The other three pass NOTHING on: ``cutOff``, the token
+#: limit (the reasoning budget or the turn's own) ended the turn before its
+#: reasoning closed; ``unfinished``, the seat stopped by itself before its
+#: reasoning closed; ``unclear``, a reasoning tag appeared where the answer
+#: should be, so reasoning could not be told from answer. A turn whose seat was
+#: not thinking has no such key. Swift twin: ``MultiAgentRunner.ReasoningStatus``.
 REASONING_COMPLETE = "complete"
 REASONING_CUT_OFF = "cutOff"
+REASONING_UNFINISHED = "unfinished"
+REASONING_UNCLEAR = "unclear"
 REASONING_NOT_FOUND = "notFound"
+#: The statuses under which nothing from a turn reaches any seat.
+WITHHELD_STATUSES = frozenset({REASONING_CUT_OFF, REASONING_UNFINISHED,
+                               REASONING_UNCLEAR})
 
 
 @dataclass(frozen=True)
@@ -938,34 +1076,141 @@ class TurnText:
     @property
     def passed_on(self) -> bool:
         """False when nothing from this turn may reach any seat."""
-        return self.status != REASONING_CUT_OFF
+        return self.status not in WITHHELD_STATUSES
 
 
-def turn_text(output: str, *, thinking: bool, finish: str | None) -> TurnText:
+def turn_text(output: str, *, thinking: bool, finish: str | None,
+              opens_in_prompt: bool | None = None) -> TurnText:
     """Split one turn's generated text into answer and reasoning (issue #15).
+
+    When in doubt, nothing is passed on.
 
     A seat that was not thinking said exactly what it generated: nothing is
     split, so a panel without a thinking seat routes the bytes it always did.
-    A thinking seat's text goes through the shared splitter
-    (``reasoning_split``). A block that never closed — an opening tag with no
-    closing tag, or text with no closing tag that the token limit cut off
-    (``finish`` is a cut-off reason) — is reasoning with no answer, and none
-    of it is passed on: partial reasoning is not something the seat said.
-    Swift twin: ``MultiAgentRunner.turnText``.
+
+    A thinking seat's text is read by what its chat template does
+    (``opens_in_prompt``, the capability record's ``thinkOpenInPrompt``):
+
+    * When the template opens the reasoning block in the PROMPT — or the
+      record has not probed it (None), which is read the same way — the
+      generation starts inside the block, and the first ``</think>`` is the
+      boundary whatever ``<think>`` text comes before it. No ``</think>`` at
+      all means the reasoning never closed: nothing is passed on.
+    * When the template leaves the opening tag to the model (False), a
+      leading ``<think>`` opens the block and the first ``</think>`` after it
+      closes it. Text with no tag anywhere is the answer (``notFound``);
+      text with a tag anywhere else is ``unclear``.
+
+    An answer that still holds ``<think`` or ``</think`` is ``unclear`` and is
+    not passed on either, so a routed answer never carries a reasoning tag.
+    A block that never closed is ``cutOff`` when a token limit ended the turn
+    and ``unfinished`` when the seat stopped by itself. Swift twin:
+    ``MultiAgentRunner.turnText``, pinned by ``reasoning-split.json``.
     """
     if not thinking:
         return TurnText(answer=output)
-    found = reasoning_split.split(output)
-    if found.state == reasoning_split.CLOSED:
-        return TurnText(
-            answer=reasoning_split.leading_whitespace_removed(found.answer),
-            reasoning=found.reasoning, status=REASONING_COMPLETE)
-    if found.state == reasoning_split.UNCLOSED:
-        return TurnText(answer="", reasoning=found.reasoning,
-                        status=REASONING_CUT_OFF)
-    if finish in truncation_gate.CUT_OFF_REASONS:
-        return TurnText(answer="", reasoning=output, status=REASONING_CUT_OFF)
-    return TurnText(answer=output, status=REASONING_NOT_FOUND)
+    never_closed = (REASONING_CUT_OFF if finish in truncation_gate.CUT_OFF_REASONS
+                    else REASONING_UNFINISHED)
+    opened = reasoning_split.leading_open_end(output)
+    if opens_in_prompt is not False:
+        close = reasoning_split.first_close(output)
+        start = opened if opened is not None and (close is None or opened <= close) else 0
+        if close is None:
+            return TurnText(answer="", reasoning=output[start:], status=never_closed)
+    else:
+        if opened is None:
+            if reasoning_split.has_tag(output):
+                return TurnText(answer="", reasoning=output, status=REASONING_UNCLEAR)
+            return TurnText(answer=output, status=REASONING_NOT_FOUND)
+        start = opened
+        close = reasoning_split.first_close(output, start)
+        if close is None:
+            return TurnText(answer="", reasoning=output[start:], status=never_closed)
+    answer = reasoning_split.leading_whitespace_removed(
+        output[close + len(reasoning_split.CLOSE_TAG):])
+    if reasoning_split.has_tag(answer):
+        return TurnText(answer="", reasoning=output, status=REASONING_UNCLEAR)
+    return TurnText(answer=answer, reasoning=output[start:close],
+                    status=REASONING_COMPLETE)
+
+
+def seat_template(model) -> tuple[bool, bool | None]:
+    """``(can think, opens the reasoning block in the prompt)`` for the chat
+    template a turn renders through, from its capability record
+    (``prompt_render.capabilities_for``: the tokenizer's own template,
+    probed, else the id heuristic). ``opens`` is None unless the record was
+    probed: an unknown template is read as one that opens the block, which
+    passes on less. Swift twin: ``MultiAgentRunner.seatTemplate``."""
+    model_id = getattr(model, "model_id", "") or ""
+    try:
+        record = prompt_render.capabilities_for(
+            model_id, tokenizer=getattr(model, "tokenizer", None),
+            revision=getattr(model, "revision", None))
+    except Exception:  # noqa: BLE001 - an unprobeable template reads as the heuristic
+        record = prompt_render.capabilities_for(model_id)
+    opens = record.think_open_in_prompt if record.is_probed else None
+    return bool(record.has_thinking_switch), opens
+
+
+@dataclass(frozen=True)
+class TurnOutcome:
+    """Everything one turn passes on and records, decided in one place
+    (``turn_outcome``) for the live and the replay path alike: the label it
+    fills, the seats it reached, the context entry each of them appends, and
+    the turn record's text fields."""
+
+    said: TurnText
+    label: str
+    routed: list
+    entries: list
+    fields: dict
+
+
+def turn_outcome(scenario: Scenario, turn: Turn, index: int,
+                 said: TurnText) -> TurnOutcome:
+    """What one turn passes on, and the record fields that say so. Pure.
+
+    Every seat the turn routes to gets the ANSWER (the speaker itself gets
+    its reasoning too, only under ``includeOwnReasoning``); a withheld turn
+    reaches nobody. The endpoint and the voice lint read the answer. Swift
+    twin: ``MultiAgentRunner.turnOutcome``."""
+    label = turn.output_label.strip() or f"turn_{index + 1}"
+    speaker = next((a for a in scenario.agents if a.id == turn.speaker_agent_id),
+                   Agent(id=turn.speaker_agent_id, name=turn.speaker_agent_id))
+    routed = _routed_ids(turn, scenario.agents) if said.passed_on else []
+    entries = [(aid, context_entry(
+        label, turn.title, speaker.name,
+        _routed_text(scenario, said, own=aid == speaker.id),
+        own_authored=aid == speaker.id)) for aid in routed]
+    fields: dict = {"output": said.answer, "outputLabel": label,
+                    "routedAgentIDs": routed}
+    if said.status is not None:
+        fields["reasoningStatus"] = said.status
+        # Absent rather than null when there is none, as Swift writes it.
+        if said.reasoning is not None:
+            fields["reasoning"] = said.reasoning
+    if turn.endpoint is not None:
+        # Parsed from the ANSWER alone: a thinking seat often tries out
+        # "Final answer: ..." while reasoning.
+        fields["endpoint"] = turn_endpoint.stamp(
+            turn.endpoint, said.answer, reasoning=said.reasoning)
+    # Voice lint (spec §5), on every generated turn, of what the seat SAID.
+    fields["voiceLint"] = voice_lint.stamp(
+        said.answer, speaker=speaker.name,
+        others=[a.name for a in scenario.agents if a.id != speaker.id])
+    return TurnOutcome(said=said, label=label, routed=routed, entries=entries,
+                       fields=fields)
+
+
+def play_turn(scenario: Scenario, turn: Turn, index: int, *, text: str,
+              thinking: bool, finish: str | None,
+              opens_in_prompt: bool | None = None) -> TurnOutcome:
+    """One generated turn, from its raw text and its seat's facts, to what it
+    passes on and records. The live path calls this; replay calls
+    ``turn_outcome`` with the recorded text. Swift twin:
+    ``MultiAgentRunner.playTurn``."""
+    return turn_outcome(scenario, turn, index, turn_text(
+        text, thinking=thinking, finish=finish, opens_in_prompt=opens_in_prompt))
 
 
 def _routed_text(scenario: Scenario, said: TurnText, *, own: bool) -> str:
@@ -1037,55 +1282,40 @@ ANSWER_ONLY_RECORD_KEY = "reasoningEffort"
 
 def resume_rule_problem(scenario: Scenario, done: dict[str, dict], *,
                         strip_interventions: bool,
-                        study_effort: str | None):
+                        study_effort: str | None,
+                        study_temperature: float,
+                        root: str | None = None):
     """A refusal when finishing this transcript would mix two routing rules,
     or None.
 
     Before issue #15 a panel passed each turn's WHOLE text on, a thinking
-    seat's reasoning included, and a bare seat never thought. A transcript
-    that an engine from before the change started, and that this engine would
-    play differently, cannot be finished here: its finished turns were routed
-    one way, and the rest would be routed the other. It plays differently
-    when a finished turn's seat thinks now, when a seat declares its own
-    temperature, or when the panel shows seats their own reasoning. A
-    transcript none of that touches plays the same under both rules, and
-    resumes. Pure file reads, so it refuses before any turn is generated.
-    Swift twin: ``MultiAgentRunner.resumeRuleRefusal``.
+    seat's reasoning included; a bare seat never thought; and a seat's own
+    temperature was ignored. A transcript whose finished turns an engine
+    from before the change wrote (no ``reasoningEffort`` key) cannot be
+    finished here when one of those changes touches a seat that already
+    spoke in it. A transcript none of them touches plays the same under both
+    rules, and resumes. Pure file reads. Swift twin:
+    ``MultiAgentRunner.resumeRuleRefusal``; the wording is shared.
     """
     old = [record for record in done.values()
            if ANSWER_ONLY_RECORD_KEY not in record]
     if not old:
         return None
-    seats = {a.id: a for a in scenario.agents}
-    reasons: list[str] = []
-    if scenario.include_own_reasoning:
-        reasons.append("the panel shows each seat its own earlier reasoning")
-    for agent in scenario.agents:
-        if agent.temperature is not None:
-            reasons.append(f"seat '{agent.name}' declares its own temperature")
-    thinking: list[str] = []
-    for record in old:
-        agent = seats.get(record.get("speakerAgentID"))
-        if agent is None or agent.name in thinking:
-            continue
-        try:
-            variant = _runtime_settings(agent, True)[0]
-        except (OSError, KeyError, ValueError, TypeError):
-            continue  # the run itself reports an agent that will not load
-        effort, _ = seat_reasoning(variant, study_effort=study_effort or "",
-                                   study_budget=None)
-        if effort != prompt_render.REASONING_OFF:
-            thinking.append(agent.name)
-    reasons += [f"seat '{name}' thinks" for name in thinking]
-    if not reasons:
+    spoke = {record.get("speakerAgentID") for record in old}
+    try:
+        changes = panel_rule_changes(
+            scenario, study_effort=study_effort,
+            study_temperature=study_temperature, root=root, seats=spoke)
+    except PanelUnreadable:
+        return None  # the run itself reports an agent file it cannot read
+    if not changes:
         return None
     from .resume import ResumeRefusal
     return ResumeRefusal(
-        f"this transcript was started by an earlier engine, which passed each "
-        f"turn's whole text on to the other seats, its reasoning included. "
-        f"This engine passes on only the answer, and here that changes what "
-        f"the seats read ({'; '.join(reasons)}). Finishing the transcript "
-        "would mix the two rules in one transcript, so it was not resumed.",
+        "this transcript was started by an earlier engine, under which "
+        f"{'; '.join(rule_change_clauses(changes, past=True))}. This engine "
+        "runs the panel differently, so finishing the transcript would mix "
+        "two rules in one transcript, and it was not resumed.",
         gate=lifecycle_gates.MANIFEST_EPOCH,
         repair=("Start a new run of the study without resuming, or finish "
                 "this run on the engine release that started it."))
@@ -1102,27 +1332,30 @@ def run_resume_rule_problem(run_directory: str, manifest, root: str | None = Non
     spath = getattr(manifest, "multi_agent_scenario_path", None)
     if not spath or not os.path.isdir(run_directory):
         return None
+    base = paths.project_root() if root is None else root
     if not os.path.isabs(spath):
-        spath = os.path.join(paths.project_root() if root is None else root, spath)
+        spath = os.path.join(base, spath)
     try:
         scenario, _ = load_scenario(spath)
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             ScenarioError):
         return None
     for condition in sorted(os.listdir(run_directory)):
-        base = os.path.join(run_directory, condition)
-        if not os.path.isdir(base):
+        folder = os.path.join(run_directory, condition)
+        if not os.path.isdir(folder):
             continue
-        candidates = [os.path.join(base, "turns.jsonl")] + [
-            os.path.join(base, name, "turns.jsonl")
-            for name in sorted(os.listdir(base)) if name.startswith("replicate-")]
+        candidates = [os.path.join(folder, "turns.jsonl")] + [
+            os.path.join(folder, name, "turns.jsonl")
+            for name in sorted(os.listdir(folder)) if name.startswith("replicate-")]
         for turns_path in candidates:
             done = _completed_turns(turns_path)
             if not done:
                 continue
             problem = resume_rule_problem(
                 scenario, done, strip_interventions=condition == "baseline",
-                study_effort=getattr(manifest, "reasoning_effort", None))
+                study_effort=getattr(manifest, "reasoning_effort", None),
+                study_temperature=float(getattr(manifest, "temperature", 0.0) or 0.0),
+                root=base)
             if problem is not None:
                 return problem
     return None
@@ -1482,35 +1715,23 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     if done:
         problem = resume_rule_problem(
             scenario, done, strip_interventions=strip_interventions,
-            study_effort=reasoning_effort)
+            study_effort=reasoning_effort, study_temperature=effective_temperature)
         if problem is not None:
             raise problem
 
-    def route(index: int, turn: Turn, speaker: Agent, said: TurnText) -> list[str]:
-        """Pass one turn on: its answer to every routed seat (and, for the
-        speaker itself when the panel declares it, with its reasoning), and
-        its answer to templates. A turn whose reasoning never closed passes
-        nothing on. Returns the seats it reached."""
-        label = turn.output_label.strip() or f"turn_{index + 1}"
-        if not said.passed_on:
-            # Nothing to read, rather than a placeholder left verbatim: the
-            # template renders this label as empty, and a contract input of it
-            # renders no block.
-            outputs_by_label[label] = ""
-            reasoning_by_label.pop(label, None)
-            return []
-        outputs_by_label[label] = said.answer
-        if said.reasoning:
-            reasoning_by_label[label] = said.reasoning
+    def apply(outcome: TurnOutcome) -> None:
+        """Pass one turn on, exactly as ``turn_outcome`` decided: its answer
+        under its label (empty for a withheld turn, so a template renders
+        nothing rather than a verbatim placeholder, and a contract input of
+        it renders no block), and each routed seat's context entry."""
+        said = outcome.said
+        outputs_by_label[outcome.label] = said.answer if said.passed_on else ""
+        if said.passed_on and said.reasoning:
+            reasoning_by_label[outcome.label] = said.reasoning
         else:
-            reasoning_by_label.pop(label, None)
-        routed = _routed_ids(turn, scenario.agents)
-        for aid in routed:
-            own = aid == speaker.id
-            context.setdefault(aid, []).append(context_entry(
-                label, turn.title, speaker.name,
-                _routed_text(scenario, said, own=own), own_authored=own))
-        return routed
+            reasoning_by_label.pop(outcome.label, None)
+        for aid, entry in outcome.entries:
+            context.setdefault(aid, []).append(entry)
 
     for index, turn in enumerate(scenario.turns):
         speaker = agents[turn.speaker_agent_id]
@@ -1519,7 +1740,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
         # would have, and generate nothing.
         if turn.id in done:
             replayed = done[turn.id]
-            route(index, turn, speaker, _record_text(replayed))
+            apply(turn_outcome(scenario, turn, index, _record_text(replayed)))
             results.append(replayed)
             continue
         (variant, model_id, prompt_mode, system, _variant_thinking, injections,
@@ -1531,7 +1752,6 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
         effort, reasoning_budget = seat_reasoning(
             variant, study_effort=reasoning_effort,
             study_budget=reasoning_max_tokens)
-        thinking = effort != prompt_render.REASONING_OFF
         turn_temperature, temperature_source = seat_temperature(
             speaker, effective_temperature,
             study_owned=study_owned_temperature)
@@ -1595,6 +1815,13 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             # rather than re-derived downstream from a manifest-level cap that
             # is not what this generation ran under.
             turn_max_tokens = max(1, turn.max_tokens or scenario.max_tokens)
+            # A seat thinks only on a template that can (N3): an agent with
+            # thinking on, cast on a model whose template has no thinking
+            # switch, writes plain text, and is neither split nor budgeted.
+            template_thinks, opens_in_prompt = seat_template(active_model)
+            if not template_thinks:
+                effort, reasoning_budget = prompt_render.REASONING_OFF, None
+            thinking = effort != prompt_render.REASONING_OFF
             # The study's reasoning budget, as an ordinary study's thinking
             # arm gets it: ``maxTokens`` (the turn's) is then the ANSWER's
             # budget and the reasoning block has its own, split at
@@ -1638,20 +1865,18 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             policy_fields['instrumentationRequirements'] = (['policy-v1', 'policy-evidence-v2'] if policy else []) + (['probe-readings-v1'] if measurement else [])
         measurement_fields = ({'probeMeasurements': measurement.result(turn_token_ids)}
             if measurement is not None else {})
-        label = turn.output_label.strip() or f"turn_{index + 1}"
         # What the seat SAID (its answer) and what it thought (its
-        # reasoning), told apart once, here. `output` on the record is the
-        # answer, which is what was routed; the reasoning is kept beside it
-        # and reaches no other seat (issue #15).
-        said = turn_text(output, thinking=thinking, finish=finish)
-        routed = route(index, turn, speaker, said)
-        reasoning_fields = ({"reasoning": said.reasoning,
-                             "reasoningStatus": said.status}
-                            if said.status is not None else {})
+        # reasoning), told apart once, by the one per-turn function the replay
+        # path also uses. `output` on the record is the answer, which is what
+        # was routed; the reasoning is kept beside it and reaches no other
+        # seat (issue #15). The endpoint and the voice lint read the answer.
+        outcome = play_turn(scenario, turn, index, text=output,
+                            thinking=thinking, finish=finish,
+                            opens_in_prompt=opens_in_prompt)
+        apply(outcome)
         result = {**policy_fields, **measurement_fields, "turnID": turn.id, "turnIndex": index + 1, "title": turn.title,
                   "speakerAgentID": speaker.id, "speakerName": speaker.name,
-                  "prompt": prompt, "output": said.answer, "outputLabel": label,
-                  **reasoning_fields,
+                  "prompt": prompt, **outcome.fields,
                   # Which renderer produced `prompt` (spec §3.3). A turn record
                   # is the durable evidence, and the two renderers lay a prompt
                   # out differently enough that reading a completed run without
@@ -1667,7 +1892,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   # written before casting composed simply have no such key,
                   # which is a different claim from "both levels were empty".
                   "systemPromptComposition": system_composition,
-                  "routedAgentIDs": routed, "modelID": active_model.model_id,
+                  "modelID": active_model.model_id,
                   "modelRevision": active_model.revision,
                   "device": str(getattr(active_model, "device", "")),
                   "replicateIndex": replicate_index,
@@ -1693,27 +1918,6 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   # Null for greedy turns: no RNG was consulted, so naming a
                   # seed would imply a stream that was never drawn.
                   "seed": turn_seed if turn_temperature > 0 else None}
-        # Declared endpoint, parsed AT WRITE TIME (Wave-2 contract). Stamped
-        # only when the turn declares one — a turn without a declaration
-        # produces the record it always did, key for key. The full output
-        # stays on the record either way: the stamp indexes the evidence, it
-        # never replaces it, and an unreadable answer is recorded as unparsed
-        # rather than guessed.
-        if turn.endpoint is not None:
-            # Parsed from the ANSWER alone: a thinking seat often tries out
-            # "Final answer: ..." while reasoning, and the first marker in the
-            # whole text would record an answer it considered and rejected.
-            result["endpoint"] = turn_endpoint.stamp(
-                turn.endpoint, said.answer, reasoning=said.reasoning)
-        # Voice lint (spec §5), stamped on EVERY generated turn — no
-        # declaration gates it, because the question "did this seat write as
-        # itself" applies to every turn a panel produces. Non-blocking by
-        # design: a noncompliant turn is recorded and the run completes.
-        # Regenerating it would select on the dependent variable, since the
-        # failure rate is exactly what differs between arms.
-        result["voiceLint"] = voice_lint.stamp(
-            said.answer, speaker=speaker.name,
-            others=[a.name for a in scenario.agents if a.id != speaker.id])
         results.append(result)
         # Append BEFORE the next turn starts: an unflushed transcript is a
         # transcript you replay from turn 1.

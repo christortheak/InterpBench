@@ -694,10 +694,12 @@ def _responses_table(study, run_name, loaded):
                   _key("reasoning"))
         table.add("reasoning_status", "How the engine read a thinking panel seat's "
                   "turn: complete (the reasoning finished and the answer followed "
-                  "it), cutOff (the reasoning was cut off before it finished, so the "
-                  "turn has no answer and nothing from it was passed on), or "
-                  "notFound (the seat wrote no reasoning, so the whole text is its "
-                  "answer). Empty when the seat was not thinking.",
+                  "it); notFound (the seat wrote no reasoning, so the whole text is "
+                  "its answer); or, for a turn with no answer from which nothing "
+                  "was passed on, cutOff (a token limit ended the turn before its "
+                  "reasoning finished), unfinished (the seat stopped before its "
+                  "reasoning finished), or unclear (a reasoning tag appeared where "
+                  "the answer should be). Empty when the seat was not thinking.",
                   _key("reasoningStatus"))
     else:
         table.add("response", "The text the model generated, as recorded.", _key("output"))
@@ -1485,6 +1487,12 @@ def _seed_policy_text(config, snapshot, observed, code=_code):
     stated = config.get("seedPolicy") or snapshot.get("seedPolicy")
     if not recorded:
         return f"seed policy {code(stated)}" if stated else None
+    if set(recorded) == {"greedy", "derivedSHA256"} and stated == "derivedSHA256":
+        # A panel whose seats run at different temperatures (issue #15): its
+        # warm turns derived a seed each, and its greedy turns drew none.
+        return (f"seed policy {code('derivedSHA256')} for the turns generated "
+                "above temperature 0, and no seed for the greedy turns at "
+                "temperature 0")
     if stated == "manifestSeeds" and set(recorded) == {"greedy"}:
         # A Mac panel at temperature 0 stamps its turns "greedy" and its
         # settings manifestSeeds, as the Python engine's run_seed_policy

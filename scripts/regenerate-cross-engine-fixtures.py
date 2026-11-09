@@ -3204,15 +3204,27 @@ REASONING_SPLIT_TEXTS = [
 ]
 
 #: ``(label, text, thinking, finishReason)`` cases for the panel's own reading
-#: of a turn (``multi_agent.turn_text``).
+#: of a turn (``multi_agent.turn_text``), each read under all three values of
+#: the template's ``thinkOpenInPrompt`` (True, False, and None for a record
+#: that has not probed it).
 TURN_TEXT_CASES = [
     ("not-thinking-is-never-split", "<think>a</think>b", False, "stop"),
     ("thinking-closed", "a\n</think>\n\n  b", True, "stop"),
     ("thinking-closed-answer-cut", "a</think>b", True, "length"),
+    ("thinking-leading-block", "<think>a</think>\n\nb", True, "stop"),
     ("thinking-unclosed-tag", "<think>a", True, "stop"),
     ("thinking-no-block-cut-by-budget", "a", True, "lengthInReasoning"),
     ("thinking-no-block-cut-by-limit", "a", True, "length"),
     ("thinking-no-block-finished", "a", True, "stop"),
+    # The three leaks of review round 2.
+    ("stopped-mid-reasoning", "weighing it, Final answer: affirm", True, "stop"),
+    ("open-tag-mentioned-in-reasoning",
+     "Should I write a <think> tag? No.\n</think>\n\nFinal answer: reverse.",
+     True, "stop"),
+    ("tag-after-some-text", "Sure. <think>secret plan</think>Final answer: reverse.",
+     True, "stop"),
+    ("second-close-in-answer", "a</think>b</think>c", True, "stop"),
+    ("open-tag-in-answer", "a</think>b <think>c", True, "stop"),
 ]
 
 
@@ -3227,10 +3239,14 @@ def reasoning_split_fixture() -> None:
                             "answer": found.answer, "state": found.state})
     turn_cases = []
     for label, text, thinking, finish in TURN_TEXT_CASES:
-        said = multi_agent.turn_text(text, thinking=thinking, finish=finish)
-        turn_cases.append({"label": label, "text": text, "thinking": thinking,
-                           "finishReason": finish, "answer": said.answer,
-                           "reasoning": said.reasoning, "status": said.status})
+        for opens in (True, False, None):
+            said = multi_agent.turn_text(text, thinking=thinking, finish=finish,
+                                         opens_in_prompt=opens)
+            turn_cases.append({"label": label, "text": text,
+                               "thinking": thinking, "finishReason": finish,
+                               "opensInPrompt": opens, "answer": said.answer,
+                               "reasoning": said.reasoning,
+                               "status": said.status})
     own = []
     for label, reasoning, answer in [
             ("plain", "weigh it\n", "Final answer: reverse."),
