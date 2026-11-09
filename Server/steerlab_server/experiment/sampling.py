@@ -166,7 +166,7 @@ def submission_needs_greedy_rules(manifest, verb) -> bool:
     catches is a readout-only study, which this release runs and an older
     engine refused.) Swift twin:
     ``SubstrateRouting.greedyRulesSubmissionRefusal``."""
-    if manifest.study_kind == "multiAgent" or not _submission_runs_the_study(
+    if manifest.study_kind == "multiAgent" or not submission_runs_the_study(
             manifest, verb):
         return False
     if manifest.temperature and manifest.temperature > 0:
@@ -343,7 +343,7 @@ def manifest_greedy_seed_list_problem(manifest) -> str | None:
                                     instruments=manifest.outcome_instruments)
 
 
-def _submission_runs_the_study(manifest, verb) -> bool:
+def submission_runs_the_study(manifest, verb) -> bool:
     """Whether a submission of ``verb`` runs the study: ``run``, or a
     ``pipeline`` whose declared stages include it. A pipeline with no block
     (or one that does not resolve) is left to the engine, which refuses the
@@ -370,7 +370,7 @@ def submission_greedy_seed_list_problem(manifest, verb) -> str | None:
     before the rule is never reached. A pipeline with no block (or one that
     does not resolve) is left to the engine, which refuses the block itself.
     Swift twin: ``SubstrateRouting.greedySeedListSubmissionRefusal``."""
-    if not _submission_runs_the_study(manifest, verb):
+    if not submission_runs_the_study(manifest, verb):
         return None
     return manifest_greedy_seed_list_problem(manifest)
 

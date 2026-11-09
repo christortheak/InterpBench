@@ -304,7 +304,7 @@ def require_greedy_seed_list(staged, verb, workspace_root) -> None:
                 name, frozen=manifest.status != "draft"))
     # The agent-arm rules (FR6-B round 2) ride the same evidence rule. Swift
     # twin: InstrumentationSupport.requireGreedySeedList.
-    if sampling._submission_runs_the_study(manifest, verb):
+    if sampling.submission_runs_the_study(manifest, verb):
         from ..experiment import study_admission
         arm_refusal = study_admission.agent_arm_refusal(manifest, workspace_root)
         if arm_refusal is not None:

@@ -422,7 +422,7 @@ def test_local_study_submission_executes(tmp_path, monkeypatch):
     monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
     # Avoid real model work: stub the bundle packaging + the executed command.
     monkeypatch.setattr(submissions.bundles, "package_experiment",
-                        lambda experiment, output_path=None, root=None: {"name": experiment})
+                        lambda experiment, output_path=None, root=None, verb=None: {"name": experiment})
     import sys as _sys
     monkeypatch.setattr(submissions, "_bundle_execute_command",
                         lambda *a, **k: [_sys.executable, "-c", "print('ran')"])
@@ -438,7 +438,7 @@ def test_local_study_dry_run_does_not_execute(tmp_path, monkeypatch):
     from steerlab_server.api import submissions
     monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
     monkeypatch.setattr(submissions.bundles, "package_experiment",
-                        lambda experiment, output_path=None, root=None: {"name": experiment})
+                        lambda experiment, output_path=None, root=None, verb=None: {"name": experiment})
     ran = []
     monkeypatch.setattr(submissions, "_bundle_execute_command",
                         lambda *a, **k: (ran.append(1), ["false"])[1])

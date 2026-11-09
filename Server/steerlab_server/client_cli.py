@@ -4617,7 +4617,7 @@ def _run(invocation: Invocation) -> CLIResult:
             common=common, stage_facts={"status": status})
     # …and so is one whose attached agent arms break a settings-only rule
     # (public issues #16, #17): refused here, before anything is uploaded.
-    if _seed_rule._submission_runs_the_study(manifest, study_verb):
+    if _seed_rule.submission_runs_the_study(manifest, study_verb):
         from .experiment import study_admission as _admission
         arm_refusal = _admission.agent_arm_refusal(manifest, None)
         if arm_refusal is not None:
