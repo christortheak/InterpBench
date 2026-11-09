@@ -29,9 +29,9 @@ answer, so it reads as ``none`` here; a caller that knows the generation was
 thinking and was cut off says so itself (``multi_agent``).
 
 The scan is literal and works on Unicode code points: the tags are matched
-with ASCII case folding only, and "whitespace" is ``str.isspace``. Both
-engines apply the same rule to the same code points, so they cannot disagree
-about where a block ends.
+with ASCII case folding only, and "whitespace" is the Unicode White_Space
+property (:func:`is_space`). Both engines apply the same rule to the same
+code points, so they cannot disagree about where a block ends.
 """
 
 from __future__ import annotations
@@ -61,6 +61,28 @@ class ReasoningSplit:
     state: str
 
 
+#: The four information separators ``str.isspace`` counts as whitespace and
+#: the Unicode White_Space property (Swift's ``isWhitespace``) does not.
+_NOT_WHITE_SPACE = "\x1c\x1d\x1e\x1f"
+
+
+def is_space(ch: str) -> bool:
+    """Whether ``ch`` has the Unicode White_Space property, as Swift's
+    ``Unicode.Scalar.Properties.isWhitespace`` reads it."""
+    return ch.isspace() and ch not in _NOT_WHITE_SPACE
+
+
+def strip_space(text: str) -> str:
+    """``text`` without leading or trailing White_Space. Swift twin:
+    ``ReasoningSplit.trimmingWhitespace``."""
+    start, end = 0, len(text)
+    while start < end and is_space(text[start]):
+        start += 1
+    while end > start and is_space(text[end - 1]):
+        end -= 1
+    return text[start:end]
+
+
 def _ascii_lower(text: str) -> str:
     return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in text)
 
@@ -79,7 +101,7 @@ def _open_tag_end(text: str, index: int) -> int | None:
         return None
     if text[after] == ">":
         return after + 1
-    if not text[after].isspace():
+    if not is_space(text[after]):
         return None  # ``<thinking>`` is not a reasoning tag
     close = text.find(">", after)
     return None if close < 0 else close + 1
@@ -107,7 +129,7 @@ def split(text: str) -> ReasoningSplit:
     """The reasoning block in ``text``, and the answer after it."""
     text = text or ""
     start = 0
-    while start < len(text) and text[start].isspace():
+    while start < len(text) and is_space(text[start]):
         start += 1
     open_end = _open_tag_end(text, start)
     if open_end is not None:
@@ -126,11 +148,11 @@ def split(text: str) -> ReasoningSplit:
 
 
 def leading_whitespace_removed(text: str) -> str:
-    """``text`` without its leading whitespace (``str.isspace``), the form a
+    """``text`` without its leading whitespace (:func:`is_space`), the form a
     panel routes an answer in: the newlines a model writes after
     ``</think>`` are layout, not part of what it said. Swift twin:
     ``ReasoningSplit.leadingWhitespaceRemoved``."""
     index = 0
-    while index < len(text) and text[index].isspace():
+    while index < len(text) and is_space(text[index]):
         index += 1
     return text[index:]

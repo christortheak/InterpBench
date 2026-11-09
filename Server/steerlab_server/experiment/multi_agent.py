@@ -802,7 +802,7 @@ OWN_ANSWER_HEADING = "What you wrote:"
 def own_reasoning_text(reasoning: str, answer: str) -> str:
     """A seat's own earlier turn with the reasoning it wrote, as it reads it
     back when the panel declares ``includeOwnReasoning``."""
-    return (f"{OWN_REASONING_HEADING}\n{reasoning.strip()}\n\n"
+    return (f"{OWN_REASONING_HEADING}\n{reasoning_split.strip_space(reasoning)}\n\n"
             f"{OWN_ANSWER_HEADING}\n{answer}")
 
 
@@ -863,7 +863,8 @@ def _routed_text(scenario: Scenario, said: TurnText, *, own: bool) -> str:
     """The text of one routed entry for its reader: the answer, or — for the
     speaker itself, when the panel declares it — the answer with its
     reasoning."""
-    if own and scenario.include_own_reasoning and (said.reasoning or "").strip():
+    if (own and scenario.include_own_reasoning
+            and reasoning_split.strip_space(said.reasoning or "")):
         return own_reasoning_text(said.reasoning, said.answer)
     return said.answer
 
@@ -1134,7 +1135,8 @@ def _render_contract_prompt(scenario: Scenario, turn: Turn, speaker_context: str
             continue
         if producer.speaker_agent_id == turn.speaker_agent_id:
             reasoning = (reasoning_by_label or {}).get(label)
-            if scenario.include_own_reasoning and (reasoning or "").strip():
+            if (scenario.include_own_reasoning
+                    and reasoning_split.strip_space(reasoning or "")):
                 output = own_reasoning_text(reasoning, output)
             blocks.append(
                 f"{FENCE} YOUR OWN EARLIER OUTPUT — {producer.title} {FENCE}\n"

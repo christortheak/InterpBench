@@ -3197,6 +3197,10 @@ REASONING_SPLIT_TEXTS = [
     ("empty-block", "<think>\n\n</think>\n\nanswer"),
     ("non-ascii", "Überlegung — İ</think>\n\nAntwort: ja"),
     ("close-with-attributes-is-not-a-close", "a</think x>b"),
+    # U+001C is whitespace to Python's str.isspace but not to the Unicode
+    # White_Space property both engines use.
+    ("information-separator-is-not-whitespace", "\x1c<think>a</think>b"),
+    ("no-break-space-is-whitespace", "\u00a0<think>a</think>b"),
 ]
 
 #: ``(label, text, thinking, finishReason)`` cases for the panel's own reading
@@ -3230,7 +3234,8 @@ def reasoning_split_fixture() -> None:
     own = []
     for label, reasoning, answer in [
             ("plain", "weigh it\n", "Final answer: reverse."),
-            ("reasoning-padded", "\n\n  weigh it  \n", "answer")]:
+            ("reasoning-padded", "\n\n  weigh it  \n", "answer"),
+            ("reasoning-padded-unicode-space", "\u2003weigh it\u3000", "answer")]:
         own.append({"label": label, "reasoning": reasoning, "answer": answer,
                     "text": multi_agent.own_reasoning_text(reasoning, answer)})
     _write(os.path.join(FIXTURES, "reasoning-split.json"), {

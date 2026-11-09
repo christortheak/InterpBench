@@ -12,6 +12,12 @@
       "label": "reasoning-padded",
       "reasoning": "\n\n  weigh it  \n",
       "text": "Your reasoning at the time (the other participants did not see it):\nweigh it\n\nWhat you wrote:\nanswer"
+    },
+    {
+      "answer": "answer",
+      "label": "reasoning-padded-unicode-space",
+      "reasoning": "\u2003weigh it\u3000",
+      "text": "Your reasoning at the time (the other participants did not see it):\nweigh it\n\nWhat you wrote:\nanswer"
     }
   ],
   "split": [
@@ -140,6 +146,20 @@
       "reasoning": null,
       "state": "none",
       "text": "a</think x>b"
+    },
+    {
+      "answer": "\u001c<think>a</think>b",
+      "label": "information-separator-is-not-whitespace",
+      "reasoning": null,
+      "state": "none",
+      "text": "\u001c<think>a</think>b"
+    },
+    {
+      "answer": "b",
+      "label": "no-break-space-is-whitespace",
+      "reasoning": "a",
+      "state": "closed",
+      "text": "\u00a0<think>a</think>b"
     }
   ],
   "turnText": [

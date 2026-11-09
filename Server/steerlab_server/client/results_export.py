@@ -572,7 +572,8 @@ def _dynamic_keys(records, field):
 _RESPONSE_FIELDS = (
     "experiment", "condition", "promptID", "promptIndex", "sampleIndex",
     "seed", "replicateIndex", "turnTitle", "speakerAgentID", "speakerName",
-    "prompt", "output", "finishReason", "wordCount", "distinct2",
+    "prompt", "output", "reasoning", "reasoningStatus", "finishReason",
+    "wordCount", "distinct2",
     "parsedChoice", "parsedMonths", "target", "arm", "caseID", "anchorMonths",
     "severity", "factors", "markerDensity", "readerScores", "endpoint",
     "voiceLint", "modelID", "modelRevision",
@@ -679,7 +680,27 @@ def _responses_table(study, run_name, loaded):
                   _key("speakerAgentID"))
         table.add("speaker", "The display name of the speaker.", _key("speakerName"))
     table.add("prompt", "The text the model was given for this response.", _key("prompt"))
-    table.add("response", "The text the model generated, as recorded.", _key("output"))
+    # A thinking panel seat's record keeps its answer in `output` and its
+    # reasoning beside it (issue #15), so the response column says which it
+    # is whenever such a turn is in the table.
+    if any("reasoningStatus" in record for record in records):
+        table.add("response", "The text the model generated, as recorded. For a "
+                  "panel turn whose seat was thinking, it is the answer the seat "
+                  "gave after its reasoning, which is what the other seats read; "
+                  "the reasoning is in the reasoning column.", _key("output"))
+        table.add("reasoning", "The reasoning a thinking panel seat wrote before its "
+                  "answer, as recorded. The other seats did not read it. Empty when "
+                  "the seat was not thinking, or wrote no reasoning.",
+                  _key("reasoning"))
+        table.add("reasoning_status", "How the engine read a thinking panel seat's "
+                  "turn: complete (the reasoning finished and the answer followed "
+                  "it), cutOff (the reasoning was cut off before it finished, so the "
+                  "turn has no answer and nothing from it was passed on), or "
+                  "notFound (the seat wrote no reasoning, so the whole text is its "
+                  "answer). Empty when the seat was not thinking.",
+                  _key("reasoningStatus"))
+    else:
+        table.add("response", "The text the model generated, as recorded.", _key("output"))
     for name, column, meaning in (
             ("finishReason", "finish_reason", "Why generation ended, as the engine "
              "recorded it. A value that names a length or token limit means the "

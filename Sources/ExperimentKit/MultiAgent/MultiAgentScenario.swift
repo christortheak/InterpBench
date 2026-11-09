@@ -15,6 +15,14 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
         /// Absent or blank ⇒ omitted from the opener and from the file, so a
         /// panel authored before contracts re-encodes byte for byte.
         public var role: String?
+        /// The seat's OWN sampling temperature, declared in the panel's design
+        /// (maintainer ruling, 2026-11-08). nil means the study's temperature,
+        /// which every seat without a declaration runs at; each turn record
+        /// says which of the two it ran at (`temperatureSource`). An agent
+        /// file's stored temperature is never read. Omitted when nil, so a
+        /// panel written before the key existed re-encodes byte for byte.
+        /// Server twin: `multi_agent.Agent.temperature`.
+        public var temperature: Double?
 
         public init(
             id: String = UUID().uuidString,
@@ -23,7 +31,8 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
             variantArtifactPath: String? = nil,
             variantArtifactHash: String? = nil,
             systemPrompt: String = "",
-            role: String? = nil
+            role: String? = nil,
+            temperature: Double? = nil
         ) {
             self.id = id
             self.name = name
@@ -32,13 +41,14 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
             self.variantArtifactHash = variantArtifactHash
             self.systemPrompt = systemPrompt
             self.role = Self.normalizedRole(role)
+            self.temperature = temperature
         }
 
         /// Spelled out because this type hand-writes both halves of Codable,
         /// which turns off the synthesis that would otherwise supply it.
         private enum CodingKeys: String, CodingKey {
             case id, name, baseModelID, variantArtifactPath, variantArtifactHash
-            case systemPrompt, role
+            case systemPrompt, role, temperature
         }
 
         /// Blank is the same as absent, normalized once on the way in and once
@@ -65,6 +75,10 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
             self.systemPrompt = try container.decode(String.self, forKey: .systemPrompt)
             self.role = Self.normalizedRole(
                 try container.decodeIfPresent(String.self, forKey: .role))
+            // A number, or absent/null for the study's. Anything else is a
+            // decode failure here and a refusal in the Python twin; a
+            // negative number is a `validate` error on both.
+            self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
         }
 
         /// Hand-written for one reason: `role` must be OMITTED, not written as
@@ -80,6 +94,7 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
             try container.encodeIfPresent(variantArtifactHash, forKey: .variantArtifactHash)
             try container.encode(systemPrompt, forKey: .systemPrompt)
             try container.encodeIfPresent(Self.normalizedRole(role), forKey: .role)
+            try container.encodeIfPresent(temperature, forKey: .temperature)
         }
     }
 
@@ -231,6 +246,22 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
     public var turns: [Turn]
     public var temperature: Double
     public var maxTokens: Int
+    /// Whether a seat's OWN earlier turns come back to it with the reasoning
+    /// it wrote (issue #15). nil and false are the same thing — off, the
+    /// default, matching chat templates that drop earlier turns' reasoning —
+    /// and are normalized to nil so the key is OMITTED: a key that appears
+    /// out of nowhere on a no-op re-save is freeze drift on a pinned panel.
+    /// Colleagues never see a seat's reasoning, whatever this says, and
+    /// templates (`{{outputs.X}}`) always get the answer alone. Server twin:
+    /// `multi_agent.Scenario.include_own_reasoning`.
+    public var includeOwnReasoning: Bool? {
+        didSet { includeOwnReasoning = Self.normalizedFlag(includeOwnReasoning) }
+    }
+
+    /// Whether the panel shows each seat its own earlier reasoning.
+    public var showsOwnReasoning: Bool { includeOwnReasoning == true }
+
+    static func normalizedFlag(_ value: Bool?) -> Bool? { value == true ? true : nil }
 
     public init(
         name: String,
@@ -240,7 +271,8 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
         agents: [Agent] = [],
         turns: [Turn] = [],
         temperature: Double = 0,
-        maxTokens: Int = 2048
+        maxTokens: Int = 2048,
+        includeOwnReasoning: Bool? = nil
     ) {
         self.schemaVersion = Self.schemaVersion(for: turns)
         self.name = name
@@ -251,6 +283,7 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
         self.turns = turns
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.includeOwnReasoning = Self.normalizedFlag(includeOwnReasoning)
     }
 
     /// The highest version this build WRITES. Decoders accept 1 and 2.
@@ -330,6 +363,8 @@ public struct MultiAgentScenario: Codable, Sendable, Equatable {
         self.temperature =
             try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0
         self.maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 2048
+        self.includeOwnReasoning = Self.normalizedFlag(
+            try container.decodeIfPresent(Bool.self, forKey: .includeOwnReasoning))
         // Absent means an engine that did not emit it (the Python dialect once
         // did not), so the version is read off the turn script rather than
         // assumed to be whatever this build happens to write today.

@@ -203,6 +203,17 @@ extension ExperimentTasks {
         /// lint existed. Server twin: the `voiceLint` key
         /// `_panel_records_from` forwards.
         var voiceLint: VoiceLintStamp? = nil
+        /// A panel turn's reasoning and how it was read, the reasoning
+        /// protocol it ran under, and where its temperature came from (issue
+        /// #15), carried verbatim from the turn record. nil means the key is
+        /// omitted: a non-panel record, a turn whose seat did not think (the
+        /// first two), or a turn written before the keys existed. Server
+        /// twin: `panel_workflow.PANEL_TURN_PASSTHROUGH`.
+        var reasoning: String? = nil
+        var reasoningStatus: String? = nil
+        var reasoningEffort: String? = nil
+        var reasoningMaxTokens: Int? = nil
+        var temperatureSource: String? = nil
     }
 
     /// The declared instrument ids that dispatch the answer-token choice

@@ -615,27 +615,20 @@ enum PairedJudgeVerdictParser {
     /// carries no tag at all and is indistinguishable from plain text; it
     /// is returned unchanged.
     /// Server twin: `paired_judge.strip_leading_think_block`.
+    ///
+    /// Where the block ends is decided by the shared splitter
+    /// (`ReasoningSplit.split`), the same rule the panel runner uses to pass
+    /// a seat's answer on without its reasoning. An unclosed leading block is
+    /// the judge's own reading: everything after the opening tag is the
+    /// candidate verdict, which is why the judge does not take the
+    /// splitter's empty answer there.
     static func strippingLeadingThinkBlock(_ text: String) -> String {
-        let leading = text.drop(while: { $0.isWhitespace })
-        guard leading.lowercased().hasPrefix("<think"),
-            let tagEnd = leading.firstIndex(of: ">")
-        else {
-            // No leading opening tag. An orphan closing tag that comes
-            // before any opening tag terminates a prompt-opened block.
-            guard let close = text.range(of: "</think>", options: [.caseInsensitive])
-            else { return text }
-            if let open = text.range(of: "<think", options: [.caseInsensitive]),
-                open.lowerBound < close.lowerBound
-            {
-                return text
-            }
-            return String(text[close.upperBound...])
+        let found = ReasoningSplit.split(text)
+        switch found.state {
+        case .unclosed: return found.reasoning ?? ""
+        case .closed: return found.answer
+        case .none: return text
         }
-        let rest = leading[leading.index(after: tagEnd)...]
-        if let close = rest.range(of: "</think>", options: [.caseInsensitive]) {
-            return String(rest[close.upperBound...])
-        }
-        return String(rest)
     }
 
     /// The first `{…}` with balanced braces — brace-depth scan, ignoring

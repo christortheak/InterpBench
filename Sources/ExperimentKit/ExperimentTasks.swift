@@ -4220,7 +4220,12 @@ public enum ExperimentTasks {
             parsedMonths: nil,
             parsedChoice: nil,
             endpoint: turn.endpoint,
-            voiceLint: turn.voiceLint)
+            voiceLint: turn.voiceLint,
+            reasoning: turn.reasoning,
+            reasoningStatus: turn.reasoningStatus,
+            reasoningEffort: turn.reasoningEffort,
+            reasoningMaxTokens: turn.reasoningMaxTokens,
+            temperatureSource: turn.temperatureSource)
     }
 
     private static func runMultiAgentStudy(
@@ -4304,7 +4309,11 @@ public enum ExperimentTasks {
                 stripInterventions: condition.strip,
                 defaultRevision: manifest.modelRevision,
                 temperature: manifest.temperature,
-                replicateIndex: replicate, experimentHash: experimentHash) { event in
+                replicateIndex: replicate, experimentHash: experimentHash,
+                // The study's reasoning protocol: a bare seat thinks at its
+                // effort, and every thinking seat gets its budget (issue #15).
+                reasoningEffort: manifest.resolvedReasoningEffort,
+                reasoningMaxTokens: manifest.reasoningMaxTokens) { event in
                     switch event {
                     case .turnChunk(_, _, _, let output):
                         await progress?(

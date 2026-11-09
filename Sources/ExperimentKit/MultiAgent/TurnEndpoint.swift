@@ -144,15 +144,22 @@ public struct TurnEndpointStamp: Codable, Sendable, Equatable {
     public let name: String
     public let value: TurnEndpointValue?
     public let unparsed: Bool?
+    /// True when the seat's REASONING also carried the marker (issue #15):
+    /// it tried an answer out while thinking, and `value` is the one it gave
+    /// afterwards. nil otherwise, and then the key is omitted, so a stamp
+    /// from a turn without reasoning is the stamp it always was. Server
+    /// twin: `markerInReasoning` in `turn_endpoint.stamp`.
+    public let markerInReasoning: Bool?
 
-    public init(name: String, value: TurnEndpointValue?) {
+    public init(name: String, value: TurnEndpointValue?, markerInReasoning: Bool = false) {
         self.name = name
         self.value = value
         self.unparsed = value == nil ? true : nil
+        self.markerInReasoning = markerInReasoning ? true : nil
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, value, unparsed
+        case name, value, unparsed, markerInReasoning
     }
 
     public init(from decoder: any Decoder) throws {
@@ -161,6 +168,8 @@ public struct TurnEndpointStamp: Codable, Sendable, Equatable {
         self.value = try container.decodeIfPresent(
             TurnEndpointValue.self, forKey: .value)
         self.unparsed = try container.decodeIfPresent(Bool.self, forKey: .unparsed)
+        self.markerInReasoning = try container.decodeIfPresent(
+            Bool.self, forKey: .markerInReasoning)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -171,6 +180,9 @@ public struct TurnEndpointStamp: Codable, Sendable, Equatable {
         } else {
             try container.encodeNil(forKey: .value)
             try container.encode(true, forKey: .unparsed)
+        }
+        if markerInReasoning == true {
+            try container.encode(true, forKey: .markerInReasoning)
         }
     }
 }
@@ -227,8 +239,19 @@ public enum TurnEndpointParser {
 
     /// The turn-record stamp. The record keeps the full text either way —
     /// this never replaces the evidence, only indexes it.
-    public static func stamp(_ endpoint: TurnEndpoint, in text: String) -> TurnEndpointStamp {
-        TurnEndpointStamp(name: endpoint.name, value: parse(endpoint, in: text))
+    ///
+    /// `text` is what the seat SAID — a thinking seat's answer, never its
+    /// reasoning (issue #15); `reasoning`, when given, is only searched for
+    /// the marker, so the stamp can say the seat tried an answer out first.
+    public static func stamp(
+        _ endpoint: TurnEndpoint, in text: String, reasoning: String? = nil
+    ) -> TurnEndpointStamp {
+        let tried = reasoning.map {
+            markerEnd(Array($0.unicodeScalars), marker: endpoint.marker) != nil
+        } ?? false
+        return TurnEndpointStamp(
+            name: endpoint.name, value: parse(endpoint, in: text),
+            markerInReasoning: tried)
     }
 
     // MARK: literal scanning
