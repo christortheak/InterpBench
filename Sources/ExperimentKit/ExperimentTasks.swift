@@ -3219,6 +3219,7 @@ public enum ExperimentTasks {
         variantArtifactPath: String? = nil,
         variantArtifactHash: String? = nil,
         agentPlaygroundTemperature: Double? = nil,
+        agentReasoningEffort: String? = nil,
         readerScores: [String: Float]? = nil,
         randomVectorAlgorithm: String? = nil,
         numericParser: ParserRegistry.ResolvedNumericParser? = nil,
@@ -3261,6 +3262,7 @@ public enum ExperimentTasks {
             variantArtifactPath: variantArtifactPath,
             variantArtifactHash: variantArtifactHash,
             agentPlaygroundTemperature: agentPlaygroundTemperature,
+            agentReasoningEffort: agentReasoningEffort,
             target: prompt.target,
             anchorMonths: prompt.anchorMonths,
             severity: prompt.severity,
@@ -4899,8 +4901,8 @@ public enum ExperimentTasks {
                                 systemPrompt: systemPrompt,
                                 qwenThinkingEnabled: qwenThinking,
                                 transcript: prompt.transcript,
-                                reasoningEffort: StudySampling.reasoningEffort(pinnedManifest,
-                                    variantThinking: condition.variant == nil ? nil : qwenThinking),
+                                reasoningEffort: StudySampling.reasoningEffort(
+                                    pinnedManifest, variant: condition.variant),
                                 reasoningMaxTokens: pinnedManifest.reasoningMaxTokens
                             ) { output in
                                 await progress?(
@@ -4965,6 +4967,8 @@ public enum ExperimentTasks {
                                 variantArtifactPath: condition.artifactPath,
                                 variantArtifactHash: condition.artifactHash,
                                 agentPlaygroundTemperature: condition.variant?.temperature,
+                                agentReasoningEffort:
+                                    condition.variant?.resolvedReasoningEffort.rawValue,
                                 readerScores: readerScores,
                                 numericParser: numericParser,
                                 finishReason: generation.finishReason)

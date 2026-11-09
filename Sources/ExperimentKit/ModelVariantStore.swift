@@ -437,6 +437,22 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
     public var createdAt: String
     public var promotion: Promotion?
     public var interventionPolicies: [JSONValue]?
+    /// How hard the agent thinks (public issue #16): the study's own
+    /// vocabulary (`ReasoningEffort`), kept on the agent. nil is every agent
+    /// file written before the field existed, and every file whose writer
+    /// had no level to state: `qwenThinkingEnabled` then answers, as it
+    /// always has (true is the template's default effort, false is off).
+    /// Read it through `resolvedReasoningEffort`. Encoded only when present,
+    /// so every existing agent's bytes and hash are unchanged. Server twin:
+    /// `ModelVariant.reasoning_effort`.
+    public var reasoningEffort: String?
+    /// The record of an agent a researcher made by hand with `agent create`
+    /// (public issue #17): the command, its inputs and their hashes, when it
+    /// was made, and the stated reason. Kept beside `promotion`; an agent
+    /// carries at most one of the two. Opaque JSON carried verbatim, like a
+    /// promotion's `qualification`, so either engine's writer can extend it
+    /// without the other learning keys.
+    public var handmade: JSONValue?
 
     public init(
         name: String,
@@ -454,7 +470,9 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         systemPrompt: String,
         createdAt: Date = Date(),
         promotion: Promotion? = nil,
-        interventionPolicies: [JSONValue]? = nil
+        interventionPolicies: [JSONValue]? = nil,
+        reasoningEffort: ReasoningEffort? = nil,
+        handmade: JSONValue? = nil
     ) {
         self.schemaVersion = 1
         self.name = name
@@ -467,7 +485,17 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         self.neutralPCBasisPath = neutralPCBasisPath
         self.neutralPCBasisLabel = neutralPCBasisLabel
         self.promptMode = promptMode
-        self.qwenThinkingEnabled = qwenThinkingEnabled
+        // A stated level decides the boolean, which is written as its shadow
+        // so the two fields agree; `off` is written as the boolean alone,
+        // byte-identical to an agent saved before the level existed.
+        if let reasoningEffort {
+            self.qwenThinkingEnabled = reasoningEffort.isOn
+            self.reasoningEffort = reasoningEffort.isOn ? reasoningEffort.rawValue : nil
+        } else {
+            self.qwenThinkingEnabled = qwenThinkingEnabled
+            self.reasoningEffort = nil
+        }
+        self.handmade = handmade
         self.temperature = temperature
         let trimmedSystem = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         self.systemPrompt = trimmedSystem.isEmpty ? nil : systemPrompt
@@ -489,6 +517,7 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         case bandWidth, alphaInNormUnits, neutralPCBasisPath, neutralPCBasisLabel
         case promptMode, qwenThinkingEnabled, temperature
         case systemPromptHash, systemPrompt, createdAt, promotion, interventionPolicies
+        case reasoningEffort, handmade
     }
 
     /// Tolerant decoding for server payloads: the Python server's
@@ -518,8 +547,13 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
             String.self, forKey: .neutralPCBasisLabel)
         promptMode =
             try container.decodeIfPresent(String.self, forKey: .promptMode) ?? "chatAssistant"
-        qwenThinkingEnabled =
-            try container.decodeIfPresent(Bool.self, forKey: .qwenThinkingEnabled) ?? false
+        let declaredThinking = try container.decodeIfPresent(Bool.self, forKey: .qwenThinkingEnabled)
+        reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+        handmade = try container.decodeIfPresent(JSONValue.self, forKey: .handmade)
+        // The boolean is the effort's shadow: a file that spells only the
+        // effort thinks exactly when the effort is not off.
+        qwenThinkingEnabled = declaredThinking
+            ?? reasoningEffort.map { $0 != ReasoningEffort.off.rawValue } ?? false
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0
         systemPromptHash = try container.decodeIfPresent(String.self, forKey: .systemPromptHash)
         systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
@@ -527,6 +561,179 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         promotion = try container.decodeIfPresent(Promotion.self, forKey: .promotion)
         interventionPolicies = try container.decodeIfPresent([JSONValue].self, forKey: .interventionPolicies)
         try InterventionPolicyLibrary.validateAttachments(interventionPolicies)
+        if let problem = Self.fileProblem(
+            reasoningEffort: reasoningEffort, qwenThinkingEnabled: declaredThinking,
+            hasPromotion: promotion != nil, hasHandmade: handmade?.agentRecordObject != nil)
+        {
+            throw AgentFileProblem(reason: problem)
+        }
+    }
+}
+
+/// An agent file whose fields cannot be read as one agent
+/// (`ModelVariantArtifact.fileProblem`). Thrown from decoding, so every
+/// reader refuses the same file with the same sentence.
+public struct AgentFileProblem: Error, CustomStringConvertible, LocalizedError, Sendable {
+    public let reason: String
+    public var description: String { reason }
+    public var errorDescription: String? { reason }
+}
+
+extension ModelVariantArtifact {
+
+    /// The two ways an agent comes to exist, as every surface names them.
+    /// `swept`: the file carries a `promotion` record, so a sweep selected its
+    /// settings and `experiment promote` minted it. `handmade`: it carries
+    /// none, so a researcher chose its settings — with `agent create`, which
+    /// leaves a `handmade` record, or in the app's agent editor, which leaves
+    /// none. Server twin: `model_variant.AGENT_KIND_SWEPT`/`_HANDMADE`.
+    public enum Kind: String, Codable, Sendable {
+        case swept, handmade
+    }
+
+    public var kind: Kind { promotion != nil ? .swept : .handmade }
+
+    /// Why an agent file cannot be read as one agent, or nil: its
+    /// `reasoningEffort` is in the study's vocabulary and agrees with its
+    /// legacy `qwenThinkingEnabled` when both are spelled; and it carries at
+    /// most one of `promotion` and `handmade`. The sentences are the
+    /// server's (`model_variant.agent_file_problem`), byte for byte.
+    public static func fileProblem(
+        reasoningEffort: String?, qwenThinkingEnabled: Bool?,
+        hasPromotion: Bool, hasHandmade: Bool
+    ) -> String? {
+        if let effort = reasoningEffort {
+            guard let parsed = ReasoningEffort(rawValue: effort) else {
+                return "This agent file's reasoningEffort \"\(effort)\" is not a level "
+                    + "SteerLab knows (off, on, low, medium, high, xhigh). Make the agent "
+                    + "again with agent create --reasoning-effort, or in the app's agent "
+                    + "editor."
+            }
+            if let thinking = qwenThinkingEnabled, thinking != parsed.isOn {
+                return "This agent file says reasoningEffort \"\(effort)\" but "
+                    + "qwenThinkingEnabled \(thinking): one says the agent thinks and the "
+                    + "other says it does not. Make the agent again with agent create "
+                    + "--reasoning-effort, or in the app's agent editor, so both fields "
+                    + "say the same thing."
+            }
+        }
+        if hasPromotion, hasHandmade {
+            return "This agent file carries both a promotion record (a sweep chose its "
+                + "settings) and a handmade record (a researcher chose them). An agent is "
+                + "made one way: make it again with agent create or experiment promote."
+        }
+        return nil
+    }
+
+    /// How hard this agent thinks, wherever it is cast — the ONE reading:
+    /// its declared level, else the legacy boolean's meaning (true: the
+    /// template's default effort, xhigh; false: off). Ordinary studies read
+    /// it through `StudySampling.reasoningEffort(_:variant:)`; a panel seat
+    /// backed by an agent reads it where the panel runtime resolves the
+    /// seat's thinking. Server twin: `model_variant.variant_reasoning_effort`.
+    public var resolvedReasoningEffort: ReasoningEffort {
+        reasoningEffort.flatMap(ReasoningEffort.init(rawValue:))
+            ?? ReasoningEffort.legacy(qwenThinkingEnabled: qwenThinkingEnabled)
+    }
+
+    /// The template rule a study's `set-sampling --reasoning-effort` applies,
+    /// for this agent's DECLARED effort: a non-off effort needs a thinking
+    /// switch, and a level must be one the model's chat template accepts.
+    /// The reasoning budget belongs to the study that casts the agent, so it
+    /// is not checked here; a legacy agent with no declared effort is not
+    /// judged anew. Server twin: `model_variant.variant_effort_violations`.
+    public func effortViolations(capabilities: ModelCapabilities? = nil) -> [String] {
+        guard let declared = reasoningEffort.flatMap(ReasoningEffort.init(rawValue:)),
+            declared.isOn
+        else { return [] }
+        let record = PromptRendering.capabilities(for: baseModelID, explicit: capabilities)
+        guard record.hasThinkingSwitch else {
+            return [ReasoningEffort.effortWithoutThinkingModeReason(declared, modelID: baseModelID)]
+        }
+        guard declared.isLevel else { return [] }
+        return ReasoningEffort.effortLevelViolations(
+            declared, modelID: baseModelID, capabilities: record)
+    }
+
+    /// The levels an agent editor offers for a model: off always; on and the
+    /// levels the model's chat template accepts (or, with no probed record,
+    /// is assumed to accept) when it has a thinking switch; and `current`,
+    /// so a stored level stays visible even where the template would refuse
+    /// it anew. In the vocabulary's fixed order.
+    public static func offeredReasoningEfforts(
+        capabilities: ModelCapabilities, current: ReasoningEffort
+    ) -> [ReasoningEffort] {
+        var offered: Set<ReasoningEffort> = [.off, current]
+        if capabilities.hasThinkingSwitch {
+            offered.insert(.on)
+            for level in ReasoningEffort.levels {
+                switch capabilities.effortVerdict(level.rawValue) {
+                case .accepted?, .assumed?: offered.insert(level)
+                default: break
+                }
+            }
+        }
+        return ReasoningEffort.allCases.filter(offered.contains)
+    }
+
+    /// What every surface says about an agent, from the file alone: how it
+    /// was made and how hard it thinks. Same keys and sentences as the
+    /// server's `model_variant.agent_origin`.
+    public struct Origin: Codable, Sendable, Equatable {
+        public var kind: Kind
+        public var summary: String
+        public var reasoningEffort: String
+        /// `agent` when the file declares its level; `thinkingSwitch` when the
+        /// level is read from the legacy `qwenThinkingEnabled`.
+        public var reasoningEffortSource: String
+    }
+
+    public var origin: Origin {
+        let declared = reasoningEffort.flatMap(ReasoningEffort.init(rawValue:)) != nil
+        return Origin(
+            kind: kind, summary: originSummary,
+            reasoningEffort: resolvedReasoningEffort.rawValue,
+            reasoningEffortSource: declared ? "agent" : "thinkingSwitch")
+    }
+
+    private var originSummary: String {
+        if let promotion {
+            let from = promotion.experiment.isEmpty ? "" : " from study \(promotion.experiment)"
+            let how: String
+            switch promotion.promotedBy {
+            case "manualOverride": how = ", using a cell the researcher picked within the sweep."
+            case "criterion": how = ", using the cell the study's declared rule selected."
+            default: how = "."
+            }
+            return "A sweep chose this agent's settings: experiment promote made it" + from + how
+        }
+        guard let record = handmade?.agentRecordObject else {
+            return "This agent carries no promotion record, so nothing records that a sweep "
+                + "selected its settings, and no record of how it was made (the app's agent "
+                + "editor and new agent versions leave none)."
+        }
+        let steered = !injections.isEmpty || !(interventionPolicies ?? []).isEmpty
+        let chose = steered
+            ? "The researcher chose its steering settings; no sweep selected them."
+            : "The researcher chose its settings."
+        let madeWith = record["madeWith"]?.agentRecordString.flatMap { $0.isEmpty ? nil : $0 }
+        let reason = record["reason"]?.agentRecordString.flatMap { $0.isEmpty ? nil : $0 }
+        return (madeWith.map { "Made by hand with \($0). " } ?? "Made by hand. ") + chose
+            + (reason.map { " Stated reason: \($0)" } ?? " No reason was stated.")
+    }
+}
+
+extension JSONValue {
+    /// The members of an object value, or nil for any other value.
+    var agentRecordObject: [String: JSONValue]? {
+        if case .object(let members) = self { return members }
+        return nil
+    }
+
+    /// The text of a string value, or nil for any other value.
+    var agentRecordString: String? {
+        if case .string(let text) = self { return text }
+        return nil
     }
 }
 
@@ -715,10 +922,21 @@ public enum ModelVariantStore {
 
     @discardableResult
     public static func save(_ artifact: ModelVariantArtifact) throws -> ModelVariantRecord {
-        let artifact = workspaceRelativeNormalized(artifact)
+        try save(workspaceRelativeNormalized(artifact), library: self.directory)
+    }
+
+    /// Writes `artifact` as a new agent in the library folder `library`
+    /// (`<workspace>/runs/model-variants`), exactly as `save` does: a fresh
+    /// folder, its run stamp, and the same encoding. For a caller that holds
+    /// an explicit workspace and already wrote its references relative to it
+    /// (`agent create`).
+    @discardableResult
+    public static func save(
+        _ artifact: ModelVariantArtifact, library: URL
+    ) throws -> ModelVariantRecord {
         let directory = try VectorCatalog.makeUniqueRunDirectory(
             slug: "model-variant-\(FineTuneStore.slugify(artifact.name))",
-            under: self.directory)
+            under: library)
         try RunMetadata.write(
             runType: "variant-save", to: directory,
             modelID: artifact.baseModelID, revision: artifact.baseRevision)
@@ -814,6 +1032,7 @@ public enum ModelVariantStore {
         var copy = edited
         copy.name = AgentEditProvenance.copyName(edited.name, taken: takenNames)
         copy.promotion = nil
+        copy.handmade = nil
         return try save(copy)
     }
 

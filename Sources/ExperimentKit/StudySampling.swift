@@ -15,6 +15,17 @@ public enum StudySampling {
         return manifest.resolvedReasoningEffort
     }
 
+    /// The effort an arm generates at: an agent arm at the agent's own level
+    /// (`ModelVariantArtifact.resolvedReasoningEffort` — its declared level,
+    /// else its thinking switch's meaning, public issue #16), the baseline at
+    /// the study's. Python twin: `effective_variant_condition`'s
+    /// `model_variant.variant_reasoning_effort`.
+    public static func reasoningEffort(
+        _ manifest: ExperimentManifest, variant: ModelVariantArtifact?
+    ) -> ReasoningEffort {
+        variant?.resolvedReasoningEffort ?? manifest.resolvedReasoningEffort
+    }
+
     public static func deriveSeed(
         experimentHash: String, condition: String, promptID: String, sampleIndex: Int
     ) -> UInt64 {

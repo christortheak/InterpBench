@@ -147,6 +147,11 @@ extension ExperimentTasks {
         /// generation. Stamped on variant-condition records; nil ⇒ key
         /// omitted (ordinary conditions).
         var agentPlaygroundTemperature: Double? = nil
+        /// The reasoning effort the agent of a variant condition ran at
+        /// (cross-engine key, 2026-11-08, public issue #16): its declared
+        /// level, else its thinking switch's meaning. nil ⇒ key omitted, so
+        /// every non-agent record's bytes are unchanged.
+        var agentReasoningEffort: String? = nil
         // Science-layer prompt metadata, carried verbatim from the task item
         // (server `_PROMPT_META_KEYS`); nil ⇒ key omitted, matching the
         // server, which only stamps keys present on the item.

@@ -27,7 +27,12 @@ public struct AgentArtifactSnapshot: Sendable {
         let snapshot = try ManifestFileTransaction.snapshot(at: url)
         let artifact: ModelVariantArtifact
         do { artifact = try JSONDecoder().decode(ModelVariantArtifact.self, from: snapshot.data) }
-        catch {
+        catch let problem as AgentFileProblem {
+            // A file whose fields contradict each other says which ones.
+            throw ExperimentError.refusing(.artifactPin, problem.reason,
+                repair: "Make the agent again with agent create or in the app's agent editor, "
+                    + "then attach the new one.")
+        } catch {
             throw ExperimentError.refusing(.artifactPin, "The selected file is not a readable agent artifact.",
                 repair: "Inspect the named file and restore its verified source before attaching it.")
         }
@@ -58,12 +63,17 @@ public struct AgentArtifactDocument: Encodable, Sendable {
     public let artifactFileSHA256: String
     public let artifact: ModelVariantArtifact
     public let document: JSONValue
+    /// How the agent was made (`kind` swept or handmade, and the sentence a
+    /// reader is shown) and how hard it thinks. Same keys as the Python
+    /// client's `study_agents.described`.
+    public let agent: ModelVariantArtifact.Origin
 
     public init(_ snapshot: AgentArtifactSnapshot) throws {
         path = snapshot.path
         artifactFileSHA256 = snapshot.file.sha256
         artifact = snapshot.record.artifact
         document = try JSONDecoder().decode(JSONValue.self, from: snapshot.file.data)
+        agent = snapshot.record.artifact.origin
     }
 }
 

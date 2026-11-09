@@ -419,12 +419,26 @@ public enum AgentPromotion {
             // nor `systemPromptHash` (ModelVariantArtifact's initializer).
             // Server twin: `promote.py`'s `system_prompt=None`.
             systemPrompt: "",
-            promotion: promotion)
+            promotion: promotion,
+            // The level the sweep's cells ran at travels with the agent
+            // (public issue #16). Server twin: `promote.promoted_reasoning_effort`.
+            reasoningEffort: Self.promotedReasoningEffort(manifest))
         let record = try ModelVariantStore.save(variant)
         log(
             "promoted '\(concept)' → agent '\(variant.name)' "
                 + "(L\(layer), α\(alpha), \(promotedBy)) → \(record.url.path)")
         return record
+    }
+
+    /// The `reasoningEffort` a promoted agent carries: the study's declared
+    /// effort when the study declares one and it is not off; otherwise nil,
+    /// and the agent's thinking switch says what it always said, so a study
+    /// that does not think promotes exactly the bytes it always did. Server
+    /// twin: `promote.promoted_reasoning_effort`.
+    static func promotedReasoningEffort(_ manifest: ExperimentManifest) -> ReasoningEffort? {
+        guard manifest.reasoningEffort != nil else { return nil }
+        let effort = manifest.resolvedReasoningEffort
+        return effort.isOn ? effort : nil
     }
 
     /// Deterministic identity of a promotion REQUEST — the idempotency key.

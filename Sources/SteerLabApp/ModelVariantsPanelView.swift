@@ -96,7 +96,12 @@ struct ModelVariantsPanelView: View {
     @State private var alphaInNormUnits = true
     @State private var neutralPCBasisID: String?
     @State private var promptMode: ExperimentManifest.PromptMode = .chatAssistant
-    @State private var qwenThinkingEnabled = false
+    /// How hard the agent thinks (public issue #16), and whether that level
+    /// was stated (picked here, or declared by the loaded file). An agent
+    /// whose file spells only the older thinking switch loads undeclared, so
+    /// saving it unedited writes the switch back and its bytes stay the same.
+    @State private var reasoningEffort: ReasoningEffort = .off
+    @State private var reasoningEffortDeclared = false
     @State private var temperature = 0.0
     @State private var systemPrompt = ""
     /// Set when Save Changes would remove the selected library agent's
@@ -987,18 +992,19 @@ struct ModelVariantsPanelView: View {
                     + "template, or as raw completion text. It changes the "
                     + "tokens the model actually sees, so a study must not "
                     + "mix modes across its arms")
-            Toggle("Qwen thinking mode", isOn: $qwenThinkingEnabled)
-                .disabled(!isQwenBaseModel)
-                .help(
-                    isQwenBaseModel
-                        ? "asks Qwen for its <think> block before the answer "
-                            + "— longer generations, and the thinking text is "
-                            + "stripped from the recorded response"
-                        : qwenThinkingDisabledHelp)
-            if !isQwenBaseModel {
-                Text(
-                    "thinking mode is a Qwen chat-template feature; this base "
-                        + "model does not offer it")
+            Picker("Thinking", selection: reasoningEffortSelection) {
+                ForEach(offeredReasoningEfforts, id: \.self) { effort in
+                    Text(Self.reasoningEffortLabel(effort)).tag(effort)
+                }
+            }
+            .disabled(offeredReasoningEfforts.count < 2)
+            .help(
+                "how hard the agent thinks before it answers, wherever a study "
+                    + "casts it; the levels offered are the ones this model's "
+                    + "chat template accepts. The study sets how many tokens "
+                    + "the thinking may use")
+            if offeredReasoningEfforts.count < 2 {
+                Text(thinkingUnavailableCaption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1022,17 +1028,38 @@ struct ModelVariantsPanelView: View {
         }
     }
 
-    /// Thinking mode is a Qwen chat-template feature; every other base model
-    /// gets the toggle disabled, and now says why.
-    private var isQwenBaseModel: Bool {
-        baseModelID.lowercased().contains("qwen")
+    /// The levels this base model's chat template accepts, from its
+    /// capability record (the id heuristic when none is probed), plus the
+    /// level the agent already has.
+    private var offeredReasoningEfforts: [ReasoningEffort] {
+        let record = ModelCapabilitiesStore.resolve(
+            modelID: baseModelID, revision: nilIfEmpty(baseRevision),
+            root: ExperimentStore.workspaceRoot)
+        return ModelVariantArtifact.offeredReasoningEfforts(
+            capabilities: record, current: reasoningEffort)
+    }
+
+    /// Picking a level states it, so the saved file declares it.
+    private var reasoningEffortSelection: Binding<ReasoningEffort> {
+        Binding(
+            get: { reasoningEffort },
+            set: { reasoningEffort = $0; reasoningEffortDeclared = true })
+    }
+
+    private static func reasoningEffortLabel(_ effort: ReasoningEffort) -> String {
+        switch effort {
+        case .off: "Off"
+        case .on: "On (the template's default)"
+        default: effort.rawValue
+        }
     }
 
     /// Built outside the view builder (the `ExperimentsPanelView` rule:
     /// string arithmetic in a body tips the type-checker over).
-    private var qwenThinkingDisabledHelp: String {
+    private var thinkingUnavailableCaption: String {
         let model = baseModelID.isEmpty ? "no base model is selected" : "'\(baseModelID)'"
-        return "only Qwen base models expose a thinking mode — \(model) does not"
+        return "\(model): this model's chat template has no thinking switch, so the "
+            + "agent does not think"
     }
 
     private var layerBandCaption: String {
@@ -1516,7 +1543,8 @@ struct ModelVariantsPanelView: View {
         alphaInNormUnits = artifact.alphaInNormUnits
         neutralPCBasisID = neutralBasisID(for: artifact)
         promptMode = ExperimentManifest.PromptMode(rawValue: artifact.promptMode) ?? .chatAssistant
-        qwenThinkingEnabled = artifact.qwenThinkingEnabled
+        reasoningEffort = artifact.resolvedReasoningEffort
+        reasoningEffortDeclared = artifact.reasoningEffort != nil
         temperature = artifact.temperature
         systemPrompt = artifact.systemPrompt ?? ""
     }
@@ -1672,9 +1700,12 @@ struct ModelVariantsPanelView: View {
                 case .updated(let updated, let dropped):
                     record = updated
                     droppedPromotion = dropped
-                    summary = dropped
+                    summary = (dropped
                         ? AgentEditProvenance.afterSaveNote(agent: updated.artifact.name)
-                        : "Updated agent '\(updated.artifact.name)'."
+                        : "Updated agent '\(updated.artifact.name)'.")
+                        + (selected.artifact.handmade != nil && updated.artifact.handmade == nil
+                            ? " Its agent create record no longer describes it, so it was removed."
+                            : "")
                 case .savedAsNewAgent(let copy):
                     record = copy
                     savedACopy = true
@@ -1747,10 +1778,11 @@ struct ModelVariantsPanelView: View {
             neutralPCBasisPath: basis.map(NeutralPCStore.relativePath),
             neutralPCBasisLabel: basis?.label,
             promptMode: promptMode.rawValue,
-            qwenThinkingEnabled: qwenThinkingEnabled,
+            qwenThinkingEnabled: reasoningEffort.isOn,
             temperature: temperature,
             systemPrompt: systemPrompt,
-            interventionPolicies: interventionPolicies)
+            interventionPolicies: interventionPolicies,
+            reasoningEffort: reasoningEffortDeclared ? reasoningEffort : nil)
     }
 
     private func currentSteeringArtifact(name: String) -> ModelVariantArtifact {

@@ -300,7 +300,8 @@ enum ExperimentRootOverrideLock {
             row: row,
             variantArtifactPath: variant ? "runs/model-variants/a/variant.json" : nil,
             variantArtifactHash: variant ? "deadbeef" : nil,
-            agentPlaygroundTemperature: variant ? 0.9 : nil)
+            agentPlaygroundTemperature: variant ? 0.9 : nil,
+            agentReasoningEffort: variant ? "medium" : nil)
     }
 
     private func jsonKeys(_ record: ExperimentTasks.GenerationRecord) throws -> Set<String> {
@@ -319,7 +320,7 @@ enum ExperimentRootOverrideLock {
         let variant = try jsonKeys(record(variant: true))
         #expect(variant.subtracting(ordinary)
             == ["variantArtifactPath", "variantArtifactHash",
-                "agentPlaygroundTemperature"])
+                "agentPlaygroundTemperature", "agentReasoningEffort"])
         #expect(ordinary.subtracting(variant).isEmpty)
         // The science-layer metadata is populated, not nil-stamped.
         #expect(ordinary.isSuperset(of: [
