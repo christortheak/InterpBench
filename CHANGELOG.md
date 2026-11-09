@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.23] — 2026-11-09
+
 - **Panels pass on what a seat says, not what it thinks** (public issue #15).
   - **Answers, not reasoning.** A thinking seat's turn is split into its
     reasoning and its answer. Other seats, `{{outputs.<label>}}`, and
