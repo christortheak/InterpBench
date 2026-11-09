@@ -252,16 +252,26 @@ def parse(endpoint: TurnEndpoint, text: str) -> str | float | None:
     return _parse_number(endpoint, text, start)
 
 
-def stamp(endpoint: TurnEndpoint, text: str) -> dict:
+def stamp(endpoint: TurnEndpoint, text: str, *,
+          reasoning: str | None = None) -> dict:
     """The turn-record stamp: a value, or an explicit unparsed marker.
+
+    ``text`` is what the seat SAID — a thinking seat's answer, never its
+    reasoning (issue #15). When the seat's ``reasoning`` also carries the
+    marker, the stamp says so (``markerInReasoning: true``): the seat tried an
+    answer out while reasoning, and the recorded value is the one it gave
+    afterwards. The key is absent otherwise, so a stamp from a turn without
+    reasoning is the stamp it always was.
 
     Swift twin: ``TurnEndpointParser.stamp``. The record keeps the full text
     either way — this never replaces the evidence, only indexes it.
     """
     value = parse(endpoint, text)
-    if value is None:
-        return {"name": endpoint.name, "value": None, "unparsed": True}
-    return {"name": endpoint.name, "value": value}
+    out = ({"name": endpoint.name, "value": None, "unparsed": True}
+           if value is None else {"name": endpoint.name, "value": value})
+    if reasoning and _marker_end(reasoning, endpoint.marker) is not None:
+        out["markerInReasoning"] = True
+    return out
 
 
 # --- analyze aggregation ----------------------------------------------------

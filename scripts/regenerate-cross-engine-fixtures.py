@@ -3175,8 +3175,80 @@ def baseline_only_study() -> None:
     })
 
 
+#: Texts the reasoning splitter has to tell apart (issue #15). Each is
+#: ``(label, text)``; the expectations are whatever the Python splitter makes
+#: of them, and the Swift twin must make the same.
+REASONING_SPLIT_TEXTS = [
+    ("leading-block", "<think>weigh it</think>\n\nThe answer."),
+    ("leading-block-whitespace-first", " \n\t<think>weigh it</think>The answer."),
+    ("leading-block-with-attributes", '<THINK id="1">weigh it</ThInK>answer'),
+    ("prompt-opened-block", "weigh it\nFinal answer: affirm?\n</think>\n\nFinal answer: reverse."),
+    ("prompt-opened-uppercase-close", "weigh it</THINK>answer"),
+    ("unclosed-leading-block", "<think>still weighing Final answer: affirm"),
+    ("no-tags", "Final answer: reverse."),
+    ("empty", ""),
+    ("aside-after-answer", "answer <think>aside</think> more"),
+    ("leading-block-then-aside", "<think>a</think>answer <think>aside</think>"),
+    ("close-after-a-later-open", "x <think>y</think> z"),
+    ("thinking-is-not-a-tag", "<thinking>x</think>y"),
+    ("open-tag-without-a-close-bracket", "<think never closes"),
+    ("bare-open-name-at-end", "answer <think"),
+    ("two-closes", "a</think>b</think>c"),
+    ("empty-block", "<think>\n\n</think>\n\nanswer"),
+    ("non-ascii", "Überlegung — İ</think>\n\nAntwort: ja"),
+    ("close-with-attributes-is-not-a-close", "a</think x>b"),
+]
+
+#: ``(label, text, thinking, finishReason)`` cases for the panel's own reading
+#: of a turn (``multi_agent.turn_text``).
+TURN_TEXT_CASES = [
+    ("not-thinking-is-never-split", "<think>a</think>b", False, "stop"),
+    ("thinking-closed", "a\n</think>\n\n  b", True, "stop"),
+    ("thinking-closed-answer-cut", "a</think>b", True, "length"),
+    ("thinking-unclosed-tag", "<think>a", True, "stop"),
+    ("thinking-no-block-cut-by-budget", "a", True, "lengthInReasoning"),
+    ("thinking-no-block-cut-by-limit", "a", True, "length"),
+    ("thinking-no-block-finished", "a", True, "stop"),
+]
+
+
+def reasoning_split_fixture() -> None:
+    from steerlab_server.experiment import multi_agent, reasoning_split
+
+    split_cases = []
+    for label, text in REASONING_SPLIT_TEXTS:
+        found = reasoning_split.split(text)
+        split_cases.append({"label": label, "text": text,
+                            "reasoning": found.reasoning,
+                            "answer": found.answer, "state": found.state})
+    turn_cases = []
+    for label, text, thinking, finish in TURN_TEXT_CASES:
+        said = multi_agent.turn_text(text, thinking=thinking, finish=finish)
+        turn_cases.append({"label": label, "text": text, "thinking": thinking,
+                           "finishReason": finish, "answer": said.answer,
+                           "reasoning": said.reasoning, "status": said.status})
+    own = []
+    for label, reasoning, answer in [
+            ("plain", "weigh it\n", "Final answer: reverse."),
+            ("reasoning-padded", "\n\n  weigh it  \n", "answer")]:
+        own.append({"label": label, "reasoning": reasoning, "answer": answer,
+                    "text": multi_agent.own_reasoning_text(reasoning, answer)})
+    _write(os.path.join(FIXTURES, "reasoning-split.json"), {
+        "about": ("The reasoning splitter both engines share (issue #15): "
+                  "split is reasoning_split.split (Swift ReasoningSplit.split), "
+                  "turnText is multi_agent.turn_text (Swift "
+                  "MultiAgentRunner.turnText), and ownReasoning is "
+                  "multi_agent.own_reasoning_text (Swift "
+                  "MultiAgentRunner.ownReasoningText). Produced by the Python "
+                  "engine (scripts/regenerate-cross-engine-fixtures.py, "
+                  "reasoning_split_fixture) and read by the Swift suite."),
+        "split": split_cases, "turnText": turn_cases, "ownReasoning": own,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
+    reasoning_split_fixture()
     effect_units()
     marker_scoring()
     panel_transcript_analysis_fixture()

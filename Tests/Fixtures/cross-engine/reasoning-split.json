@@ -1,0 +1,210 @@
+{
+  "about": "The reasoning splitter both engines share (issue #15): split is reasoning_split.split (Swift ReasoningSplit.split), turnText is multi_agent.turn_text (Swift MultiAgentRunner.turnText), and ownReasoning is multi_agent.own_reasoning_text (Swift MultiAgentRunner.ownReasoningText). Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, reasoning_split_fixture) and read by the Swift suite.",
+  "ownReasoning": [
+    {
+      "answer": "Final answer: reverse.",
+      "label": "plain",
+      "reasoning": "weigh it\n",
+      "text": "Your reasoning at the time (the other participants did not see it):\nweigh it\n\nWhat you wrote:\nFinal answer: reverse."
+    },
+    {
+      "answer": "answer",
+      "label": "reasoning-padded",
+      "reasoning": "\n\n  weigh it  \n",
+      "text": "Your reasoning at the time (the other participants did not see it):\nweigh it\n\nWhat you wrote:\nanswer"
+    }
+  ],
+  "split": [
+    {
+      "answer": "\n\nThe answer.",
+      "label": "leading-block",
+      "reasoning": "weigh it",
+      "state": "closed",
+      "text": "<think>weigh it</think>\n\nThe answer."
+    },
+    {
+      "answer": "The answer.",
+      "label": "leading-block-whitespace-first",
+      "reasoning": "weigh it",
+      "state": "closed",
+      "text": " \n\t<think>weigh it</think>The answer."
+    },
+    {
+      "answer": "answer",
+      "label": "leading-block-with-attributes",
+      "reasoning": "weigh it",
+      "state": "closed",
+      "text": "<THINK id=\"1\">weigh it</ThInK>answer"
+    },
+    {
+      "answer": "\n\nFinal answer: reverse.",
+      "label": "prompt-opened-block",
+      "reasoning": "weigh it\nFinal answer: affirm?\n",
+      "state": "closed",
+      "text": "weigh it\nFinal answer: affirm?\n</think>\n\nFinal answer: reverse."
+    },
+    {
+      "answer": "answer",
+      "label": "prompt-opened-uppercase-close",
+      "reasoning": "weigh it",
+      "state": "closed",
+      "text": "weigh it</THINK>answer"
+    },
+    {
+      "answer": "",
+      "label": "unclosed-leading-block",
+      "reasoning": "still weighing Final answer: affirm",
+      "state": "unclosed",
+      "text": "<think>still weighing Final answer: affirm"
+    },
+    {
+      "answer": "Final answer: reverse.",
+      "label": "no-tags",
+      "reasoning": null,
+      "state": "none",
+      "text": "Final answer: reverse."
+    },
+    {
+      "answer": "",
+      "label": "empty",
+      "reasoning": null,
+      "state": "none",
+      "text": ""
+    },
+    {
+      "answer": "answer <think>aside</think> more",
+      "label": "aside-after-answer",
+      "reasoning": null,
+      "state": "none",
+      "text": "answer <think>aside</think> more"
+    },
+    {
+      "answer": "answer <think>aside</think>",
+      "label": "leading-block-then-aside",
+      "reasoning": "a",
+      "state": "closed",
+      "text": "<think>a</think>answer <think>aside</think>"
+    },
+    {
+      "answer": "x <think>y</think> z",
+      "label": "close-after-a-later-open",
+      "reasoning": null,
+      "state": "none",
+      "text": "x <think>y</think> z"
+    },
+    {
+      "answer": "y",
+      "label": "thinking-is-not-a-tag",
+      "reasoning": "<thinking>x",
+      "state": "closed",
+      "text": "<thinking>x</think>y"
+    },
+    {
+      "answer": "<think never closes",
+      "label": "open-tag-without-a-close-bracket",
+      "reasoning": null,
+      "state": "none",
+      "text": "<think never closes"
+    },
+    {
+      "answer": "answer <think",
+      "label": "bare-open-name-at-end",
+      "reasoning": null,
+      "state": "none",
+      "text": "answer <think"
+    },
+    {
+      "answer": "b</think>c",
+      "label": "two-closes",
+      "reasoning": "a",
+      "state": "closed",
+      "text": "a</think>b</think>c"
+    },
+    {
+      "answer": "\n\nanswer",
+      "label": "empty-block",
+      "reasoning": "\n\n",
+      "state": "closed",
+      "text": "<think>\n\n</think>\n\nanswer"
+    },
+    {
+      "answer": "\n\nAntwort: ja",
+      "label": "non-ascii",
+      "reasoning": "\u00dcberlegung \u2014 \u0130",
+      "state": "closed",
+      "text": "\u00dcberlegung \u2014 \u0130</think>\n\nAntwort: ja"
+    },
+    {
+      "answer": "a</think x>b",
+      "label": "close-with-attributes-is-not-a-close",
+      "reasoning": null,
+      "state": "none",
+      "text": "a</think x>b"
+    }
+  ],
+  "turnText": [
+    {
+      "answer": "<think>a</think>b",
+      "finishReason": "stop",
+      "label": "not-thinking-is-never-split",
+      "reasoning": null,
+      "status": null,
+      "text": "<think>a</think>b",
+      "thinking": false
+    },
+    {
+      "answer": "b",
+      "finishReason": "stop",
+      "label": "thinking-closed",
+      "reasoning": "a\n",
+      "status": "complete",
+      "text": "a\n</think>\n\n  b",
+      "thinking": true
+    },
+    {
+      "answer": "b",
+      "finishReason": "length",
+      "label": "thinking-closed-answer-cut",
+      "reasoning": "a",
+      "status": "complete",
+      "text": "a</think>b",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "stop",
+      "label": "thinking-unclosed-tag",
+      "reasoning": "a",
+      "status": "cutOff",
+      "text": "<think>a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "lengthInReasoning",
+      "label": "thinking-no-block-cut-by-budget",
+      "reasoning": "a",
+      "status": "cutOff",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "",
+      "finishReason": "length",
+      "label": "thinking-no-block-cut-by-limit",
+      "reasoning": "a",
+      "status": "cutOff",
+      "text": "a",
+      "thinking": true
+    },
+    {
+      "answer": "a",
+      "finishReason": "stop",
+      "label": "thinking-no-block-finished",
+      "reasoning": null,
+      "status": "notFound",
+      "text": "a",
+      "thinking": true
+    }
+  ]
+}

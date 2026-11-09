@@ -375,6 +375,10 @@ def test_every_committed_fixture_has_a_staleness_test():
         "choice-margins.json", "server-evidence-bundle.json",
         # Checked inline in test_system_prompt_composition.py.
         "system-prompt-composition.json",
+        # Checked inline in test_panel_reasoning.py (every text re-split,
+        # every turn re-read, every own-reasoning entry re-rendered) and read
+        # by ReasoningSplitTests.swift.
+        "reasoning-split.json",
         # Checked inline in test_ablation_layer_subsets.py (each declared
         # list re-run through the agent cell builder) and read by
         # AblationLayerSubsetTests.swift.

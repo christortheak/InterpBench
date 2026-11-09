@@ -115,6 +115,14 @@ def _advise_panel_transcripts(run_directory: str, problems: list[str],
         pass
 
 
+#: Turn-record keys a flattened panel record carries verbatim when the turn
+#: has them (issue #15): the reasoning a thinking seat wrote and how it was
+#: told from the answer, the reasoning protocol the turn ran under, and where
+#: its temperature came from. Each is absent on turns written before it.
+PANEL_TURN_PASSTHROUGH = ("reasoning", "reasoningStatus", "reasoningEffort",
+                          "reasoningMaxTokens", "temperatureSource")
+
+
 def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                         replicate: int) -> list[dict]:
     """Flatten one transcript's turns.jsonl into study generation records.
@@ -181,6 +189,11 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                 "sampleIndex": replicate,
                 "temperature": turn.get("temperature", manifest.temperature),
                 "prompt": turn.get("prompt", ""), "output": output,
+                # What the seat thought, beside what it said (issue #15), and
+                # the protocol and temperature source the turn ran under —
+                # carried verbatim, and absent on turns written before them.
+                **{key: turn[key] for key in PANEL_TURN_PASSTHROUGH
+                   if key in turn},
                 **({"speakerAgentID": speaker_id}
                    if isinstance(speaker_id, str) else {}),
                 "speakerName": turn.get("speakerName"),
@@ -423,6 +436,10 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
                     model_provider=model_provider,
                     default_revision=manifest.model_revision,
                     temperature=manifest.temperature,
+                    # The study's reasoning protocol: a bare seat thinks at its
+                    # effort, and every thinking seat gets its budget.
+                    reasoning_effort=manifest.reasoning_effort,
+                    reasoning_max_tokens=manifest.reasoning_max_tokens,
                     replicate_index=replicate,
                     experiment_hash=manifest.content_hash(),
                     checkpoint=checkpoint,

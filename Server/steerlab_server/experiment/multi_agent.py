@@ -34,8 +34,8 @@ from dataclasses import dataclass, field
 
 import re
 
-from . import (lifecycle_gates, model_variant, paths, truncation_gate,
-               turn_endpoint, voice_lint)
+from . import (lifecycle_gates, model_variant, paths, prompt_render,
+               reasoning_split, truncation_gate, turn_endpoint, voice_lint)
 from . import system_prompt as system_prompt_mod
 from .turn_endpoint import EndpointError, TurnEndpoint
 
@@ -106,6 +106,13 @@ class Agent:
     #: Appeals"), no trailing period. Read only by the contract renderer's
     #: identity opener; empty means the opener names the agent alone.
     role: str = ""
+    #: The seat's OWN sampling temperature, declared in the panel's design
+    #: (maintainer ruling, 2026-11-08). The study owns temperature for every
+    #: seat that declares none; a seat that declares one runs at it, and each
+    #: turn record says which of the two it ran at (``temperatureSource``).
+    #: An agent file's stored temperature is never read here. None means "the
+    #: study's", and is what every panel written before the key existed says.
+    temperature: float | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +214,12 @@ class Scenario:
     turns: list[Turn] = field(default_factory=list)
     temperature: float = 0.0
     max_tokens: int = 512
+    #: Whether a seat's OWN earlier turns come back to it with the reasoning
+    #: it wrote (issue #15). Off by default, matching chat templates that drop
+    #: earlier turns' reasoning in a multi-turn conversation. Colleagues never
+    #: see a seat's reasoning, whatever this says; templates
+    #: (``{{outputs.X}}``) always get the answer alone.
+    include_own_reasoning: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "Scenario":
@@ -221,14 +234,48 @@ class Scenario:
             schema_version=int(d.get("schemaVersion", 1)),
             description=d.get("description", ""), shared_materials=d.get("sharedMaterials", ""),
             temperature=float(d.get("temperature", 0.0)), max_tokens=int(d.get("maxTokens", 512)),
+            include_own_reasoning=_include_own_reasoning_from(d),
             agents=[Agent(id=a["id"], name=a.get("name", a["id"]),
                           base_model_id=a.get("baseModelID", ""),
                           system_prompt=a.get("systemPrompt", ""),
                           variant_artifact_path=a.get("variantArtifactPath"),
                           variant_artifact_hash=a.get("variantArtifactHash"),
-                          role=str(a.get("role") or ""))
+                          role=str(a.get("role") or ""),
+                          temperature=_seat_temperature_from(a))
                     for a in d.get("agents", [])],
             turns=[_turn_from_dict(t) for t in d.get("turns", [])])
+
+
+def _seat_temperature_from(a: dict) -> float | None:
+    """A seat's declared temperature, or None when it declares none.
+
+    Absent or null is "the study's". A value that is not a number is not a
+    half-written declaration, it is a file that does not mean what it says,
+    so it refuses here: Swift's ``decodeIfPresent(Double.self)`` refuses the
+    same shapes, and coercing ``"0.7"`` would let one file run on one engine
+    and refuse on the other. A negative number is a ``validate`` error.
+    """
+    value = a.get("temperature")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ScenarioError(
+            f"seat '{a.get('name', a.get('id', ''))}': temperature must be a "
+            "number, or left out to use the study's temperature")
+    return float(value)
+
+
+def _include_own_reasoning_from(d: dict) -> bool:
+    """``includeOwnReasoning``: absent or null is off; anything but a boolean
+    refuses, as Swift's ``decodeIfPresent(Bool.self)`` does."""
+    value = d.get("includeOwnReasoning")
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ScenarioError(
+            "includeOwnReasoning must be true or false (or left out, which "
+            "means false)")
+    return value
 
 
 def _turn_from_dict(t: dict) -> Turn:
@@ -442,6 +489,10 @@ def validate(scenario: Scenario) -> None:
     for agent in scenario.agents:
         if not agent.base_model_id.strip():
             raise ScenarioError(f"agent '{agent.name}' needs a base model")
+    for agent in scenario.agents:
+        problem = seat_temperature_problem(agent)
+        if problem is not None:
+            raise ScenarioError(problem)
     ids = {a.id for a in scenario.agents}
     # Labels produced by turns BEFORE the one being checked. Contract inputs
     # are structured data, not free text, so a forward or unknown reference is
@@ -466,6 +517,44 @@ def validate(scenario: Scenario) -> None:
                 TurnEndpoint.from_dict(t.endpoint.to_dict(), turn=t.title)
             except EndpointError as error:
                 raise ScenarioError(str(error)) from error
+
+
+def seat_temperature_problem(agent: Agent) -> str | None:
+    """Why a seat's declared temperature cannot run, or None.
+
+    Checked by ``validate`` (so by ``panel check``, casting, and run start)
+    and never on decode, like the other value rules. Swift twin:
+    ``MultiAgentRunner.seatTemperatureProblem``; the wording is shared.
+    """
+    value = agent.temperature
+    if value is None:
+        return None
+    if value != value or value in (float("inf"), float("-inf")) or value < 0:
+        return (f"seat '{agent.name}' declares temperature {value:g}; a "
+                "seat's temperature must be 0 or more (0 is greedy), or left "
+                "out to use the study's temperature")
+    return None
+
+
+def seat_temperature_advisories(scenario: Scenario,
+                                study_temperature: float) -> list[str]:
+    """Seats whose declared temperature equals the study's, in seat order.
+
+    Such a declaration does nothing: the seat would run at that temperature
+    anyway. Not a refusal (the panel runs exactly as declared), but worth
+    saying, because a reader of the design takes a per-seat temperature as a
+    deliberate difference between seats. Said by ``experiment verify`` for a
+    panel study. Swift twin: ``MultiAgentRunner.seatTemperatureAdvisories``.
+    """
+    out: list[str] = []
+    for agent in scenario.agents:
+        if agent.temperature is not None and agent.temperature == study_temperature:
+            out.append(
+                f"seat '{agent.name}' declares temperature "
+                f"{agent.temperature:g}, which is the study's temperature, so "
+                "the declaration changes nothing. Remove it from the panel, "
+                "or give the seat the different temperature you meant.")
+    return out
 
 
 def _forbidden_contract_placeholder(text: str) -> str | None:
@@ -700,6 +789,198 @@ def context_entry(label: str, title: str, speaker_name: str, output: str, *,
     return f"{header}\n{output}"
 
 
+#: Framing of a seat's OWN earlier turn when the panel shows it its reasoning
+#: (``includeOwnReasoning``). Plain labels rather than ``<think>`` tags: the
+#: entry is user-turn text, and a reasoning tag inside it would read to the
+#: chat template as markup. Swift twin: ``MultiAgentRunner.ownReasoningText``,
+#: pinned by ``reasoning-split.json``.
+OWN_REASONING_HEADING = ("Your reasoning at the time (the other participants "
+                         "did not see it):")
+OWN_ANSWER_HEADING = "What you wrote:"
+
+
+def own_reasoning_text(reasoning: str, answer: str) -> str:
+    """A seat's own earlier turn with the reasoning it wrote, as it reads it
+    back when the panel declares ``includeOwnReasoning``."""
+    return (f"{OWN_REASONING_HEADING}\n{reasoning.strip()}\n\n"
+            f"{OWN_ANSWER_HEADING}\n{answer}")
+
+
+#: ``reasoningStatus`` on a thinking turn's record. ``complete``: the
+#: reasoning block closed and what followed it is the answer. ``cutOff``: the
+#: reasoning never closed (it hit its budget, or the turn's token limit), so
+#: there is no answer and NOTHING was passed on. ``notFound``: the seat was
+#: thinking but its text carried no reasoning block, so the whole text is the
+#: answer. A turn whose seat was not thinking has no such key.
+REASONING_COMPLETE = "complete"
+REASONING_CUT_OFF = "cutOff"
+REASONING_NOT_FOUND = "notFound"
+
+
+@dataclass(frozen=True)
+class TurnText:
+    """What one turn said: the answer other seats may read, the reasoning
+    they may not, and (for a thinking turn) how the two were told apart."""
+
+    answer: str
+    reasoning: str | None = None
+    status: str | None = None
+
+    @property
+    def passed_on(self) -> bool:
+        """False when nothing from this turn may reach any seat."""
+        return self.status != REASONING_CUT_OFF
+
+
+def turn_text(output: str, *, thinking: bool, finish: str | None) -> TurnText:
+    """Split one turn's generated text into answer and reasoning (issue #15).
+
+    A seat that was not thinking said exactly what it generated: nothing is
+    split, so a panel without a thinking seat routes the bytes it always did.
+    A thinking seat's text goes through the shared splitter
+    (``reasoning_split``). A block that never closed — an opening tag with no
+    closing tag, or text with no closing tag that the token limit cut off
+    (``finish`` is a cut-off reason) — is reasoning with no answer, and none
+    of it is passed on: partial reasoning is not something the seat said.
+    Swift twin: ``MultiAgentRunner.turnText``.
+    """
+    if not thinking:
+        return TurnText(answer=output)
+    found = reasoning_split.split(output)
+    if found.state == reasoning_split.CLOSED:
+        return TurnText(
+            answer=reasoning_split.leading_whitespace_removed(found.answer),
+            reasoning=found.reasoning, status=REASONING_COMPLETE)
+    if found.state == reasoning_split.UNCLOSED:
+        return TurnText(answer="", reasoning=found.reasoning,
+                        status=REASONING_CUT_OFF)
+    if finish in truncation_gate.CUT_OFF_REASONS:
+        return TurnText(answer="", reasoning=output, status=REASONING_CUT_OFF)
+    return TurnText(answer=output, status=REASONING_NOT_FOUND)
+
+
+def _routed_text(scenario: Scenario, said: TurnText, *, own: bool) -> str:
+    """The text of one routed entry for its reader: the answer, or — for the
+    speaker itself, when the panel declares it — the answer with its
+    reasoning."""
+    if own and scenario.include_own_reasoning and (said.reasoning or "").strip():
+        return own_reasoning_text(said.reasoning, said.answer)
+    return said.answer
+
+
+def _record_text(record: dict) -> TurnText:
+    """A recorded turn's ``TurnText``, for replay on resume. A record from
+    before the split carries neither key, and replays as the whole output."""
+    status = record.get("reasoningStatus")
+    reasoning = record.get("reasoning")
+    return TurnText(answer=record.get("output", ""),
+                    reasoning=reasoning if isinstance(reasoning, str) else None,
+                    status=status if isinstance(status, str) else None)
+
+
+def seat_reasoning(variant, *, study_effort: str,
+                   study_budget: int | None) -> tuple[str, int | None]:
+    """``(effort, reasoning budget)`` one seat's turns generate under.
+
+    Whether, and how hard, a seat thinks belongs to whoever sits in it: an
+    agent's own setting, or — for a bare seat — the study's
+    ``reasoningEffort``, as an ordinary study's baseline follows it (issue
+    #15; before, a bare seat never thought). The budget is a resource limit
+    and belongs to the study: its ``reasoningMaxTokens``, applied only when
+    the seat actually thinks. Swift twin: ``MultiAgentRunner.seatReasoning``.
+    """
+    if variant is not None:
+        # STREAM B CALL SITE (FR6, issue #16): replace this expression with
+        # `model_variant.variant_reasoning_effort(variant)` once the agent
+        # file carries its own effort level. Until then an agent's effort is
+        # its boolean's meaning (off, or the template's default), exactly as
+        # `condition_execution.effective_variant_condition` reads it.
+        effort = prompt_render.resolve_reasoning_effort(
+            None, variant.qwen_thinking_enabled)
+    else:
+        effort = study_effort or prompt_render.REASONING_OFF
+    if effort == prompt_render.REASONING_OFF:
+        return effort, None
+    return effort, study_budget
+
+
+def seat_temperature(agent: Agent, study_temperature: float, *,
+                     study_owned: bool) -> tuple[float, str]:
+    """``(temperature, source)`` one seat's turns generate at.
+
+    ``source`` is ``panelSeat`` for a seat that declares its own temperature
+    in the panel's design, else ``study`` when a study runs the panel and
+    ``panel`` when the panel runs on its own (its file's temperature). The
+    agent file's temperature is never read. Swift twin:
+    ``MultiAgentRunner.seatTemperature``.
+    """
+    if agent.temperature is not None:
+        return float(agent.temperature), "panelSeat"
+    return study_temperature, ("study" if study_owned else "panel")
+
+
+#: The key every turn record written under the answer-only rule carries, and
+#: no record from before it does. Its absence is how a resume recognises a
+#: transcript an older engine started.
+ANSWER_ONLY_RECORD_KEY = "reasoningEffort"
+
+
+def resume_rule_problem(scenario: Scenario, done: dict[str, dict], *,
+                        strip_interventions: bool,
+                        study_effort: str | None):
+    """A refusal when finishing this transcript would mix two routing rules,
+    or None.
+
+    Before issue #15 a panel passed each turn's WHOLE text on, a thinking
+    seat's reasoning included, and a bare seat never thought. A transcript
+    that an engine from before the change started, and that this engine would
+    play differently, cannot be finished here: its finished turns were routed
+    one way, and the rest would be routed the other. It plays differently
+    when a finished turn's seat thinks now, when a seat declares its own
+    temperature, or when the panel shows seats their own reasoning. A
+    transcript none of that touches plays the same under both rules, and
+    resumes. Pure file reads, so it refuses before any turn is generated.
+    Swift twin: ``MultiAgentRunner.resumeRuleRefusal``.
+    """
+    old = [record for record in done.values()
+           if ANSWER_ONLY_RECORD_KEY not in record]
+    if not old:
+        return None
+    seats = {a.id: a for a in scenario.agents}
+    reasons: list[str] = []
+    if scenario.include_own_reasoning:
+        reasons.append("the panel shows each seat its own earlier reasoning")
+    for agent in scenario.agents:
+        if agent.temperature is not None:
+            reasons.append(f"seat '{agent.name}' declares its own temperature")
+    thinking: list[str] = []
+    for record in old:
+        agent = seats.get(record.get("speakerAgentID"))
+        if agent is None or agent.name in thinking:
+            continue
+        try:
+            variant = _runtime_settings(agent, True)[0]
+        except (OSError, KeyError, ValueError, TypeError):
+            continue  # the run itself reports an agent that will not load
+        effort, _ = seat_reasoning(variant, study_effort=study_effort or "",
+                                   study_budget=None)
+        if effort != prompt_render.REASONING_OFF:
+            thinking.append(agent.name)
+    reasons += [f"seat '{name}' thinks" for name in thinking]
+    if not reasons:
+        return None
+    from .resume import ResumeRefusal
+    return ResumeRefusal(
+        f"this transcript was started by an earlier engine, which passed each "
+        f"turn's whole text on to the other seats, its reasoning included. "
+        f"This engine passes on only the answer, and here that changes what "
+        f"the seats read ({'; '.join(reasons)}). Finishing the transcript "
+        "would mix the two rules in one transcript, so it was not resumed.",
+        gate=lifecycle_gates.MANIFEST_EPOCH,
+        repair=("Start a new run of the study without resuming, or finish "
+                "this run on the engine release that started it."))
+
+
 def _agent_name(scenario: Scenario, agent_id: str) -> str:
     for agent in scenario.agents:
         if agent.id == agent_id:
@@ -746,11 +1027,18 @@ def _substitute_contract_text(text: str, scenario: Scenario, turn: Turn,
 
 
 def _render_prompt(scenario: Scenario, turn: Turn, speaker_context: str,
-                   speaker_name: str, outputs_by_label: dict[str, str]) -> str:
-    """The turn's prompt. One renderer per turn, chosen by ``turn.contract``."""
+                   speaker_name: str, outputs_by_label: dict[str, str],
+                   reasoning_by_label: dict[str, str] | None = None) -> str:
+    """The turn's prompt. One renderer per turn, chosen by ``turn.contract``.
+
+    ``outputs_by_label`` holds each earlier turn's ANSWER, never its
+    reasoning (issue #15). ``reasoning_by_label`` is read only by a contract
+    turn's own-authored inputs, and only when the panel declares
+    ``includeOwnReasoning``; templates never see it."""
     if turn.contract is not None:
         return _render_contract_prompt(scenario, turn, speaker_context,
-                                       speaker_name, outputs_by_label)
+                                       speaker_name, outputs_by_label,
+                                       reasoning_by_label or {})
     return _render_template_prompt(scenario, turn, speaker_context,
                                    speaker_name, outputs_by_label)
 
@@ -790,7 +1078,8 @@ def _render_template_prompt(scenario: Scenario, turn: Turn, speaker_context: str
 
 def _render_contract_prompt(scenario: Scenario, turn: Turn, speaker_context: str,
                             speaker_name: str,
-                            outputs_by_label: dict[str, str]) -> str:
+                            outputs_by_label: dict[str, str],
+                            reasoning_by_label: dict[str, str] | None = None) -> str:
     """The canonical sandwich (spec §2), byte for byte.
 
     Eight blocks in a fixed order, joined by exactly one blank line, no
@@ -844,6 +1133,9 @@ def _render_contract_prompt(scenario: Scenario, turn: Turn, speaker_context: str
         if producer is None or not output:
             continue
         if producer.speaker_agent_id == turn.speaker_agent_id:
+            reasoning = (reasoning_by_label or {}).get(label)
+            if scenario.include_own_reasoning and (reasoning or "").strip():
+                output = own_reasoning_text(reasoning, output)
             blocks.append(
                 f"{FENCE} YOUR OWN EARLIER OUTPUT — {producer.title} {FENCE}\n"
                 f"{output}\n{FENCE} END OF YOUR OWN EARLIER OUTPUT {FENCE}")
@@ -966,7 +1258,9 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                  model_provider=None, default_revision: str | None = None,
                  temperature: float | None = None, replicate_index: int = 0,
                  experiment_hash: str = "", checkpoint=None,
-                 artifact_problems: list | None = None, probe_measurements=None, probe_root=None) -> str:
+                 artifact_problems: list | None = None, probe_measurements=None, probe_root=None,
+                 reasoning_effort: str | None = None,
+                 reasoning_max_tokens: int | None = None) -> str:
     """Play the scenario on the loaded ``model``; write artifacts to ``run_dir``.
 
     ``temperature`` overrides the scenario's own value — a STUDY manifest owns
@@ -974,6 +1268,12 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     ad-hoc/authoring convenience (same rule the variant path applies to a saved
     agent's stored temperature). ``replicate_index`` distinguishes independent
     play-throughs of the same scenario under one condition.
+
+    ``reasoning_effort`` / ``reasoning_max_tokens`` are the STUDY's reasoning
+    protocol (``reasoningEffort`` / ``reasoningMaxTokens``): a bare seat
+    thinks at the study's effort, and every seat that thinks gets the study's
+    reasoning budget (``seat_reasoning``). Both default to off, which is what
+    an ad-hoc panel run has.
 
     ``artifact_problems``, when given, collects the SUMMARY-artifact write
     failures of this transcript (``report.json``, ``transcript.md``) instead
@@ -1019,29 +1319,73 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     agents = {a.id: a for a in scenario.agents}
     context: dict[str, list[str]] = {a.id: [] for a in scenario.agents}
     outputs_by_label: dict[str, str] = {}
+    reasoning_by_label: dict[str, str] = {}
     results: list[dict] = []
     warnings: list[dict] = []
     seen_warnings: set = set()
+    # Who owns the temperature a seat without its own runs at: the study,
+    # when one runs this panel, else the panel file (an ad-hoc run).
+    study_owned_temperature = temperature is not None
+    # A transcript an older engine started passed every turn's whole text on,
+    # reasoning included. Finishing it under the answer-only rule would mix
+    # two routing rules in one transcript, so it refuses here, before any
+    # turn is generated.
+    if done:
+        problem = resume_rule_problem(
+            scenario, done, strip_interventions=strip_interventions,
+            study_effort=reasoning_effort)
+        if problem is not None:
+            raise problem
+
+    def route(index: int, turn: Turn, speaker: Agent, said: TurnText) -> list[str]:
+        """Pass one turn on: its answer to every routed seat (and, for the
+        speaker itself when the panel declares it, with its reasoning), and
+        its answer to templates. A turn whose reasoning never closed passes
+        nothing on. Returns the seats it reached."""
+        label = turn.output_label.strip() or f"turn_{index + 1}"
+        if not said.passed_on:
+            # Nothing to read, rather than a placeholder left verbatim: the
+            # template renders this label as empty, and a contract input of it
+            # renders no block.
+            outputs_by_label[label] = ""
+            reasoning_by_label.pop(label, None)
+            return []
+        outputs_by_label[label] = said.answer
+        if said.reasoning:
+            reasoning_by_label[label] = said.reasoning
+        else:
+            reasoning_by_label.pop(label, None)
+        routed = _routed_ids(turn, scenario.agents)
+        for aid in routed:
+            own = aid == speaker.id
+            context.setdefault(aid, []).append(context_entry(
+                label, turn.title, speaker.name,
+                _routed_text(scenario, said, own=own), own_authored=own))
+        return routed
 
     for index, turn in enumerate(scenario.turns):
         speaker = agents[turn.speaker_agent_id]
-        # Already done on a previous attempt: replay its recorded output into
+        # Already done on a previous attempt: replay its recorded answer into
         # the context/label state so downstream turns see exactly what they
         # would have, and generate nothing.
         if turn.id in done:
             replayed = done[turn.id]
-            output = replayed.get("output", "")
-            label = turn.output_label.strip() or f"turn_{index + 1}"
-            outputs_by_label[label] = output
-            for aid in _routed_ids(turn, scenario.agents):
-                context.setdefault(aid, []).append(context_entry(
-                    label, turn.title, speaker.name, output,
-                    own_authored=aid == speaker.id))
+            route(index, turn, speaker, _record_text(replayed))
             results.append(replayed)
             continue
-        (variant, model_id, prompt_mode, system, qwen_thinking, injections,
+        (variant, model_id, prompt_mode, system, _variant_thinking, injections,
          turn_warnings, system_composition) = \
             _runtime_settings(speaker, strip_interventions)
+        # Whether and how hard this seat thinks is its occupant's; the budget
+        # is the study's (``seat_reasoning``). Its temperature is the study's
+        # unless the panel's design declares one for the seat.
+        effort, reasoning_budget = seat_reasoning(
+            variant, study_effort=reasoning_effort,
+            study_budget=reasoning_max_tokens)
+        thinking = effort != prompt_render.REASONING_OFF
+        turn_temperature, temperature_source = seat_temperature(
+            speaker, effective_temperature,
+            study_owned=study_owned_temperature)
         for w in turn_warnings:
             key = w["agentName"] + "|" + (w.get("variantArtifactPath") or "")
             if key not in seen_warnings:
@@ -1058,7 +1402,8 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                 f"'{model.model_id}' — load that model, or make all agents use the loaded one")
 
         prompt = _render_prompt(scenario, turn, "\n\n".join(context[speaker.id]),
-                                speaker.name, outputs_by_label)
+                                speaker.name, outputs_by_label,
+                                reasoning_by_label)
         # Revision pinning: a variant pins its own base revision; bare agents
         # inherit the study's pinned revision instead of loading unpinned.
         revision = (variant.base_revision if variant else None) or default_revision
@@ -1101,6 +1446,18 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             # rather than re-derived downstream from a manifest-level cap that
             # is not what this generation ran under.
             turn_max_tokens = max(1, turn.max_tokens or scenario.max_tokens)
+            # The study's reasoning budget, as an ordinary study's thinking
+            # arm gets it: ``maxTokens`` (the turn's) is then the ANSWER's
+            # budget and the reasoning block has its own, split at
+            # ``</think>``. Passed only when the seat thinks under a declared
+            # budget, so every other turn's generate() call is the call it
+            # always was.
+            reasoning_kwargs = ({"reasoning_effort": effort,
+                                 "reasoning_max_tokens": reasoning_budget}
+                                if reasoning_budget else {})
+            think_close_id = (truncation_gate.think_close_token_id(
+                getattr(active_model, "tokenizer", None))
+                if reasoning_budget else None)
             turn_token_ids: list = []
             measurement = probe_observation.create(measurement_config, measurement_probes,
                 condition=condition_name, agent=speaker.id, rendering=prompt_mode, run_directory=run_dir,
@@ -1110,18 +1467,22 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                 run_directory=run_dir, context={'condition': condition_name, 'agent': speaker.id, 'turnID': turn.id, 'replicateIndex': replicate_index, 'seed': str(turn_seed), 'experimentHash': experiment_hash})
             if policy is not None: observation_kwargs.setdefault('observers', []).append(policy)
             try:
-                with _seeded_generation(effective_temperature, turn_seed):
+                with _seeded_generation(turn_temperature, turn_seed):
                     output = generate(active_model, prompt, model_id=active_model.model_id,
                                       max_tokens=turn_max_tokens,
-                                      temperature=effective_temperature,
+                                      temperature=turn_temperature,
                                       injections=injections, prompt_mode=prompt_mode,
-                                      system_prompt=system, qwen_thinking_enabled=qwen_thinking,
-                                      token_ids_out=turn_token_ids, **observation_kwargs)
+                                      system_prompt=system, qwen_thinking_enabled=thinking,
+                                      token_ids_out=turn_token_ids, **observation_kwargs,
+                                      **reasoning_kwargs)
             finally:
                 model_variant.remove_adapter(active_model, adapter)
             finish = truncation_gate.finish_reason(
                 turn_token_ids, max_tokens=turn_max_tokens,
-                stop_ids=truncation_gate.stop_token_ids(active_model))
+                stop_ids=truncation_gate.stop_token_ids(active_model),
+                reasoning_max_tokens=(reasoning_budget
+                                      if think_close_id is not None else None),
+                think_close_id=think_close_id)
 
         policy_fields = {'interventionDecisions': policy.result(turn_token_ids)} if policy is not None else {}
         if policy is not None or measurement is not None:
@@ -1129,15 +1490,19 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
         measurement_fields = ({'probeMeasurements': measurement.result(turn_token_ids)}
             if measurement is not None else {})
         label = turn.output_label.strip() or f"turn_{index + 1}"
-        outputs_by_label[label] = output
-        routed = _routed_ids(turn, scenario.agents)
-        for aid in routed:
-            context.setdefault(aid, []).append(context_entry(
-                label, turn.title, speaker.name, output,
-                own_authored=aid == speaker.id))
+        # What the seat SAID (its answer) and what it thought (its
+        # reasoning), told apart once, here. `output` on the record is the
+        # answer, which is what was routed; the reasoning is kept beside it
+        # and reaches no other seat (issue #15).
+        said = turn_text(output, thinking=thinking, finish=finish)
+        routed = route(index, turn, speaker, said)
+        reasoning_fields = ({"reasoning": said.reasoning,
+                             "reasoningStatus": said.status}
+                            if said.status is not None else {})
         result = {**policy_fields, **measurement_fields, "turnID": turn.id, "turnIndex": index + 1, "title": turn.title,
                   "speakerAgentID": speaker.id, "speakerName": speaker.name,
-                  "prompt": prompt, "output": output, "outputLabel": label,
+                  "prompt": prompt, "output": said.answer, "outputLabel": label,
+                  **reasoning_fields,
                   # Which renderer produced `prompt` (spec §3.3). A turn record
                   # is the durable evidence, and the two renderers lay a prompt
                   # out differently enough that reading a completed run without
@@ -1165,10 +1530,20 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   # existed simply lack it, which is a different claim from
                   # "this turn finished".
                   truncation_gate.RECORD_KEY: finish,
-                  "temperature": effective_temperature,
+                  "temperature": turn_temperature,
+                  # Where that temperature came from: the study, the panel's
+                  # own declaration for this seat, or (an ad-hoc run) the
+                  # panel file. Never the agent file.
+                  "temperatureSource": temperature_source,
+                  # The reasoning protocol this turn ran under: its seat's
+                  # effort, and the study's reasoning budget when it thought
+                  # under one (null otherwise, including every turn whose
+                  # seat did not think).
+                  "reasoningEffort": effort,
+                  "reasoningMaxTokens": reasoning_budget,
                   # Null for greedy turns: no RNG was consulted, so naming a
                   # seed would imply a stream that was never drawn.
-                  "seed": turn_seed if effective_temperature > 0 else None}
+                  "seed": turn_seed if turn_temperature > 0 else None}
         # Declared endpoint, parsed AT WRITE TIME (Wave-2 contract). Stamped
         # only when the turn declares one — a turn without a declaration
         # produces the record it always did, key for key. The full output
@@ -1176,7 +1551,11 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
         # never replaces it, and an unreadable answer is recorded as unparsed
         # rather than guessed.
         if turn.endpoint is not None:
-            result["endpoint"] = turn_endpoint.stamp(turn.endpoint, output)
+            # Parsed from the ANSWER alone: a thinking seat often tries out
+            # "Final answer: ..." while reasoning, and the first marker in the
+            # whole text would record an answer it considered and rejected.
+            result["endpoint"] = turn_endpoint.stamp(
+                turn.endpoint, said.answer, reasoning=said.reasoning)
         # Voice lint (spec §5), stamped on EVERY generated turn — no
         # declaration gates it, because the question "did this seat write as
         # itself" applies to every turn a panel produces. Non-blocking by
@@ -1184,7 +1563,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
         # Regenerating it would select on the dependent variable, since the
         # failure rate is exactly what differs between arms.
         result["voiceLint"] = voice_lint.stamp(
-            output, speaker=speaker.name,
+            said.answer, speaker=speaker.name,
             others=[a.name for a in scenario.agents if a.id != speaker.id])
         results.append(result)
         # Append BEFORE the next turn starts: an unflushed transcript is a
@@ -1218,7 +1597,11 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
               "baseModelID": scenario.base_model_id, "turnCount": len(results),
               "temperature": effective_temperature,
               "replicateIndex": replicate_index,
-              "seedPolicy": "derivedSHA256" if effective_temperature > 0 else "greedy",
+              # Derived over the turns' OWN temperatures: a panel whose study
+              # is greedy can still seed a seat that declares a temperature.
+              "seedPolicy": ("derivedSHA256"
+                             if any((r.get("temperature") or 0) > 0 for r in results)
+                             or effective_temperature > 0 else "greedy"),
               "warnings": warnings}
     # The SUMMARY layer of a transcript. turns.jsonl above is the authoritative
     # record and every one of its appends is fsynced and fatal on failure;
@@ -1426,7 +1809,17 @@ def _transcript(scenario: Scenario, results: list[dict]) -> str:
         title = r.get("title", r.get("turnID", "?"))
         speaker = r.get("speakerName", "?")
         lines += [f"## Turn {r.get('turnIndex', index + 1)}: {title} — {speaker}",
-                  "", r.get("output", ""), ""]
+                  ""]
+        # A thinking turn's reasoning, shown for the reader and labelled as
+        # what it is: the other seats never read it (issue #15).
+        if r.get("reasoningStatus") == REASONING_CUT_OFF:
+            lines += ["_Reasoning, cut off before it finished. Nothing from "
+                      "this turn was passed on:_", "",
+                      r.get("reasoning") or "", ""]
+        elif r.get("reasoning"):
+            lines += ["_Reasoning (not passed on to the other seats):_", "",
+                      r.get("reasoning") or "", "", "_Answer:_", ""]
+        lines += [r.get("output", ""), ""]
     return "\n".join(lines)
 
 
@@ -1447,11 +1840,16 @@ def _scenario_to_dict(s: Scenario) -> dict:
         "name": s.name, "baseModelID": s.base_model_id, "description": s.description,
         "sharedMaterials": s.shared_materials, "temperature": s.temperature,
         "maxTokens": s.max_tokens,
+        # Additive and optional: off emits no key, so every panel written
+        # before the setting existed keeps its pinned hash.
+        **({"includeOwnReasoning": True} if s.include_own_reasoning else {}),
         "agents": [{"id": a.id, "name": a.name, "baseModelID": a.base_model_id,
                     "systemPrompt": a.system_prompt, "variantArtifactPath": a.variant_artifact_path,
                     "variantArtifactHash": a.variant_artifact_hash,
                     # Additive and optional, same rule as `endpoint` below.
-                    **({"role": a.role} if a.role else {})} for a in s.agents],
+                    **({"role": a.role} if a.role else {}),
+                    **({"temperature": a.temperature}
+                       if a.temperature is not None else {})} for a in s.agents],
         "turns": [{"id": t.id, "title": t.title, "speakerAgentID": t.speaker_agent_id,
                    "promptTemplate": t.prompt_template, "outputLabel": t.output_label,
                    "routing": t.routing, "routedAgentIDs": t.routed_agent_ids,

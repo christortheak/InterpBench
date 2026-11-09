@@ -34,6 +34,17 @@ def normalized(document: dict) -> dict:
                 files.refuse(f"Seat {key} must be a string.")
         if 'role' in seat and not seat['role'].strip():
             seat.pop('role')
+        # A seat's own temperature (issue #15): a number, or absent for the
+        # study's. Its range is the engine validator's rule.
+        if seat.get('temperature') is None:
+            seat.pop('temperature', None)
+        elif type(seat['temperature']) not in (int, float):
+            files.refuse('Seat temperature must be a number, or left out to use the study\'s temperature.')
+    # Whether a seat reads its own earlier reasoning (issue #15): absent is off.
+    if panel.get('includeOwnReasoning') is None:
+        panel.pop('includeOwnReasoning', None)
+    elif not isinstance(panel['includeOwnReasoning'], bool):
+        files.refuse('includeOwnReasoning must be true or false.')
     for turn in panel['turns']:
         fields(turn, {'id':str, 'title':str, 'speakerAgentID':str, 'outputLabel':str, 'routing':str,
                       'routedAgentIDs':list, 'includeScenarioMaterials':bool, 'includeSpeakerContext':bool})

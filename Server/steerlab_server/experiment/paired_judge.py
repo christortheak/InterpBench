@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-from . import judge_credentials
+from . import judge_credentials, reasoning_split
 
 DEFAULT_JUDGE_MODEL = os.environ.get("STEERLAB_JUDGE_MODEL", "claude-opus-4-8")
 
@@ -280,16 +280,6 @@ class JudgeResponseError(ValueError):
         self.transport = None
 
 
-#: A LEADING ``<think>`` tag (allowing attributes), whitespace permitted
-#: before it. Only a leading block is stripped: a ``<think>`` appearing after
-#: the verdict is content, not a reasoning preamble.
-_THINK_OPEN = re.compile(r"\A\s*<think(?:\s[^>]*)?>", re.IGNORECASE)
-
-#: Either think tag, anywhere — used to find the FIRST tag of any kind when
-#: the text does not open with one (the orphan-closing-tag case below).
-_THINK_ANY = re.compile(r"<(/?)think(?:\s[^>]*)?>", re.IGNORECASE)
-
-
 def strip_leading_think_block(text: str) -> str:
     """Drop a leading ``<think>…</think>`` reasoning preamble.
 
@@ -298,35 +288,34 @@ def strip_leading_think_block(text: str) -> str:
     can contain braces, so it has to come off before JSON extraction or the
     decoder walks a reasoning aside looking for a verdict.
 
-    An UNCLOSED leading ``<think>`` (the response was cut before the closing
-    tag, or the provider simply omits it) is treated the same way:
-    everything after the opening tag is the candidate text.
+    Where the block ends is decided by the shared splitter
+    (:func:`reasoning_split.split`), the same rule the panel runner uses to
+    pass a seat's answer on without its reasoning:
 
-    An ORPHAN leading ``</think>`` — a closing tag with no opening tag
-    anywhere before it — is treated as the block terminator (2026-09-03).
-    Qwen3's chat template with ``enable_thinking`` emits the OPENING
-    ``<think>`` as the last token of the PROMPT, so a generation decoded with
-    ``skip_prompt`` begins inside the reasoning block and the first
-    ``</think>`` is the only boundary the text carries. Everything up to and
-    including that first ``</think>`` is dropped. The rule is deliberately
-    narrow: the closing tag must precede EVERY ``<think>`` in the text, so a
-    ``<think>…</think>`` aside after the verdict is still content, not a
-    preamble. Reasoning that was truncated before its ``</think>`` in this
+    * a leading ``<think>`` block that closes comes off, closing tag
+      included;
+    * an ORPHAN leading ``</think>`` — a closing tag before any opening tag —
+      terminates a block the chat template opened in the PROMPT (Qwen3 with
+      ``enable_thinking``, 2026-09-03), so everything up to and including it
+      comes off. A ``<think>…</think>`` aside AFTER the verdict is content;
+    * an UNCLOSED leading ``<think>`` (the response was cut before the
+      closing tag, or the provider omits it) is treated as the verdict's
+      candidate text: everything after the opening tag is returned. This is
+      the judge's own reading — a judge that states its verdict and then
+      runs out of tokens still wrote a legible verdict — and is why the
+      judge does not simply take the splitter's empty answer here.
+
+    Reasoning truncated before its ``</think>`` in prompt-opened thinking
     mode carries no tag at all and is indistinguishable from plain text; it
     is returned unchanged. Cross-engine twin: Swift
     ``PairedJudgeVerdictParser.strippingLeadingThinkBlock``.
     """
-    match = _THINK_OPEN.match(text or "")
-    if match is None:
-        first = _THINK_ANY.search(text or "")
-        if first is not None and first.group(1) == "/":
-            return text[first.end():]
-        return text
-    rest = text[match.end():]
-    close = rest.lower().find("</think>")
-    if close < 0:
-        return rest
-    return rest[close + len("</think>"):]
+    found = reasoning_split.split(text or "")
+    if found.state == reasoning_split.UNCLOSED:
+        return found.reasoning or ""
+    if found.state == reasoning_split.CLOSED:
+        return found.answer
+    return text
 
 
 def parse_response(text: str) -> dict:
