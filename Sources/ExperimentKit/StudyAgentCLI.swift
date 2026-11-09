@@ -15,6 +15,8 @@ enum StudyAgentCLI {
             return try result(AgentArtifactDocument(snapshot), message: "Agent inspected.", sink: sink)
         case "delete":
             return try WorkspaceHousekeepingCLI.run(invocation, workspaceRoot: workspaceRoot, sink: sink)
+        case "create":
+            return try StudyAgentCreation.run(invocation, workspaceRoot: workspaceRoot, sink: sink)
         default: throw usage()
         }
     }
@@ -33,6 +35,9 @@ enum StudyAgentCLI {
         let saved = try StudyAgentAuthoring.attach(artifact, reviewed: reviewed)
         var attached = try result(StudyAuthoringHTTP.Document(saved), message: "Agent attached to reviewed draft.",
             changed: saved.file.sha256 != reviewed.file.sha256, sink: sink)
+        // Swept or handmade, and its thinking level, said on arrival.
+        attached.payload["agent"] = try JSONDecoder().decode(
+            JSONValue.self, from: JSONEncoder().encode(artifact.record.artifact.origin))
         // An agent that carries custom code says so on arrival.
         CustomCodeCLI.attachNotice(to: &attached.payload, study: args[1], workspaceRoot: workspaceRoot, sink: sink)
         return attached
@@ -47,7 +52,7 @@ enum StudyAgentCLI {
     }
 
     private static func usage() -> ExperimentError {
-        .malformed("Use agent list, agent inspect <path>, agent delete <path>, or experiment attach-agent <study> with both reviewed file digests.",
+        .malformed("Use agent list, agent inspect <path>, agent create <name>, agent delete <path>, or experiment attach-agent <study> with both reviewed file digests.",
             repair: "Read agent --help or experiment attach-agent --help.")
     }
 }

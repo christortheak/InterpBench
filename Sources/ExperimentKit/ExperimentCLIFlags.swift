@@ -374,6 +374,7 @@ public enum ExperimentCLIParser {
         .init(namespace: "agent", verb: "inspect", positional: "<path>", purpose: "Inspect a workspace agent artifact before attachment."),
         .init(namespace: "agent", verb: "delete", positional: "<path>", purpose: "Preview deleting an agent no study uses; repeat with its reviewed --artifact-sha256 and --yes to move it into a .trash folder. Refused while any study uses it.",
             booleanFlags: ["--yes"], valueFlags: ["--artifact-sha256"]),
+        StudyAgentCreation.spec,
         .init(namespace: "design", verb: "expand", positional: "<name>", purpose: "Preview distinct panel castings as reviewable batch rows without creating studies.", valueFlags: ["--file-sha256", "--casting", "--mode"], requiredFlags: ["--file-sha256", "--casting", "--mode"]),
         .init(namespace: "experiment", verb: "set-pipeline", positional: "<study>", purpose: "Replace or clear a reviewed pipeline declaration without executing it.", valueFlags: ["--file", "--manifest-sha256"], requiredFlags: ["--file", "--manifest-sha256"]),
         .init(namespace: "experiment", verb: "attach-agent", positional: "<name>",

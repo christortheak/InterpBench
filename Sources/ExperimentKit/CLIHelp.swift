@@ -813,7 +813,7 @@ public enum ExperimentCLIHelp {
                 synopsis: "results report <study> [--run <run-dir>] [--out <file>]",
                 purpose: "Write a run's results as one readable page to open in a browser or send."),
             .init(synopsis: "pack preview | apply | export …", purpose: "Review and import study packs, or export text inputs and dependency names."),
-            .init(synopsis: "agent list | inspect <path>", purpose: "Inspect local agents for reviewed attachment."),
+            .init(synopsis: "agent list | inspect <path> | create <name> | delete <path>", purpose: "Make an agent by hand, or inspect local agents for reviewed attachment."),
             .init(synopsis: "design list | inspect | describe | instantiate | batch | save | update …", purpose: "Inspect, save and revise designs, or create studies from reviewed castings."),
             .init(
                 synopsis: "data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>",
