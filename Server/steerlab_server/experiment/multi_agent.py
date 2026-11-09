@@ -721,7 +721,15 @@ def panel_seat_thinks(manifest, root: str | None = None) -> bool:
     ``agent_identity.budget_permitted_without_effort``, under which the study
     may declare a ``reasoningMaxTokens`` for those seats although its own
     ``reasoningEffort`` is off (maintainer decision, FR6). False for every
-    other study, and for a panel that cannot be read. Swift twin:
+    other study, and for a panel that cannot be read.
+
+    A draft is read as the older-engine checks read it: a seat whose agent
+    asks to think counts unless a probed record for its exact revision says
+    the template cannot. A study that is no longer a draft is read by the
+    rules it froze under, never by a record probed since (its own first run
+    probes one): a seat counts when its agent's level is not off. The run
+    still asks the template whether a seat really thinks, so a budget a seat
+    cannot use simply goes unstamped. Swift twin:
     ``MultiAgentRunner.panelSeatThinks``."""
     document = getattr(manifest, "raw", manifest)
     if not isinstance(document, dict) or document.get("studyKind") != "multiAgent":
@@ -734,6 +742,12 @@ def panel_seat_thinks(manifest, root: str | None = None) -> bool:
         spath = os.path.join(base, spath)
     try:
         scenario, _ = load_scenario(spath)
+        if (document.get("status") or "draft") != "draft":
+            return any(
+                seat_reasoning(_runtime_settings(agent, True, root=base)[0],
+                               study_effort=prompt_render.REASONING_OFF,
+                               study_budget=None)[0] != prompt_render.REASONING_OFF
+                for agent in scenario.agents if agent.variant_artifact_path)
         changes = panel_rule_changes(
             scenario, study_effort=prompt_render.REASONING_OFF,
             study_temperature=float(document.get("temperature") or 0.0), root=base,
@@ -1795,6 +1809,14 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             apply(turn_outcome(scenario, turn, index, _record_text(replayed)))
             results.append(replayed)
             continue
+        # A seat whose agent file says two things refuses by the seat's
+        # name, with the Mac engine's sentence, before the file is read as
+        # an agent (``ModelVariant.from_file`` would refuse it unnamed).
+        from . import agent_identity
+        seat_problem = agent_identity.seat_file_problem(speaker)
+        if seat_problem is not None:
+            raise ScenarioError(seat_problem, gate=lifecycle_gates.STUDY_DECLARATION,
+                                repair=agent_identity.SEAT_AGENT_REPAIR)
         (variant, model_id, prompt_mode, system, _variant_thinking, injections,
          turn_warnings, system_composition) = \
             _runtime_settings(speaker, strip_interventions)
@@ -1911,6 +1933,13 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                     active_model.model_id,
                     tokenizer=getattr(active_model, "tokenizer", None),
                     revision=getattr(active_model, "revision", None)))
+            # A turn played as thinking (split, and budgeted when the study
+            # declares a budget) never records ``off``: when no level could
+            # reach a thinking switch it records ``on``, the vocabulary
+            # ``rendered_effort`` uses for "thought, with no level reaching
+            # the template".
+            if thinking and rendered_level == prompt_render.REASONING_OFF:
+                rendered_level = prompt_render.REASONING_ON
             think_close_id = (truncation_gate.think_close_token_id(
                 getattr(active_model, "tokenizer", None))
                 if reasoning_budget else None)

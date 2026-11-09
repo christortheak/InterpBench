@@ -265,8 +265,10 @@ def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None,
         # it: an attached agent arm thinks, or a panel seat is cast with an
         # agent that thinks (ruling 2026-11-08). Swift twin:
         # ManifestDraftEdits.setSamplingProtocol.
+        # Judged against the document this call writes: a call that pins a
+        # panel and declares its budget at once is asked about that panel.
         from . import agent_identity
-        if agent_identity.budget_permitted_without_effort(d, root):
+        if agent_identity.budget_permitted_without_effort({**d, **fields}, root):
             problems = [p for p in problems
                         if p != prompt_render.BUDGET_WITHOUT_EFFORT_REASON]
         if problems:

@@ -323,5 +323,168 @@ def test_a_seat_agent_file_with_a_problem_refuses_when_the_seat_plays(tmp_path):
     Path(scenario.agents[0].variant_artifact_path).write_text(json.dumps(
         {"name": "seat-agent", "baseModelID": QWEN, "reasoningEffort": "medium",
          "qwenThinkingEnabled": False}))
-    with pytest.raises(ValueError, match="one says the agent thinks"):
+    with pytest.raises(multi_agent.ScenarioError) as refused:
         _run(tmp_path, scenario, [ANSWERED, "ok"], temperature=0.0)
+    # The Mac engine's sentence (MultiAgentRunner.seatAgent): the seat by
+    # name, then the file's own problem; typed, with the seat repair.
+    assert str(refused.value).startswith(
+        "seat 'Ava': This agent file says reasoningEffort \"medium\" but "
+        "qwenThinkingEnabled false: one says the agent thinks")
+    assert lifecycle_gates.gate_of(refused.value) == lifecycle_gates.STUDY_DECLARATION
+    assert lifecycle_gates.repair_of(refused.value) == agent_identity.SEAT_AGENT_REPAIR
+
+
+# --- FR6 integration, round 2 ------------------------------------------------------
+
+
+def _write_probe(root, model, revision, switch):
+    """A probed capability record, as a run's ``ensure_record`` leaves one."""
+    record = mc.heuristic(model, revision)
+    record["source"] = mc.SOURCE_PROBE
+    record["detected"]["thinkingSwitch"] = switch
+    record["recordHash"] = mc.record_hash(record)
+    path = mc.record_path(model, revision, str(root))
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(record))
+
+
+def test_a_frozen_panel_study_keeps_verifying_after_its_own_run_probes_a_record(tmp_path):
+    """A frozen study is read by the rules it froze under: a record its own
+    first run probes cannot make its declared budget a violation. A draft
+    still reads the probe."""
+    frozen = panel_study(tmp_path / "frozen", {"reasoningEffort": "on"}, status="frozen",
+                         reasoningEffort="off", reasoningMaxTokens=256)
+    root = str(tmp_path / "frozen")
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON not in frozen.verify(root)
+    _write_probe(root, QWEN, REVISION, mc.UNSUPPORTED)
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON not in frozen.verify(root)
+    draft = panel_study(tmp_path / "draft", {"reasoningEffort": "on"},
+                        reasoningEffort="off", reasoningMaxTokens=256)
+    root = str(tmp_path / "draft")
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON not in draft.verify(root)
+    _write_probe(root, QWEN, REVISION, mc.UNSUPPORTED)
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON in draft.verify(root)
+
+
+def test_a_turn_played_as_thinking_never_records_off(tmp_path):
+    """No probe said the seat cannot think, so it is split and budgeted; the
+    renderer's record has no thinking switch, so no level reached one. The
+    turn records ``on``, never ``off`` beside a budget and a complete split."""
+    artifact = model_variant.ModelVariant(name="seat-agent", base_model_id="org/plain",
+                                          qwen_thinking_enabled=True)
+    path = tmp_path / "seat-agent.json"
+    path.write_text(json.dumps(artifact.to_dict()))
+    scenario = _scenario(model="org/plain")
+    scenario.agents[0].variant_artifact_path = str(path)
+    scenario.agents[0].variant_artifact_hash = None
+    calls = []
+
+    def stub(model, prompt, **kw):
+        calls.append(kw)
+        return "weighing it</think>My answer."
+
+    (tmp_path / "run").mkdir()
+    original = multi_agent.generate
+    multi_agent.generate = stub
+    try:
+        multi_agent.run_scenario(SimpleNamespace(model_id="org/plain", revision="r"),
+                                 scenario, run_dir=str(tmp_path / "run"), temperature=0.0,
+                                 reasoning_effort="off", reasoning_max_tokens=256)
+    finally:
+        multi_agent.generate = original
+    first = json.loads((tmp_path / "run" / "turns.jsonl").read_text().splitlines()[0])
+    assert calls[0]["reasoning_max_tokens"] == 256
+    assert (first["reasoningEffort"], first["reasoningMaxTokens"],
+            first["reasoningStatus"]) == ("on", 256, "complete")
+
+
+@pytest.mark.parametrize("semantic", [None, ""])
+def test_the_seat_repair_for_a_hand_bound_panel_names_a_command_that_pins_it(
+        tmp_path, capsys, semantic):
+    """A hand-bound panel (no semantic path, or an empty one) cannot be
+    recompiled; the repair copies it with the seat's new agent and pins the
+    copy. The client's command is run here and clears the refusal."""
+    from steerlab_server.experiment import command_vocabulary as vocabulary
+    from test_agent_create import cli
+    panel_study(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN)
+    raw = store.load_raw("study", str(tmp_path))
+    raw["multiAgentSemanticScenarioPath"] = semantic
+    store.save_raw(raw, str(tmp_path))
+    manifest = Manifest.load("study", str(tmp_path))
+    findings = agent_identity.manifest_arm_findings(manifest, str(tmp_path))
+    assert [seat for seat, _, _ in findings] == ["a"]
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        repair = agent_identity.arm_problems_repair(
+            manifest, findings, frozen=False, authoring=vocabulary.authoring)
+    assert "(seat ID a)" in repair and "panel compile" not in repair
+    assert ("save a copy of the hand-bound panel prompts/panels/p.json in which each "
+            "of those seats' variantArtifactPath and variantArtifactHash name its new "
+            "agent, and pin the copy: steerlab experiment set-protocol study --set "
+            "multiAgentScenarioPath=<copy-path> --set "
+            "multiAgentScenarioHash=<copy-sha256>") in repair
+    # Carry the repair out: a corrected agent, a copy of the panel naming it in
+    # seat a, and the client's command.
+    fixed = tmp_path / "runs" / "model-variants" / "fixed" / "model-variant.json"
+    fixed.parent.mkdir(parents=True)
+    fixed.write_text(json.dumps({"name": "fixed", "baseModelID": PLAIN,
+                                 "reasoningEffort": "off"}))
+    panel = json.loads((tmp_path / "prompts" / "panels" / "p.json").read_text())
+    panel["agents"][0]["variantArtifactPath"] = "runs/model-variants/fixed/model-variant.json"
+    panel["agents"][0]["variantArtifactHash"] = hashlib.sha256(fixed.read_bytes()).hexdigest()
+    copy = tmp_path / "prompts" / "panels" / "p-fixed.json"
+    copy.write_text(json.dumps(panel))
+    code, document = cli(tmp_path, capsys, "experiment", "set-protocol", "study",
+                         "--set", "multiAgentScenarioPath=prompts/panels/p-fixed.json",
+                         "--set", "multiAgentScenarioHash="
+                         + hashlib.sha256(copy.read_bytes()).hexdigest())
+    assert code == 0, document
+    repaired = Manifest.load("study", str(tmp_path))
+    assert repaired.raw["multiAgentScenarioPath"] == "prompts/panels/p-fixed.json"
+    assert agent_identity.manifest_arm_findings(repaired, str(tmp_path)) == []
+
+
+def test_the_seat_repair_for_a_compiled_panel_casts_by_seat_id(tmp_path):
+    from steerlab_server.experiment import command_vocabulary as vocabulary
+    manifest = panel_study(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN)
+    findings = agent_identity.manifest_arm_findings(manifest, str(tmp_path))
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        repair = agent_identity.arm_problems_repair(
+            manifest, findings, frozen=False, authoring=vocabulary.authoring)
+    assert "(seat ID a)" in repair and "Ava" not in repair
+    assert ("steerlab panel compile prompts/panels/semantic/p.json --experiment study "
+            "--casting <file>") in repair
+
+
+def test_a_seat_agent_file_that_is_not_the_one_its_seat_pins_is_never_judged(tmp_path):
+    """A stale copy of a seat's agent at the same path (an engine's own root,
+    say) never refuses a study whose bundled agent is sound."""
+    manifest = panel_study(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN,
+                           status="frozen")
+    assert agent_identity.manifest_arm_findings(manifest, str(tmp_path))
+    _write_agent(tmp_path, {"reasoningEffort": "high"}, model=PLAIN)
+    assert agent_identity.manifest_arm_findings(manifest, str(tmp_path)) == []
+    assert study_admission.settings_refusal(manifest, str(tmp_path)) is None
+
+
+def test_one_set_protocol_call_that_pins_a_panel_and_its_budget_is_judged_by_that_panel(
+        tmp_path):
+    """The budget rule reads the document the call writes, not the panel the
+    draft pinned before it."""
+    panel_study(tmp_path, {"reasoningEffort": "medium"}, reasoningEffort="off")
+    thinking = tmp_path / "prompts" / "panels" / "p.json"
+    bare = tmp_path / "prompts" / "panels" / "bare.json"
+    bare.write_text(json.dumps(multi_agent._scenario_to_dict(_scenario(cast=False))))
+    raw = store.load_raw("study", str(tmp_path))
+    raw.update(multiAgentScenarioPath="prompts/panels/bare.json",
+               multiAgentScenarioHash=hashlib.sha256(bare.read_bytes()).hexdigest())
+    store.save_raw(raw, str(tmp_path))
+    store.set_protocol("study", {
+        "multiAgentScenarioPath": "prompts/panels/p.json",
+        "multiAgentScenarioHash": hashlib.sha256(thinking.read_bytes()).hexdigest(),
+        "reasoningMaxTokens": 128}, root=str(tmp_path))
+    assert store.load_raw("study", str(tmp_path))["reasoningMaxTokens"] == 128
+    with pytest.raises(store.ExperimentStoreError, match="reasoningMaxTokens"):
+        store.set_protocol("study", {
+            "multiAgentScenarioPath": "prompts/panels/bare.json",
+            "multiAgentScenarioHash": hashlib.sha256(bare.read_bytes()).hexdigest(),
+            "reasoningMaxTokens": 64}, root=str(tmp_path))

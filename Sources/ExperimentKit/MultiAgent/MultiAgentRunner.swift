@@ -1570,6 +1570,7 @@ public enum MultiAgentRunner {
     ) throws -> ModelVariantArtifact {
         let variant = try JSONDecoder().decode(
             ModelVariantArtifact.self, from: Data(contentsOf: url))
+        // Server twin: `agent_identity.seat_file_problem`, the same sentence.
         if let problem = variant.fileProblem {
             throw ExperimentError.refusing(
                 .studyDeclaration, "seat '\(agent.name)': \(problem)",
@@ -1596,8 +1597,13 @@ public enum MultiAgentRunner {
         if !templateThinks(modelID: modelID, revision: revision) {
             (effort, budget) = (.off, nil)
         }
-        return (effort, budget,
-                ModelVariantArtifact.renderedReasoningEffort(effort, modelID: modelID))
+        // Read through the record the renderer itself reads
+        // (`PromptRendering.capabilities(for:)`: the one registered at load,
+        // else the id heuristic), so the stamp says what reached the
+        // template. A turn played as thinking never records off: when no
+        // level could reach a thinking switch it records `on`.
+        let rendered = ModelVariantArtifact.renderedReasoningEffort(effort, modelID: modelID)
+        return (effort, budget, effort.isOn && !rendered.isOn ? .on : rendered)
     }
 
     /// `(effort, reasoning budget)` one seat's turns generate under.
@@ -1781,10 +1787,42 @@ public enum MultiAgentRunner {
     /// may declare `reasoningMaxTokens` with its own effort off (FR6). Server
     /// twin: `multi_agent.panel_seat_thinks`.
     public static func panelSeatThinks(_ manifest: ExperimentManifest) -> Bool {
-        guard let scenario = pinnedPanel(manifest),
+        guard let scenario = pinnedPanel(manifest) else { return false }
+        return seatThinks(
+            in: scenario, studyRevision: manifest.modelRevision,
+            frozen: manifest.status != .draft)
+    }
+
+    /// Whether `scenario` casts an agent that thinks, for the budget rule.
+    /// A draft is read as the older-engine checks read it: a seat whose agent
+    /// asks to think counts unless a probed record for its exact revision
+    /// says the template cannot. A study that is no longer a draft is read by
+    /// the rules it froze under, never by a record probed since (its own
+    /// first run probes one): a seat counts when its agent's level is not
+    /// off. The run still asks the template whether a seat really thinks.
+    /// False for a panel whose agent files cannot be read. Server twin:
+    /// `multi_agent.panel_seat_thinks`.
+    static func seatThinks(
+        in scenario: MultiAgentScenario, studyRevision: String?, frozen: Bool
+    ) -> Bool {
+        if frozen {
+            do {
+                for agent in scenario.agents where agent.variantArtifactPath != nil {
+                    if try seatReasoning(for: agent, studyEffort: .off, studyBudget: nil)
+                        .effort.isOn
+                    {
+                        return true
+                    }
+                }
+                return false
+            } catch {
+                return false
+            }
+        }
+        guard
             let changes = try? panelRuleChanges(
-                scenario, studyEffort: .off, studyTemperature: manifest.temperature,
-                studyRevision: manifest.modelRevision)
+                scenario, studyEffort: .off, studyTemperature: scenario.temperature,
+                studyRevision: studyRevision)
         else { return false }
         return changes.contains { $0.kind == RuleChange.reasoningPassedOn }
     }

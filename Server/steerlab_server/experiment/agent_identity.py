@@ -426,6 +426,25 @@ FIX_INSTRUMENT = "instrument"
 #: that seat in place of the one it holds (:func:`manifest_seat_findings`).
 FIX_SEAT = "seat"
 
+def seat_file_problem(agent, root: str | None = None) -> str | None:
+    """``seat '<name>': <problem>`` when the agent file a panel seat is cast
+    with says two things (:func:`agent_file_problem`), else None; None too
+    for a file that cannot be read, which the run reports itself. What a run
+    refuses a seat with before the file is read as an agent. Swift twin:
+    ``MultiAgentRunner.seatAgent``, the same sentence."""
+    if not getattr(agent, "variant_artifact_path", None):
+        return None
+    from . import paths
+    try:
+        with open(paths.resolve_artifact(agent.variant_artifact_path, root),
+                  encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    problem = agent_file_problem(document) if isinstance(document, dict) else None
+    return f"seat '{agent.name}': {problem}" if problem else None
+
+
 #: The repair ``panel check`` gives for a seat whose agent breaks a rule,
 #: where no study names the panel to compile. Swift twin:
 #: ``ModelVariantArtifact.seatAgentRepair``.
@@ -582,8 +601,14 @@ def scenario_seat_findings(scenario, *, root: str | None, study_model_id: str = 
     check``, the id heuristic for a frozen study (the rules it was frozen
     under), as :meth:`Manifest._capabilities_for_gates` does for a study's
     own model. An agent file that cannot be read is not judged here: the run
-    refuses it by name, as it always has. Swift twin:
+    refuses it by name, as it always has. Neither is one whose bytes are not
+    the ones its seat pins (``variantArtifactHash``): a stale copy at the
+    same path, in an engine's own root say, must never refuse a study whose
+    own agent is sound, and verify and the run refuse the mismatch
+    themselves. Each finding names the seat by its ID, the key ``panel
+    compile`` casts by; the sentence names it as the panel does. Swift twin:
     ``ModelVariantArtifact.scenarioSeatFindings``."""
+    import hashlib
     from . import model_capabilities as mc, paths
     out: list[tuple[str, str, str]] = []
     for agent in scenario.agents:
@@ -591,8 +616,12 @@ def scenario_seat_findings(scenario, *, root: str | None, study_model_id: str = 
             continue
         try:
             with open(paths.resolve_artifact(agent.variant_artifact_path, root),
-                      encoding="utf-8") as handle:
-                artifact = json.load(handle)
+                      "rb") as handle:
+                data = handle.read()
+            pinned = agent.variant_artifact_hash
+            if pinned and hashlib.sha256(data).hexdigest() != pinned:
+                continue
+            artifact = json.loads(data)
         except (OSError, ValueError):
             continue
         if not isinstance(artifact, dict):
@@ -602,7 +631,7 @@ def scenario_seat_findings(scenario, *, root: str | None, study_model_id: str = 
         revision = revision if isinstance(revision, str) and revision.strip() else study_revision
         capabilities = (mc.effective(mc.heuristic(model, revision)) if frozen
                         else mc.resolve(model, revision, root))
-        out += [(agent.name, sentence, FIX_SEAT) for sentence in cast_agent_problems(
+        out += [(agent.id, sentence, FIX_SEAT) for sentence in cast_agent_problems(
             f"seat '{agent.name}'", artifact, model_id=model,
             capabilities=capabilities, root=root)]
     return out
@@ -710,18 +739,7 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
     revision = manifest.model_revision or "<sha>"
     seats = [arm for arm, wanted in fixes.items() if FIX_SEAT in wanted]
     if seats:
-        panel = manifest.raw.get("multiAgentSemanticScenarioPath") or "<panel>"
-        steps.append(
-            "make a new agent for "
-            + _listed([f"seat '{seat}'" for seat in seats]) + ": "
-            + authoring("agent create <new-name> --model <model> --revision <sha> …")
-            + " (or the app's agent editor), then compile the panel again, casting "
-            "every seat, with each new agent in place of the one its seat holds: "
-            + authoring((f"panel compile {panel} --experiment {target} "
-                         "--seat <seat>=<agent-path> …",
-                         f"panel compile {panel} --experiment {target} "
-                         "--casting <file> --file-sha256 <digest> "
-                         "--manifest-sha256 <digest>")))
+        steps.append(seat_repair(manifest, seats, target=target, authoring=authoring))
     for arm, wanted in fixes.items():
         if wanted & {FIX_AGENT, FIX_REVISION}:
             at = ("at the study's revision " if FIX_REVISION in wanted else "")
@@ -752,6 +770,50 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
                             "--manifest-sha256 <digest>")
                 for arm in thinking))
     return "; then ".join(steps)
+
+
+def seat_repair(manifest, seat_ids, *, target: str, authoring) -> str:
+    """The step that replaces the agents of the seats ``seat_ids`` (keyed by
+    seat ID) in a panel study's draft ``target``: make each agent again, then
+    put it in its seat. A panel compiled from a semantic panel is compiled
+    again (``panel compile``, casting every seat by ID). A hand-bound panel
+    (no ``multiAgentSemanticScenarioPath``), which ``panel compile`` refuses
+    on both clients, is copied with each seat's agent replaced and the copy
+    pinned: with ``experiment set-protocol`` on the cross-platform client,
+    and in the Mac app's study editor (the Mac command line has no verb that
+    pins a hand-bound panel). Swift twin:
+    ``ModelVariantArtifact.seatRepair``, the same steps."""
+    from . import command_vocabulary as vocabulary
+    ids = ("seat IDs " if len(seat_ids) > 1 else "seat ID ") + ", ".join(seat_ids)
+    make = ("make a new agent for each seat whose agent breaks a rule (" + ids + "): "
+            + authoring("agent create <new-name> --model <model> --revision <sha> …")
+            + " (or the app's agent editor), then ")
+    semantic = manifest.raw.get("multiAgentSemanticScenarioPath")
+    casts = " ".join(f"--seat {seat}=<agent-path>" for seat in seat_ids)
+    if isinstance(semantic, str) and semantic:
+        return (make + "compile the panel again, casting every seat, with each "
+                "new agent in place of the one its seat holds: "
+                + authoring((f"panel compile {semantic} --experiment {target} "
+                             f"{casts} --seat <each other seat>=<its agent-path>",
+                             f"panel compile {semantic} --experiment {target} "
+                             "--casting <file> --file-sha256 <digest> "
+                             "--manifest-sha256 <digest>")))
+    pinned = manifest.raw.get("multiAgentScenarioPath") or "<panel>"
+    copy = (f"save a copy of the hand-bound panel {pinned} in which each of "
+            "those seats' variantArtifactPath and variantArtifactHash name its "
+            "new agent, and pin the copy")
+    # Spelled by hand: only one client has the verb, so `authoring` (which
+    # spells an act on both) cannot name it.
+    client = (f"{vocabulary.CLIENT_PROGRAM} experiment set-protocol {target} --set "
+              "multiAgentScenarioPath=<copy-path> --set "
+              "multiAgentScenarioHash=<copy-sha256>")
+    mac = "in the Mac app's study editor (Setup), which pins a hand-bound panel as it stands"
+    if vocabulary.is_client():
+        return make + copy + ": " + client
+    if vocabulary.surface() == vocabulary.MAC:
+        return make + copy + " " + mac
+    return (make + copy + ": on your authoring client, " + mac + ", or "
+            + client + "  (cross-platform client)")
 
 
 def frozen_arm_problems_advisory(manifest, root: str | None) -> str | None:

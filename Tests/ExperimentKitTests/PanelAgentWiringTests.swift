@@ -100,12 +100,15 @@ import Testing
                 studyEffort: .off, studyBudget: 300)
             #expect(budgeted.effort == .medium && budgeted.budget == 300)
             #expect(budgeted.recorded == .medium)
-            // On a template with no thinking switch the level renders as off,
-            // and the turn records that, not the agent's declaration.
+            // On a template with no thinking switch no level reaches one. No
+            // probe said the seat cannot think, so it is played as thinking
+            // (split, and budgeted), and a turn played as thinking never
+            // records off: it records `on`, not the agent's declaration.
             let unrendered = try MultiAgentRunner.turnReasoning(
                 for: seat, modelID: Self.plain, revision: Self.revision,
                 studyEffort: .off, studyBudget: 300)
-            #expect(unrendered.effort == .medium && unrendered.recorded == .off)
+            #expect(unrendered.effort == .medium && unrendered.budget == 300)
+            #expect(unrendered.recorded == .on)
             // The bare seat follows the study, and gets no budget when off.
             let bare = try MultiAgentRunner.turnReasoning(
                 for: scenario().agents[1], modelID: Self.qwen, revision: Self.revision,
@@ -202,7 +205,8 @@ import Testing
                 + "started, because seat 'Ava': "))
             #expect(note.contains("steerlab-cli experiment duplicate study study-v2"))
             #expect(note.contains("steerlab-cli panel compile prompts/panels/semantic/p.json "
-                + "--experiment study-v2 --seat <seat>=<agent-path>"))
+                + "--experiment study-v2 --seat a=<agent-path>"))
+            #expect(note.contains("(seat ID a)"))
             // Submission (every client site asks this) and run start
             // (`ExperimentTasks.runImpl` asks `armRefusal`).
             let refusal = try #require(SubstrateRouting.agentArmSubmissionRefusal(
@@ -228,6 +232,170 @@ import Testing
             manifest.multiAgentScenarioHash = String(repeating: "0", count: 64)
             #expect(ModelVariantArtifact.manifestArmFindings(manifest, workspaceRoot: root).isEmpty)
             #expect(ModelVariantArtifact.armRefusal(manifest, workspaceRoot: root) == nil)
+        }
+    }
+
+    // MARK: - Round 2
+
+    private func sha(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A probed record saying the template has no thinking switch, as a
+    /// run's `ensure` leaves one.
+    private func writeNoSwitchProbe(_ root: URL, model: String, revision: String) throws {
+        var record = ModelCapabilities.heuristic(modelID: model, revision: revision)
+        record.source = .probe
+        record.detected.thinkingSwitch = .unsupported
+        try ModelCapabilitiesStore.write(record, root: root)
+    }
+
+    @Test func aFrozenPanelStudyKeepsVerifyingAfterItsOwnRunProbesARecord() async throws {
+        try await withWorkspace { root in
+            try writeAgent(root, ["reasoningEffort": "on"])
+            var frozen = try panelStudy(root, status: .frozen)
+            frozen.reasoningEffort = "off"
+            frozen.reasoningMaxTokens = 256
+            var draft = frozen
+            draft.status = .draft
+            #expect(frozen.reasoningProtocolViolations.isEmpty)
+            #expect(draft.reasoningProtocolViolations.isEmpty)
+            try writeNoSwitchProbe(root, model: Self.qwen, revision: Self.revision)
+            // Frozen: read by the rules it froze under, never the new probe.
+            #expect(frozen.reasoningProtocolViolations.isEmpty)
+            // A draft still reads it.
+            #expect(draft.reasoningProtocolViolations == [ReasoningEffort.budgetWithoutEffortReason])
+        }
+    }
+
+    @Test(arguments: [nil, ""] as [String?])
+    func theSeatRepairForAHandBoundPanelPinsACopyInTheStudyEditor(_ semantic: String?) async throws {
+        try await withWorkspace { root in
+            try writeAgent(root, ["reasoningEffort": "medium"], model: Self.plain)
+            var manifest = try panelStudy(root, model: Self.plain)
+            manifest.multiAgentSemanticScenarioPath = semantic
+            let findings = ModelVariantArtifact.manifestArmFindings(manifest, workspaceRoot: root)
+            #expect(findings.map(\.arm) == ["a"])
+            let repair = ModelVariantArtifact.armProblemsRepair(
+                manifest, findings: findings, frozen: false)
+            #expect(repair.contains("(seat ID a)"))
+            #expect(!repair.contains("panel compile"))
+            #expect(repair.contains("save a copy of the hand-bound panel prompts/panels/p.json "
+                + "in which each of those seats' variantArtifactPath and variantArtifactHash "
+                + "name its new agent, and pin the copy in the Mac app's study editor (Setup)"))
+            // Carry it out as the study editor does: a corrected agent, a copy
+            // of the panel naming it in seat a, and a setup save selecting it.
+            let fixedPath = "runs/model-variants/fixed/model-variant.json"
+            let fixedURL = root.appending(path: fixedPath)
+            try FileManager.default.createDirectory(
+                at: fixedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let fixed = try JSONSerialization.data(withJSONObject: [
+                "name": "fixed", "baseModelID": Self.plain, "reasoningEffort": "off",
+            ])
+            try fixed.write(to: fixedURL)
+            var copy = scenario(model: Self.plain)
+            copy.agents[0].variantArtifactPath = fixedPath
+            copy.agents[0].variantArtifactHash = sha(fixed)
+            try JSONEncoder().encode(copy).write(to: root.appending(path: "prompts/panels/p-fixed.json"))
+            var study = manifest
+            study.status = .draft
+            // A hand-bound panel as the study editor pins one (no semantic
+            // path at all); the repair above reads an empty one the same way.
+            study.multiAgentSemanticScenarioPath = nil
+            try ExperimentStore.save(study, allowCreate: true, workspaceRoot: root, expectedFile: .absent)
+            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+            var fields = StudyProtocolFields(manifest: reviewed.manifest)
+            fields.studyKind = .multiAgent
+            let result = try StudyProtocolAuthoring.save(
+                reviewed: reviewed, fields: fields,
+                scenario: StudyProtocolScenario(path: "prompts/panels/p-fixed.json", workspaceRoot: root))
+            guard case .saved(let saved, _, _) = result else {
+                Issue.record("expected a save"); return
+            }
+            #expect(saved.manifest.multiAgentScenarioPath == "prompts/panels/p-fixed.json")
+            #expect(ModelVariantArtifact.manifestArmFindings(saved.manifest, workspaceRoot: root).isEmpty)
+        }
+    }
+
+    @Test func aSeatAgentFileThatIsNotTheOneItsSeatPinsIsNeverJudged() async throws {
+        try await withWorkspace { root in
+            try writeAgent(root, ["reasoningEffort": "medium"], model: Self.plain)
+            var pinned = scenario(model: Self.plain)
+            pinned.agents[0].variantArtifactHash = sha(
+                try Data(contentsOf: root.appending(path: Self.agentPath)))
+            #expect(!ModelVariantArtifact.scenarioSeatFindings(pinned, workspaceRoot: root).isEmpty)
+            // Another file at the same path: not the agent the seat pins.
+            try writeAgent(root, ["reasoningEffort": "high"], model: Self.plain)
+            #expect(ModelVariantArtifact.scenarioSeatFindings(pinned, workspaceRoot: root).isEmpty)
+        }
+    }
+
+    /// A draft panel study with a semantic panel of one seat, and the study
+    /// editor's fields for it: effort off, the thinking agent cast in the seat.
+    private func editorDraft(
+        _ root: URL
+    ) throws -> (DraftAuthoringSnapshot, StudyProtocolFields, StudyProtocolScenario) {
+        try writeAgent(root, ["reasoningEffort": "on"])
+        let semantic = MultiAgentScenario(
+            name: "dialogue", baseModelID: "",
+            agents: [.init(id: "speaker", name: "Speaker", baseModelID: "", systemPrompt: "Discuss.")],
+            turns: [.init(id: "turn", title: "Response", speakerAgentID: "speaker",
+                          promptTemplate: "Respond.", outputLabel: "response")])
+        let semanticURL = root.appending(path: "prompts/panels/dialogue.json")
+        try FileManager.default.createDirectory(
+            at: semanticURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(semantic).write(to: semanticURL)
+        let selection = try StudyProtocolScenario(
+            path: "prompts/panels/dialogue.json", workspaceRoot: root)
+        var created = ExperimentManifest(name: "study", description: "", modelID: Self.qwen)
+        created.modelRevision = Self.revision
+        try ExperimentStore.save(created, allowCreate: true, workspaceRoot: root, expectedFile: .absent)
+        let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+        var fields = StudyProtocolFields(manifest: reviewed.manifest)
+        fields.studyKind = .multiAgent
+        fields.reasoningEffort = "off"
+        fields.seatCastingEdits = ["speaker": try SeatCasting.occupant(artifactPath: Self.agentPath)]
+        return (reviewed, fields, selection)
+    }
+
+    /// One save that casts a thinking agent and declares its budget, with the
+    /// study's effort off, is judged by the casting it saves: accepted.
+    @Test func castingAThinkingAgentAndItsBudgetInOneSaveIsAccepted() async throws {
+        try await withWorkspace { root in
+            var (reviewed, fields, selection) = try editorDraft(root)
+            fields.reasoningMaxTokens = 256
+            guard case .saved(let cast, _, _) = try StudyProtocolAuthoring.save(
+                reviewed: reviewed, fields: fields, scenario: selection)
+            else { Issue.record("expected a save"); return }
+            #expect(cast.manifest.reasoningMaxTokens == 256)
+        }
+    }
+
+    /// A save that recasts the only thinking seat to baseline while keeping
+    /// the budget is refused, so no draft is saved that freeze would refuse.
+    @Test func recastingTheOnlyThinkingSeatToBaselineRefusesTheBudget() async throws {
+        try await withWorkspace { root in
+            var (reviewed, fields, selection) = try editorDraft(root)
+            // Cast first, then declare the budget, so the draft pins a
+            // thinking seat whatever the rule reads.
+            guard case .saved(let cast, _, _) = try StudyProtocolAuthoring.save(
+                reviewed: reviewed, fields: fields, scenario: selection)
+            else { Issue.record("expected a save"); return }
+            fields.reasoningMaxTokens = 256
+            guard case .saved(let budgeted, _, _) = try StudyProtocolAuthoring.save(
+                reviewed: cast, fields: fields, scenario: selection)
+            else { Issue.record("expected a save"); return }
+            #expect(budgeted.manifest.reasoningMaxTokens == 256)
+            fields.seatCastingEdits = ["speaker": .baseline]
+            do {
+                _ = try StudyProtocolAuthoring.save(
+                    reviewed: budgeted, fields: fields, scenario: selection)
+                Issue.record("expected the budget to be refused")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains(ReasoningEffort.budgetWithoutEffortReason))
+            }
+            #expect(try DraftAuthoringSnapshot(workspaceRoot: root, name: "study").file.data
+                == budgeted.file.data)
         }
     }
 

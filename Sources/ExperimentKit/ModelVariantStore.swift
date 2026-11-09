@@ -1100,7 +1100,8 @@ extension ModelVariantArtifact {
         + "the app's agent editor), and cast the new agent in the seat in its place."
 
     /// `castAgentProblems` over every seat of `scenario` cast with an agent
-    /// file, as findings with `ArmFix.seat`. Each seat's agent is judged
+    /// file, as findings with `ArmFix.seat`, keyed by seat ID (the key
+    /// `panel compile` casts by). Each seat's agent is judged
     /// against the capability record of ITS model and revision: the
     /// workspace record for a draft and for `panel check`, the id heuristic
     /// for a frozen study. An agent file that cannot be read is not judged
@@ -1114,8 +1115,17 @@ extension ModelVariantArtifact {
             guard let path = seat.variantArtifactPath else { return [] }
             let url = path.hasPrefix("/")
                 ? URL(fileURLWithPath: path) : workspaceRoot.appending(path: path)
-            guard let data = try? Data(contentsOf: url),
-                let artifact = try? JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            // A file whose bytes are not the ones the seat pins is not judged
+            // here: a stale copy at the same path must never refuse a study
+            // whose own agent is sound, and verify and the run refuse the
+            // mismatch themselves.
+            if let pinned = seat.variantArtifactHash, !pinned.isEmpty,
+                SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() != pinned
+            {
+                return []
+            }
+            guard let artifact = try? JSONDecoder().decode(ModelVariantArtifact.self, from: data)
             else { return [] }
             let model = !artifact.baseModelID.isEmpty ? artifact.baseModelID
                 : (!seat.baseModelID.isEmpty ? seat.baseModelID : studyModelID)
@@ -1129,7 +1139,7 @@ extension ModelVariantArtifact {
             return artifact.castAgentProblems(
                 label: "seat '\(seat.name)'", modelID: model, capabilities: capabilities,
                 workspaceRoot: workspaceRoot
-            ).map { ArmFinding(arm: seat.name, sentence: $0, fix: .seat) }
+            ).map { ArmFinding(arm: seat.id, sentence: $0, fix: .seat) }
         }
     }
 
@@ -1343,13 +1353,7 @@ extension ModelVariantArtifact {
         let revision = manifest.modelRevision ?? "<sha>"
         let seats = arms.filter { fixes[$0]?.contains(.seat) == true }
         if !seats.isEmpty {
-            let panel = manifest.multiAgentSemanticScenarioPath ?? "<panel>"
-            steps.append("make a new agent for "
-                + listed(seats.map { "seat '\($0)'" }) + ": \(program) agent create "
-                + "<new-name> --model <model> --revision <sha> … (or the app's agent editor), "
-                + "then compile the panel again, casting every seat, with each new agent in "
-                + "place of the one its seat holds: \(program) panel compile \(panel) "
-                + "--experiment \(target) --seat <seat>=<agent-path> …")
+            steps.append(seatRepair(manifest, seatIDs: seats, target: target))
         }
         for arm in arms {
             let wanted = fixes[arm] ?? []
@@ -1381,6 +1385,37 @@ extension ModelVariantArtifact {
                 }.joined(separator: ", then "))
         }
         return steps.joined(separator: "; then ")
+    }
+
+    /// The step that replaces the agents of the seats `seatIDs` in a panel
+    /// study's draft `target`: make each agent again, then put it in its
+    /// seat. A panel compiled from a semantic panel is compiled again (`panel
+    /// compile`, casting every seat by ID). A hand-bound panel (no semantic
+    /// path), which `panel compile` refuses, is copied with each seat's agent
+    /// replaced, and the copy pinned in the app's study editor: this command
+    /// line has no verb that pins a hand-bound panel. Server twin:
+    /// `agent_identity.seat_repair`, the same steps.
+    static func seatRepair(
+        _ manifest: ExperimentManifest, seatIDs: [String], target: String
+    ) -> String {
+        let program = ExperimentCLIHelp.program
+        let ids = (seatIDs.count > 1 ? "seat IDs " : "seat ID ")
+            + seatIDs.joined(separator: ", ")
+        let make = "make a new agent for each seat whose agent breaks a rule (\(ids)): "
+            + "\(program) agent create <new-name> --model <model> --revision <sha> … "
+            + "(or the app's agent editor), then "
+        if let semantic = manifest.multiAgentSemanticScenarioPath, !semantic.isEmpty {
+            let casts = seatIDs.map { "--seat \($0)=<agent-path>" }.joined(separator: " ")
+            return make + "compile the panel again, casting every seat, with each new agent "
+                + "in place of the one its seat holds: \(program) panel compile \(semantic) "
+                + "--experiment \(target) \(casts) --seat <each other seat>=<its agent-path>"
+        }
+        let pinned = manifest.multiAgentScenarioPath.flatMap { $0.isEmpty ? nil : $0 }
+            ?? "<panel>"
+        return make + "save a copy of the hand-bound panel \(pinned) in which each of "
+            + "those seats' variantArtifactPath and variantArtifactHash name its new agent, "
+            + "and pin the copy in the Mac app's study editor (Setup), which pins a "
+            + "hand-bound panel as it stands"
     }
 
     /// What `verify` says of a frozen study whose agent arms break a rule

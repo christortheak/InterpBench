@@ -156,11 +156,35 @@ public enum StudyProtocolAuthoring {
         // rules (budget beside a non-off effort, on a family with a
         // thinking mode) are refused HERE with the store's sentences so
         // a draft the run would refuse is never saved.
+        // The casting this save writes, read once: the budget rule below
+        // judges it, and the scenario branch further down compiles it.
+        let casting = fields.studyKind == .multiAgent
+            ? SeatCasting.state(
+                of: manifest,
+                selected: selection.map { ($0.scenario, $0.path) },
+                overlay: fields.seatCastingEdits, workspaceRoot: root)
+            : nil
+        let castAssignment = casting.map {
+            baseModelChanged ? SeatCasting.resetToBaseline($0.assignment) : $0.assignment
+        }
         // The one budget predicate: an agent arm, or a cast panel seat, that
-        // thinks lets an off study declare a budget. Server twin:
-        // draft_protocol_policy.apply_protocol.
-        let budgetForAgents = fields.reasoningMaxTokens != nil
-            && ModelVariantArtifact.budgetPermittedWithoutEffort(manifest)
+        // thinks lets an off study declare a budget. A panel is judged by
+        // the casting being saved, never by the panel the draft pinned
+        // before this save. Server twin: draft_protocol_policy.apply_protocol.
+        let budgetForAgents: Bool
+        if fields.reasoningMaxTokens == nil {
+            budgetForAgents = false
+        } else if fields.studyKind == .multiAgent {
+            budgetForAgents = savedPanel(
+                casting, assignment: castAssignment, selection: selection,
+                manifest: manifest, root: root
+            ).map {
+                MultiAgentRunner.seatThinks(
+                    in: $0, studyRevision: manifest.modelRevision, frozen: false)
+            } ?? false
+        } else {
+            budgetForAgents = ModelVariantArtifact.budgetPermittedWithoutEffort(manifest)
+        }
         let reasoningProblems = ReasoningEffort.protocolViolations(
             effort: fields.reasoningEffort, reasoningMaxTokens: fields.reasoningMaxTokens,
             modelID: manifest.modelID
@@ -231,12 +255,6 @@ public enum StudyProtocolAuthoring {
         // compiled scenario binds them, so a recompile must read the values
         // this save is writing, not the previous ones.
         if fields.studyKind == .multiAgent {
-            let casting = SeatCasting.state(
-                of: manifest,
-                selected: selection.map {
-                    ($0.scenario, $0.path)
-                },
-                overlay: fields.seatCastingEdits, workspaceRoot: root)
             switch casting?.form {
             case .uncast, .cast:
                 // The compile inputs are manifest fields, so the scenario is
@@ -245,10 +263,7 @@ public enum StudyProtocolAuthoring {
                 // otherwise go on pinning a scenario that binds the previous
                 // ones — a silent disagreement between the manifest and the
                 // file the run actually reads.
-                if let casting {
-                    let assignment = baseModelChanged
-                        ? SeatCasting.resetToBaseline(casting.assignment)
-                        : casting.assignment
+                if let casting, let assignment = castAssignment {
                     if baseModelChanged, SeatCasting.isTreated(casting.assignment) {
                         advisories.append(
                             "the base model changed, so every seat was reset "
@@ -293,6 +308,31 @@ public enum StudyProtocolAuthoring {
         }
         let saved = try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
         return .saved(saved, didCompileSeats: didCompileSeats, advisories: advisories)
+    }
+
+    /// The panel this save pins, in memory: the casting compiled (nothing
+    /// is written), or a hand-bound panel as it stands. nil when there is
+    /// none, or when it cannot compile (the save refuses that itself, below).
+    private static func savedPanel(
+        _ casting: SeatCasting.State?, assignment: SeatAssignment?,
+        selection: StudyProtocolScenario?, manifest: ExperimentManifest, root: URL
+    ) -> MultiAgentScenario? {
+        guard let casting else { return nil }
+        switch casting.form {
+        case .uncast, .cast:
+            guard let assignment else { return nil }
+            return try? PanelComposition.compile(
+                semantic: casting.semantic, assignment: assignment,
+                modelID: manifest.modelID, temperature: manifest.temperature,
+                maxTokens: manifest.maxTokens)
+        case .legacyBound:
+            if let selection { return selection.scenario }
+            guard let path = manifest.multiAgentScenarioPath, !path.isEmpty,
+                let data = try? Data(contentsOf: ExperimentStore.resolveProjectPath(
+                    path, root: root))
+            else { return nil }
+            return try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
+        }
     }
 
     /// A model change invalidates revision and variant pins. An empty field is
