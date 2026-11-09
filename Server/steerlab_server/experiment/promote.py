@@ -309,7 +309,11 @@ def promote(name: str, concept: str, agent_name: str | None = None,
     if sweep_run is not None:
         # The named run is the ONLY evidence consulted — never the
         # manifest's (possibly stale) recommended condition, never the
-        # newest run in the workspace.
+        # newest run in the workspace. It is unpinned, so nothing yet ties
+        # its cells to the study's CURRENT thinking level: read the level
+        # the sweep ran at from the run itself (FR6-B round 2).
+        _require_plain_run_name(sweep_run, "the sweep_run argument")
+        _require_sweep_run_level(manifest, sweep_run, concept, root)
         return _promote_from_sweep_run(
             manifest, ref, name, concept, sweep_run, agent_name, cell,
             override_reason, root, log, qualification=qualification)
@@ -792,6 +796,27 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
     # every picker, with nothing to distinguish them.
     existing = _existing_promotion(key, root)
     if existing is not None:
+        # The key leaves the thinking level out (it is the cross-engine
+        # identity of the REQUEST), so an agent minted before promotion
+        # carried the sweep's level can match it while thinking at another
+        # level. Never hand that back silently (FR6-B round 2).
+        from . import agent_identity
+        want = agent_identity._artifact_effort(
+            model_variant.ModelVariant(
+                name=variant_name, base_model_id=manifest.model_id,
+                qwen_thinking_enabled=manifest.qwen_thinking_enabled,
+                reasoning_effort=promoted_reasoning_effort(manifest)).to_dict())
+        have = agent_identity._artifact_effort(existing["variant"])
+        if have != want:
+            raise PromoteError(
+                f"promote '{concept}': the agent already minted for this promotion "
+                f"({existing['path']}) thinks at reasoning effort {have}, but the "
+                f"sweep's cells ran at {want}; returning it would hand back an agent "
+                "at a level the sweep never measured",
+                gate=lifecycle_gates.PROMOTION_EVIDENCE,
+                repair=(f"promote again under a new name, which mints an agent at "
+                        f"{want}: experiment promote {name} {concept} --agent-name "
+                        f"{variant_name}-{want}"))
         log(f"promote '{concept}': an agent for this exact promotion already "
             f"exists ({existing['path']}) — returning it unchanged")
         # The citation is outside the key (see above), so a retry that cites
@@ -845,6 +870,44 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
     log(f"promoted '{concept}' → agent '{variant.name}' "
         f"(L{layer}, α{alpha:g}, {promoted_by}) → {saved['path']}")
     return {"variant": variant.to_dict(), **saved}
+
+
+def _require_sweep_run_level(manifest: Manifest, sweep_run: str, concept: str,
+                             root: str | None) -> None:
+    """Refuse an unpinned ``--sweep-run`` promotion when the level the sweep's
+    cells ran at is unknown (no readable manifest snapshot in the run), or
+    differs from the study's current level: the agent would carry a level no
+    cell of that sweep was measured at."""
+    from . import prompt_render
+    snapshot_path = os.path.join(paths.runs_directory(root), sweep_run, "experiment.json")
+    try:
+        with open(snapshot_path, encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+    except (OSError, ValueError):
+        snapshot = None
+    current = manifest.reasoning_effort
+    if not isinstance(snapshot, dict):
+        raise PromoteError(
+            f"sweep run '{sweep_run}' holds no readable experiment.json, so the "
+            "thinking level its cells ran at is unknown, and the agent would "
+            "carry a level no cell was measured at",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=_sweep_again_repair(manifest.name, concept))
+    ran_at = prompt_render.read_reasoning_effort(snapshot)
+    if ran_at != current:
+        raise PromoteError(
+            f"sweep run '{sweep_run}' ran its cells at reasoning effort {ran_at}, "
+            f"but the study now declares {current}; an agent promoted from it "
+            "would think at a level that sweep never measured",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=_sweep_again_repair(manifest.name, concept))
+
+
+def _sweep_again_repair(name: str, concept: str) -> str:
+    """Sweep again at the study's current level, then promote that run."""
+    from . import command_vocabulary as vocabulary
+    return (vocabulary.study_verb("sweep", name) + ", then promote from the new "
+            f"sweep run (experiment promote {name} {concept} --sweep-run <run>)")
 
 
 def promoted_reasoning_effort(manifest: Manifest) -> str | None:

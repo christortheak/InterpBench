@@ -123,6 +123,30 @@ def variant_effort_violations(variant: ModelVariant, capabilities=None) -> list[
     return prompt_render.effort_level_violations(effort, variant.base_model_id, record)
 
 
+def effort_repair(capabilities) -> str:
+    """The repair for an agent level the template does not take, true for the
+    record in hand: the levels it accepts, and those only assumed from the
+    model id (a heuristic record), listed apart. Swift twin:
+    ``StudyAgentCreation.effortRepair``."""
+    from . import model_capabilities as mc
+    if not capabilities.has_thinking_switch:
+        return ("Use --reasoning-effort off: this model's chat template has no "
+                "thinking switch.")
+    accepted = [level for level in prompt_render.REASONING_LEVELS
+                if capabilities.effort_verdict(level) == mc.ACCEPTED]
+    assumed = [level for level in prompt_render.REASONING_LEVELS
+               if capabilities.effort_verdict(level) == mc.ASSUMED]
+    parts = []
+    if accepted:
+        parts.append("levels its chat template accepts: " + ", ".join(accepted))
+    if assumed:
+        parts.append("levels assumed from the model id, with no probed template: "
+                     + ", ".join(assumed))
+    listing = "; ".join(parts) or "no level is known to be accepted"
+    return (f"Choose another level with --reasoning-effort ({listing}), or use on "
+            "(thinking at the template's default) or off.")
+
+
 def agent_kind(artifact: dict) -> str:
     """``swept`` or ``handmade``; see :data:`AGENT_KIND_SWEPT`."""
     return (AGENT_KIND_SWEPT if isinstance(artifact.get("promotion"), dict)
@@ -289,12 +313,24 @@ def arm_problems(name: str, artifact: dict, *, model_id: str, model_revision: st
             "reasoning before it")
     revision = artifact.get("baseRevision")
     if isinstance(revision, str) and revision and model_revision and revision != model_revision:
-        problems.append(
-            f"{label}: the agent was made for revision {revision} of "
-            f"{artifact.get('baseModelID') or model_id}, but the study pins revision "
-            f"{model_revision}")
+        problems.append(f"{label}: " + revision_mismatch_reason(
+            name, str(artifact.get("baseModelID") or model_id), revision, model_revision))
     problems += [f"{label}: {p}" for p in _injection_problems(artifact, root)]
     return problems
+
+
+def revision_mismatch_reason(agent: str, model: str, agent_revision: str,
+                             study_revision: str) -> str:
+    """Swift twin: ``ModelVariantArtifact.revisionMismatchReason``."""
+    return (f"agent '{agent}' was made for revision {agent_revision} of {model}, but "
+            f"the study pins revision {study_revision}")
+
+
+#: Swift twin: ``ModelVariantArtifact.revisionMismatchRepair``.
+REVISION_MISMATCH_REPAIR = (
+    "Make an agent at the study's revision (agent create --revision with the "
+    "study's modelRevision), or pin the study to the agent's revision before "
+    "attaching it.")
 
 
 def _injection_problems(artifact: dict, root: str | None) -> list[str]:

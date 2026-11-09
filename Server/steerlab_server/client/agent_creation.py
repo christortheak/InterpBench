@@ -34,18 +34,19 @@ from ..experiment.manifest_errors import ExperimentStoreError
 #: The flags that make up one agent; ``--review-sha256`` is the reviewed write.
 DEFINING_FLAGS = ("--model", "--revision", "--adapter", "--adapter-sha256",
                   "--vector", "--vector-sha256", "--layer", "--strength", "--mode",
-                  "--reasoning-effort", "--system-prompt-file", "--prompt-mode",
-                  "--reason")
+                  "--centering", "--band-width", "--reasoning-effort",
+                  "--system-prompt-file", "--prompt-mode", "--reason")
 
 VERB_SPECS = (
     VerbSpec("agent", "create", positional="<name>",
              purpose="Preview an agent made by hand: a base model at a pinned "
-                     "revision, at most one adapter, steering vectors at the "
-                     "layers and strengths you choose (in residual-norm units), "
-                     "a thinking level, a system prompt, and a prompt mode. "
-                     "Repeat with --review-sha256 to write it into the agent "
-                     "library with a record of how it was made. The study that "
-                     "casts the agent sets its temperature.",
+                     "revision, at most one adapter, vectors at the layers and "
+                     "strengths you choose (a steering strength is in "
+                     "residual-norm units, an ablation's is the fraction "
+                     "removed), a thinking level, a system prompt, and a prompt "
+                     "mode. Repeat with --review-sha256 to write it into the "
+                     "agent library with a record of how it was made. The study "
+                     "that casts the agent sets its temperature.",
              value_flags=frozenset(DEFINING_FLAGS + ("--review-sha256",)),
              required_flags=frozenset({"--model", "--revision"})),
 )
@@ -55,6 +56,9 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PROMPT_MODES = ("chatAssistant", "rawCompletion")
 _MODES = ("add", "ablate")
+_CENTERINGS = ("none", "neutralMean")
+#: The layer bands the app's agent editor offers (odd, 1 to 11).
+_BAND_WIDTHS = tuple(range(1, 12, 2))
 _WEIGHTS_BY_FORMAT = {"hf-peft-lora": "adapter_model.safetensors",
                       "peft": "adapter_model.safetensors",
                       "mlx-lora": "adapters.safetensors"}
@@ -114,19 +118,22 @@ def _json_object(path: Path, what: str) -> dict:
 
 
 def _grouped(invocation_flags: dict) -> list[dict]:
-    """The k-th --vector-sha256, --layer, --strength, and --mode belong to the
-    k-th --vector. --mode may be left out for every vector (each one steers)."""
+    """The k-th --vector-sha256, --layer, --strength, --mode, and --centering
+    belong to the k-th --vector. --mode and --centering may each be left out
+    for every vector (each one steers; an ablation keeps the raw direction)."""
     vectors = invocation_flags.get("--vector", [])
     columns = {flag: invocation_flags.get(flag, [])
                for flag in ("--vector-sha256", "--layer", "--strength")}
     modes = invocation_flags.get("--mode", [])
+    centerings = invocation_flags.get("--centering", [])
     if any(len(values) != len(vectors) for values in columns.values()) or (
-            modes and len(modes) != len(vectors)):
+            modes and len(modes) != len(vectors)) or (
+            centerings and len(centerings) != len(vectors)):
         _usage("Give each --vector its own --vector-sha256, --layer, and --strength "
-               "(and --mode for each vector, or for none).",
+               "(and --mode and --centering for each vector, or for none).",
                f"{PROGRAM} agent create <name> --model <id> --revision <sha> "
                "--vector <artifact> --vector-sha256 <digest> --layer <n> "
-               "--strength <alpha> [--mode add|ablate]")
+               "--strength <alpha> [--mode add|ablate] [--centering none|neutralMean]")
     out = []
     for index, reference in enumerate(vectors):
         layer_text = columns["--layer"][index]
@@ -142,24 +149,42 @@ def _grouped(invocation_flags: dict) -> list[dict]:
             strength = float("nan")
         if strength != strength or strength in (float("inf"), float("-inf")):
             _usage(f"--strength {strength_text} is not a number.",
-                   "Give the strength as a number in residual-norm units, such as "
-                   "--strength 0.12.")
+                   "Give the strength as a number: in residual-norm units when the "
+                   "vector steers (such as --strength 0.12), or the fraction removed "
+                   "when it ablates (such as --strength 1).")
         mode = modes[index] if modes else "add"
         if mode not in _MODES:
             _usage(f"--mode {mode} is not add or ablate.",
                    "Use --mode add to steer along the vector, or --mode ablate to "
                    "remove it.")
+        centering = centerings[index] if centerings else "none"
+        if centering not in _CENTERINGS:
+            _usage(f"--centering {centering} is not none or neutralMean.",
+                   "Use --centering neutralMean to remove the vector's stored neutral "
+                   "mean from an ablated direction, or none to keep it raw.")
+        if centering != "none" and mode != "ablate":
+            _usage("--centering applies only to an ablating vector (--mode ablate).",
+                   "Give --centering none for a steering vector, or leave --centering "
+                   "out.")
         out.append({"reference": reference, "sha256": columns["--vector-sha256"][index],
-                    "layer": layer, "strength": strength, "mode": mode})
+                    "layer": layer, "strength": strength, "mode": mode,
+                    "centering": centering})
     return out
 
 
-def _vector(root: Path, spec: dict, model: str, revision: str, notes: list) -> tuple[dict, dict]:
-    from ..experiment import catalog
-    from ..steering import residual_norm_convention
-    reference = spec["reference"].strip()
+def _normal_reference(reference: str) -> str:
+    """A vector reference as recorded: trimmed, no file suffix."""
+    reference = reference.strip()
     for suffix in (".safetensors", ".json"):
         reference = reference.removesuffix(suffix)
+    return reference
+
+
+def _vector(root: Path, spec: dict, model: str, revision: str, band_width: int,
+            notes: list) -> tuple[dict, dict]:
+    from ..experiment import catalog
+    from ..steering import residual_norm_convention
+    reference = _normal_reference(spec["reference"])
     tensor = _ordinary(root, reference + ".safetensors", "vector")
     sidecar_path = _ordinary(root, reference + ".json", "vector's sidecar")
     if not tensor.is_file() or not sidecar_path.is_file():
@@ -198,18 +223,38 @@ def _vector(root: Path, spec: dict, model: str, revision: str, notes: list) -> t
                 "Choose a layer the vector has, with --layer.")
     norms = sidecar.get("normsPerLayer")
     if isinstance(norms, list) and layer < len(norms) and not norms[layer]:
-        _refuse(f"The vector {reference} is empty at layer {layer}, so steering there "
+        _refuse(f"The vector {reference} is empty at layer {layer}, so using it there "
                 "would change nothing.",
                 "Choose a layer where the vector has a direction (its sidecar's "
                 "normsPerLayer is not zero there).")
     concept = str(sidecar.get("concept") or os.path.basename(reference))
-    if spec["mode"] == "add" and residual_norm_convention.residual_norm_problem(
-            sidecar.get("residualNormPerLayer"), layer, artifact=concept) is not None:
-        _refuse(f"The vector {reference} records no residual norm at layer {layer}, so "
-                "a strength in residual-norm units has nothing to be measured against.",
-                "Measure the vector's residual norms first (steerlab-cli vectors "
-                "backfill-norms on the Mac, or steerlab-server vectors backfill-norms "
-                "where the model is installed), then preview again.")
+    if spec["mode"] == "add":
+        half = band_width // 2
+        for band_layer in range(max(0, layer - half), min(count - 1, layer + half) + 1):
+            if residual_norm_convention.residual_norm_problem(
+                    sidecar.get("residualNormPerLayer"), band_layer,
+                    artifact=concept) is not None:
+                _refuse(f"The vector {reference} records no residual norm at layer "
+                        f"{band_layer}, so a strength in residual-norm units has "
+                        "nothing to be measured against there.",
+                        "Measure the vector's residual norms first (steerlab-cli "
+                        "vectors backfill-norms on the Mac, or steerlab-server vectors "
+                        "backfill-norms where the model is installed), then preview "
+                        "again.")
+    elif spec["centering"] == "neutralMean":
+        if not sidecar.get("neutralMeanSource"):
+            _refuse(f"The vector {reference} stores no neutral mean, so "
+                    "--centering neutralMean has nothing to remove.",
+                    "Extract the concept again with a neutral corpus, or use "
+                    "--centering none.")
+    else:
+        # Raw extracted vectors share a large component with the residual
+        # mean, and ablating that at full strength collapses generation into
+        # single-token repetition (2026-08-06 collapse study).
+        notes.append(f"The vector {reference} is ablated without centering: a raw "
+                     "direction carries part of the residual mean, and ablating it at "
+                     "strength 1 can collapse generation into repetition. Consider "
+                     "--centering neutralMean.")
     if not catalog.covers_model_depth(covers=sidecar.get("coversModelDepth"),
                                       extraction_method=sidecar.get("extractionMethod"),
                                       recipe_method=None):
@@ -219,9 +264,12 @@ def _vector(root: Path, spec: dict, model: str, revision: str, notes: list) -> t
                  "alpha": spec["strength"]}
     if spec["mode"] == "ablate":
         injection["mode"] = "ablate"
+        if spec["centering"] != "none":
+            injection["centering"] = spec["centering"]
     return injection, {"artifactID": reference, "artifactSHA256": live,
                        "sidecarSHA256": _sha256(sidecar_bytes), "layer": layer,
-                       "strength": spec["strength"], "mode": spec["mode"]}
+                       "strength": spec["strength"], "mode": spec["mode"],
+                       "centering": spec["centering"]}
 
 
 def _weights_file(directory: Path, record: dict) -> str:
@@ -240,6 +288,7 @@ def _weights_file(directory: Path, record: dict) -> str:
 def _adapter(root: Path, reference: str, expected: str, model: str, revision: str,
              notes: list) -> tuple[dict, dict]:
     from ..experiment import paths
+    reference = reference.strip().rstrip("/")
     path = _ordinary(root, reference, "adapter")
     if path.is_file() and path.name == "fine-tune.json":
         record_path, record = path, _json_object(path, "adapter record")
@@ -270,7 +319,10 @@ def _adapter(root: Path, reference: str, expected: str, model: str, revision: st
                     gate="missingPrerequisite")
         record = _json_object(record_path, "adapter record")
         name = str(record.get("name") or path.name)
-        declared_revision = record.get("revision")
+        # Training records the requested revision under `revision` (which can
+        # be a branch) and the commit it resolved to under `revisionResolved`
+        # (lora_train); the commit is what the adapter was trained on.
+        declared_revision = record.get("revisionResolved") or record.get("revision")
         declared_weights = record.get("adapterBytesHash")
         declared_config = record.get("adapterConfigHash")
     else:
@@ -315,7 +367,7 @@ def _adapter(root: Path, reference: str, expected: str, model: str, revision: st
                     "again.")
     ref = {"name": name, "artifactPath": record_path.relative_to(root).as_posix(),
            "adapterDirectory": relative, "adapterHash": weights, "configHash": config}
-    return ref, {"path": reference, "adapterDirectory": relative,
+    return ref, {"path": path.relative_to(root).as_posix(), "adapterDirectory": relative,
                  "weightsFile": weights_name, "adapterSHA256": weights,
                  "configSHA256": config,
                  "recordSHA256": _sha256(record_path.read_bytes())}
@@ -324,7 +376,40 @@ def _adapter(root: Path, reference: str, expected: str, model: str, revision: st
 # --- the plan ------------------------------------------------------------------
 
 
-def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
+def recorded_file(raw: str, root: Path) -> tuple[Path, dict]:
+    """A file input as a handmade record may name it: workspace-relative when
+    it is inside the workspace, else by its file name alone, so no home folder
+    or other machine path reaches an agent file (and through it a frozen
+    study, a bundle, or an export). Returns the path to read and the record's
+    ``{"path"|"name": …}``. Swift twin: ``StudyAgentCreation.recordedFile``."""
+    path = Path(os.path.expanduser(raw.strip()))
+    absolute = path if path.is_absolute() else Path.cwd() / path
+    try:
+        relative = absolute.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return absolute, {"name": absolute.name}
+    return absolute, {"path": relative}
+
+
+def _recorded_command(name: str, flags: dict, *, system_file: dict | None) -> list[str]:
+    """The command a handmade record keeps: rebuilt from the normalised
+    arguments, never raw argv, so a typed absolute path is never stored."""
+    command = [PROGRAM, "agent", "create", name]
+    for flag in DEFINING_FLAGS:
+        for value in flags.get(flag, []):
+            if flag == "--system-prompt-file" and system_file is not None:
+                value = system_file.get("path") or system_file.get("name")
+            elif flag == "--adapter":
+                value = value.strip().rstrip("/")
+            elif flag == "--vector":
+                value = _normal_reference(value)
+            elif flag in ("--model", "--revision"):
+                value = value.strip()
+            command += [flag, value]
+    return command
+
+
+def plan(name: str, flags: dict, *, root: Path) -> dict:
     """Every check, and the agent file the write would produce (minus its
     timestamps). Writes nothing."""
     from ..experiment import agent_identity, model_capabilities, model_variant, prompt_render
@@ -332,7 +417,7 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
 
     one = lambda flag: (flags.get(flag) or [None])[-1]  # noqa: E731
     for flag in ("--model", "--revision", "--reasoning-effort", "--system-prompt-file",
-                 "--prompt-mode", "--reason", "--review-sha256"):
+                 "--prompt-mode", "--reason", "--review-sha256", "--band-width"):
         if len(flags.get(flag, [])) > 1:
             _usage(f"Give {flag} once.", f"{PROGRAM} agent create --help")
     name = name.strip()
@@ -346,9 +431,20 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
         _refuse(f"--revision {revision} is not a pinned commit: an agent names the exact "
                 "weights it runs, as a full 40-character commit hash, not a branch or a "
                 "tag that can move.",
-                f"Give the full 40-character commit hash of the revision ({PROGRAM} "
-                f"model plan {model} --json shows the revision a prepared model "
-                "resolves to).")
+                "Give the full 40-character commit hash of the revision: the model "
+                f"page's commit history shows it, and {PROGRAM} model plan {model} "
+                "--runner <url> --json reports the commit a runner's copy resolves "
+                "to.")
+    band_text = one("--band-width") or "1"
+    try:
+        band_width = int(band_text)
+    except ValueError:
+        band_width = 0
+    if band_width not in _BAND_WIDTHS:
+        _usage(f"--band-width {band_text} is not an odd whole number from 1 to 11.",
+               "Give the layer band as 1, 3, 5, 7, 9, or 11 (each steering injection "
+               "is applied at its layer and the layers around it), as the app's agent "
+               "editor offers.")
     notes: list[str] = []
 
     adapters = flags.get("--adapter", [])
@@ -375,7 +471,7 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
 
     injections, vector_inputs = [], []
     for spec in _grouped(flags):
-        injection, recorded = _vector(root, spec, model, revision, notes)
+        injection, recorded = _vector(root, spec, model, revision, band_width, notes)
         injections.append(injection)
         vector_inputs.append(recorded)
 
@@ -394,28 +490,25 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
                                        reasoning_effort=effort)
     problems = agent_identity.variant_effort_violations(probe, capabilities)
     if problems:
-        _refuse("; ".join(problems),
-                ("Choose a level the model's chat template accepts (accepted: "
-                 f"{', '.join(capabilities.accepted_efforts) or 'none'}) with "
-                 "--reasoning-effort, or use on (thinking at the template's default) "
-                 "or off." if capabilities.has_thinking_switch else
-                 "Use --reasoning-effort off: this model's chat template has no "
-                 "thinking switch."), gate="studyDeclaration")
+        _refuse("; ".join(problems), agent_identity.effort_repair(capabilities),
+                gate="studyDeclaration")
     notes += prompt_render.reasoning_protocol_advisories(
         effort=effort, model_id=model, capabilities=capabilities)
 
     system_prompt, system_input = None, None
     system_file = one("--system-prompt-file")
     if system_file is not None:
+        readable, named = recorded_file(system_file, root)
+        shown = named.get("path") or named.get("name")
         try:
-            data = Path(system_file).read_bytes()
+            data = readable.read_bytes()
             text = data.decode("utf-8")
         except (OSError, UnicodeError):
-            _refuse(f"The system prompt file {system_file} could not be read as UTF-8 "
+            _refuse(f"The system prompt file {shown} could not be read as UTF-8 "
                     "text.", "Check the file, then preview again.",
                     gate="missingPrerequisite")
         if not text.strip():
-            _refuse(f"The system prompt file {system_file} is empty.",
+            _refuse(f"The system prompt file {shown} is empty.",
                     "Write the agent's system prompt into the file, or leave out "
                     "--system-prompt-file.", gate="missingPrerequisite")
         if prompt_mode == "rawCompletion":
@@ -430,12 +523,14 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
             _refuse("; ".join(problems), "Leave out --system-prompt-file for this "
                     "model.", gate="studyDeclaration")
         system_prompt = text
-        system_input = {"path": system_file, "sha256": _sha256(data)}
+        system_input = {**named, "sha256": _sha256(data)}
 
-    taken = {agent["artifact"].get("name") for agent in study_agents.catalog(root=root)["agents"]}
-    if name in taken:
-        _refuse(f"An agent named {name} already exists in this workspace, and a study "
-                "tells its agents apart by name.",
+    # Compared as the app's agent editor compares names: ignoring case.
+    taken = {str(agent["artifact"].get("name") or "").strip().casefold()
+             for agent in study_agents.catalog(root=root)["agents"]}
+    if name.casefold() in taken:
+        _refuse(f"An agent named {name} already exists in this workspace (names are "
+                "compared ignoring case), and a study tells its agents apart by name.",
                 f"Choose another name ({PROGRAM} agent list --json lists the names in "
                 "use).", gate="studyDeclaration")
 
@@ -444,19 +539,23 @@ def plan(name: str, flags: dict, *, root: Path, command: list[str]) -> dict:
         reason = None
     document = {
         "schemaVersion": 1, "name": name, "baseModelID": model, "baseRevision": revision,
-        "adapters": adapter_refs, "injections": injections, "bandWidth": 1,
+        "adapters": adapter_refs, "injections": injections, "bandWidth": band_width,
         "alphaInNormUnits": True, "promptMode": prompt_mode,
         "qwenThinkingEnabled": effort != prompt_render.REASONING_OFF,
-        # The schema needs a number here; it is the Playground default and is
-        # never the temperature a study runs the agent at.
+        # No temperature was chosen: the study that casts the agent sets it.
+        # The file still says 0 because the Mac's agent file type always
+        # writes one; it is the Playground's default, never a run's setting.
         "temperature": 0,
         "handmade": {
-            "schemaVersion": 1, "madeWith": "agent create", "client": PROGRAM,
-            "command": command, "reason": reason,
+            "schemaVersion": 1, "madeWith": agent_identity.MADE_WITH_AGENT_CREATE,
+            "client": PROGRAM,
+            "command": _recorded_command(name, flags, system_file=system_input),
+            "reason": reason,
             "inputs": {"model": {"id": model, "revision": revision},
                        "adapters": adapter_inputs, "vectors": vector_inputs,
+                       "bandWidth": band_width,
                        "reasoningEffort": effort, "promptMode": prompt_mode,
-                       "systemPromptFile": system_input,
+                       "systemPromptFile": system_input, "temperature": None,
                        "capabilityRecordSource": capabilities.source},
         },
     }
@@ -525,15 +624,16 @@ def run(invocation) -> CLIResult:
         _usage("Name the agent and give --model and --revision.",
                f"{PROGRAM} agent create <name> --model <id> --revision <sha>")
     root = files.root_path()
-    # The command as the researcher can run it again: the defining flags in
-    # a fixed order, each repeated value in the order given.
+    # The command as the researcher can run it again, printed (never
+    # stored): the defining flags in a fixed order, each repeated value in the
+    # order given. The handmade record keeps its own normalised copy.
     command = ["agent", "create", args[0]]
     for flag in DEFINING_FLAGS:
         for value in invocation.all(flag):
             command += [flag, value]
     flags = {flag: invocation.all(flag) for flag in DEFINING_FLAGS + ("--review-sha256",)
              if invocation.has(flag)}
-    planned = plan(args[0], flags, root=root, command=[PROGRAM] + command)
+    planned = plan(args[0], flags, root=root)
     advisories = [{"code": "agentCreateNote", "detail": note} for note in planned["advisories"]]
     expected = invocation.one("--review-sha256")
     if expected is None:

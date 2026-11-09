@@ -1948,6 +1948,20 @@ public enum ExperimentStore {
                     + "model \(manifest.modelID)",
                 repair: "Choose an agent for this study's base model, or deliberately revise the draft's model before attaching it.")
         }
+        // The revision too (FR6-B round 2): an agent made for one commit of
+        // the model and run under another is not the agent it describes. An
+        // agent written before agents recorded a revision is not judged.
+        // Server twin: `study_agents.attach`.
+        if let agentRevision = record.artifact.baseRevision, !agentRevision.isEmpty,
+            let studyRevision = manifest.modelRevision, !studyRevision.isEmpty,
+            agentRevision != studyRevision
+        {
+            throw ExperimentError.refusing(.artifactPin,
+                ModelVariantArtifact.revisionMismatchReason(
+                    agent: record.artifact.name, model: record.artifact.baseModelID,
+                    agentRevision: agentRevision, studyRevision: studyRevision),
+                repair: ModelVariantArtifact.revisionMismatchRepair)
+        }
         let condition = try agentCondition(for: record, workspaceRoot: workspaceRoot,
             expectedArtifactFileSHA256: expectedArtifactFileSHA256)
         manifest.variantConditions.removeAll {

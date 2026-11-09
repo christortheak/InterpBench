@@ -63,6 +63,18 @@ def attach(name: str, artifact: str, *, root: Path, expected: str, artifact_sha2
     with files.reviewed_draft(name, root, expected):
         document = store.load_raw(name, str(root))
         arm = design_panels.review_agent({"artifactPath": artifact, "artifactFileSHA256": artifact_sha256}, root, document['modelID'])
+        # The revision too (FR6-B round 2); an agent from before agents
+        # recorded one is not judged. Swift twin: ExperimentStore.attachAgent.
+        from ..experiment import agent_identity
+        agent_revision = arm["artifact"].get("baseRevision")
+        study_revision = document.get("modelRevision")
+        if agent_revision and study_revision and agent_revision != study_revision:
+            from ..experiment.manifest_errors import ExperimentStoreError
+            raise ExperimentStoreError(
+                agent_identity.revision_mismatch_reason(
+                    arm["artifact"]["name"], arm["artifact"]["baseModelID"],
+                    agent_revision, study_revision),
+                gate="artifactPin", repair=agent_identity.REVISION_MISMATCH_REPAIR)
         document['variantConditions'] = [a for a in document.get('variantConditions', [])
             if a['name'] != arm['name'] and a['artifactPath'] != arm['artifactPath']] + [arm]
         store.save_raw(document, str(root))

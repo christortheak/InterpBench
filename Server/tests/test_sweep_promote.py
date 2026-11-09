@@ -611,6 +611,12 @@ def _plant_completed_sweep_run(root, sweep_run=SELECTION_BLOCK["sweepRun"],
     with open(os.path.join(run_dir, "recommendations.json"), "w",
               encoding="utf-8") as handle:
         json.dump({concept: entry}, handle)
+    # The manifest snapshot every sweep run writes (run_artifacts); an
+    # unpinned --sweep-run promotion reads the sweep's thinking level from it.
+    # These fixtures' studies do not think.
+    with open(os.path.join(run_dir, "experiment.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"reasoningEffort": "off"}, handle)
     return run_dir
 
 
