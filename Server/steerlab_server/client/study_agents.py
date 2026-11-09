@@ -58,25 +58,52 @@ def catalog(*, root: Path) -> dict:
     return {"agents": agents, "issues": issues}
 
 
-def attach(name: str, artifact: str, *, root: Path, expected: str, artifact_sha256: str) -> dict:
+def attach(name: str, artifact: str, *, root: Path, expected: str, artifact_sha256: str,
+           replace: str | None = None) -> dict:
+    """Attach the reviewed agent file to the reviewed draft. ``replace`` names
+    an attached arm the agent takes the place of, at the same position: how a
+    corrected agent replaces one that breaks a rule. Swift twin:
+    ``StudyAgentAuthoring.attach`` (``--replace``)."""
+    from ..experiment import agent_identity
+    from ..experiment.manifest_errors import ExperimentStoreError
     design_files.ordinary(root, str(files.study_path(root, name).relative_to(root)))
     with files.reviewed_draft(name, root, expected):
         document = store.load_raw(name, str(root))
+        arms = list(document.get('variantConditions', []))
+        position = len(arms)
+        if replace is not None:
+            position = next((i for i, a in enumerate(arms) if a.get('name') == replace), None)
+            if position is None:
+                listed = ", ".join(str(a.get('name')) for a in arms) or "none"
+                raise ExperimentStoreError(
+                    f"Study {name} has no agent arm named {replace} to replace (its "
+                    f"agent arms: {listed}).",
+                    gate="missingPrerequisite",
+                    repair="Name an attached arm with --replace, or leave --replace out "
+                           "to add the agent as a new arm.")
         arm = design_panels.review_agent({"artifactPath": artifact, "artifactFileSHA256": artifact_sha256}, root, document['modelID'])
-        # The revision too (FR6-B round 2); an agent from before agents
-        # recorded one is not judged. Swift twin: ExperimentStore.attachAgent.
-        from ..experiment import agent_identity
+        # The revision too: refused only when both name commits and they
+        # differ; a revision the spelling cannot check is a verify note.
+        # Swift twin: ExperimentStore.attachAgent.
         agent_revision = arm["artifact"].get("baseRevision")
         study_revision = document.get("modelRevision")
-        if agent_revision and study_revision and agent_revision != study_revision:
-            from ..experiment.manifest_errors import ExperimentStoreError
+        if (isinstance(agent_revision, str) and agent_revision and isinstance(study_revision, str)
+                and study_revision and agent_identity.compare_revisions(
+                    agent_revision, study_revision) == agent_identity.REVISIONS_DIFFER):
             raise ExperimentStoreError(
                 agent_identity.revision_mismatch_reason(
-                    arm["artifact"]["name"], arm["artifact"]["baseModelID"],
-                    agent_revision, study_revision),
+                    arm["artifact"]["baseModelID"], agent_revision, study_revision,
+                    agent=arm["artifact"]["name"]),
                 gate="artifactPin", repair=agent_identity.REVISION_MISMATCH_REPAIR)
-        document['variantConditions'] = [a for a in document.get('variantConditions', [])
-            if a['name'] != arm['name'] and a['artifactPath'] != arm['artifactPath']] + [arm]
+        kept = []
+        for index, existing in enumerate(arms):
+            if index == position:
+                continue
+            if existing['name'] == arm['name'] or existing['artifactPath'] == arm['artifactPath']:
+                position -= index < position
+                continue
+            kept.append(existing)
+        document['variantConditions'] = kept[:position] + [arm] + kept[position:]
         store.save_raw(document, str(root))
         from ..experiment.agent_identity import agent_origin
         return {**files.snapshot(name, root), "changed": document.source_digest != expected,

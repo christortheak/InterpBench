@@ -469,6 +469,41 @@ def agent_reasoning_effort() -> None:
     _write(os.path.join(FIXTURES, "agent-reasoning-effort.json"), cases)
 
 
+def agent_origin_summaries() -> None:
+    """What every surface says of how a handmade agent was made (FR6-B round
+    3): an ``agent create`` record, an editor record with no source, and editor
+    records edited from a promoted, a handmade, and an unrecorded agent, with
+    and without changed fields. Swift's ``ModelVariantArtifact.origin`` must
+    word each one alike."""
+    from steerlab_server.experiment import agent_identity
+    steering = [{"concept": "c", "vectorArtifactID": "runs/x/c", "layer": 2, "alpha": 0.1}]
+    editor = {"schemaVersion": 1, "madeWith": "agent editor", "client": "SteerLab app",
+              "createdAt": "2026-11-08T00:00:00Z", "reason": None}
+    records = [
+        {"schemaVersion": 1, "madeWith": "agent create", "reason": "a prior setting"},
+        dict(editor),
+        {**editor, "editedFrom": {"kind": "swept", "artifactFileSHA256": "c" * 64,
+                                  "experiment": "tone", "sweepRun": "sweep-1"},
+         "changed": ["systemPrompt"]},
+        {**editor, "editedFrom": {"kind": "swept", "artifactFileSHA256": "c" * 64,
+                                  "experiment": "tone"},
+         "changed": ["reasoningEffort", "injections", "temperature"]},
+        {**editor, "editedFrom": {"kind": "handmade", "artifactFileSHA256": "d" * 64,
+                                  "handmade": {"madeWith": "agent create"}},
+         "changed": []},
+        {**editor, "editedFrom": {"kind": "handmade", "artifactFileSHA256": "e" * 64},
+         "changed": ["adapters", "promptMode"]},
+    ]
+    cases = []
+    for record in records:
+        for injections in ([], steering):
+            artifact = {"name": "agent", "baseModelID": "test/model",
+                        "injections": injections, "handmade": record}
+            cases.append({"artifact": artifact,
+                          "summary": agent_identity.agent_origin(artifact)["summary"]})
+    _write(os.path.join(FIXTURES, "agent-origin-summaries.json"), cases)
+
+
 def choice_margins() -> None:
     """The D3 margin arithmetic. Quantile interpolation and clamp detection
     are the parts two implementations silently disagree on."""
@@ -3229,6 +3264,7 @@ def main() -> int:
     ablation_layers()
     choice_margins()
     agent_reasoning_effort()
+    agent_origin_summaries()
     auto_prompt_ids()
     row_hashes()
     evidence_bundle()

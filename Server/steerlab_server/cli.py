@@ -2426,6 +2426,10 @@ def _experiment(args: list[str]):
             if arm_note:
                 sys.stderr.write(f"ADVISORY: {arm_note}\n")
                 verified_advisories.append(advisory("refusedWhenRun", arm_note))
+            # An agent revision the spelling cannot check is said, not refused.
+            for note in _agent_identity.manifest_arm_notes(manifest):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                verified_advisories.append(advisory("agentRevisionNotChecked", note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
                 state="okWithAdvisories" if verified_advisories else "ready",

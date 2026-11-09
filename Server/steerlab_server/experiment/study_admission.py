@@ -118,13 +118,13 @@ def agent_arm_refusal(manifest: Manifest,
     if manifest.study_kind == "multiAgent":
         return None
     from . import agent_identity
-    problems = agent_identity.manifest_arm_problems(manifest, root)
-    if not problems:
+    findings = agent_identity.manifest_arm_findings(manifest, root)
+    if not findings:
         return None
     return lifecycle_gates.refusing(
-        lifecycle_gates.STUDY_DECLARATION, "; ".join(problems),
+        lifecycle_gates.STUDY_DECLARATION, "; ".join(s for _, s, _ in findings),
         repair=agent_identity.arm_problems_repair(
-            manifest.name, frozen=manifest.status != "draft",
+            manifest, findings, frozen=manifest.status != "draft",
             authoring=vocabulary.authoring))
 
 

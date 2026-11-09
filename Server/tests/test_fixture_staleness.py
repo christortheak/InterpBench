@@ -396,6 +396,9 @@ def test_every_committed_fixture_has_a_staleness_test():
         # the agent-file rules and the level helper) and read by
         # StudyAgentCreationTests.swift.
         "agent-reasoning-effort.json",
+        # Checked inline in test_agent_round3.py (every summary re-worded by
+        # agent_identity.agent_origin) and read by StudyAgentCreationTests.swift.
+        "agent-origin-summaries.json",
         # Checked inline in test_sampled_effect_pairing.py (analyze re-run
         # over the committed records, and the derived seeds re-derived).
         "sampled-effect-pairing.json",

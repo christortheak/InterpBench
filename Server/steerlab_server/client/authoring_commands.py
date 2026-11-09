@@ -6,8 +6,8 @@ from ..cli_envelope import CLIResult, VerbSpec
 REVIEW = frozenset({'--manifest-sha256'})
 VERB_SPECS = (
     VerbSpec('agent', 'list', purpose='Discover native and imported agent artifacts without changing evidence.'),
-    VerbSpec('experiment', 'attach-agent', positional='<study>', purpose='Attach the exact reviewed agent to a reviewed draft.',
-             value_flags=REVIEW | {'--artifact', '--artifact-sha256'}, required_flags=REVIEW | {'--artifact', '--artifact-sha256'}),
+    VerbSpec('experiment', 'attach-agent', positional='<study>', purpose='Attach the exact reviewed agent to a reviewed draft; --replace <arm> puts it in place of that attached arm.',
+             value_flags=REVIEW | {'--artifact', '--artifact-sha256', '--replace'}, required_flags=REVIEW | {'--artifact', '--artifact-sha256'}),
     VerbSpec('experiment', 'set-pipeline', positional='<study>', purpose='Replace or clear a reviewed pipeline declaration; does not execute it.',
              value_flags=REVIEW | {'--file'}, required_flags=REVIEW | {'--file'}),
     VerbSpec('panel', 'list', purpose='List local semantic panel inputs and catalog issues.'),
@@ -37,7 +37,8 @@ def run(invocation):
         result = study_agents.catalog(root=root)
     elif spec.verb == 'attach-agent':
         from . import custom_code_commands
-        result = study_agents.attach(args[0], one('--artifact'), root=root, expected=one('--manifest-sha256'), artifact_sha256=one('--artifact-sha256'))
+        result = study_agents.attach(args[0], one('--artifact'), root=root, expected=one('--manifest-sha256'), artifact_sha256=one('--artifact-sha256'),
+                                     replace=one('--replace'))
         custom_code_commands.attach_notice(result, result['document'], root, study=args[0])
     elif spec.verb == 'set-pipeline':
         raw = Path(one('--file')).read_bytes()

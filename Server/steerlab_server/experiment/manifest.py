@@ -1449,11 +1449,11 @@ class Manifest:
         # its freeze; ``capability_advisories`` says those out loud instead.
         record = self._capabilities_for_gates(root)
         # A study whose own effort is off may still declare a reasoning budget
-        # when an attached agent arm thinks: it then reaches only the arms
-        # that think (the maintainer's ruling, 2026-11-08). The predicate is
-        # kept separate so a panel seat's twin can join it.
+        # when the one predicate permits it (an attached agent arm thinks):
+        # it then reaches only the arms that think (the maintainer's ruling,
+        # 2026-11-08). Swift twin: ExperimentManifest.reasoningBudgetViolations.
         from . import agent_identity
-        budget_for_agents = agent_identity.an_attached_agent_arm_thinks(self.raw)
+        budget_for_agents = agent_identity.budget_permitted_without_effort(self.raw)
         if self.reasoning_effort_declared:
             violations += [
                 v for v in prompt_render.reasoning_protocol_violations(

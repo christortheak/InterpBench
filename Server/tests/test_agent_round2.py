@@ -42,7 +42,7 @@ def restore_cli_root(monkeypatch):
 
 
 @pytest.mark.parametrize("spelling", ["absolute", "tilde"])
-def test_a_file_outside_the_workspace_is_recorded_by_name_and_hash(
+def test_a_file_outside_the_workspace_is_recorded_by_its_hash_alone(
         tmp_path, capsys, monkeypatch, spelling):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -50,9 +50,10 @@ def test_a_file_outside_the_workspace_is_recorded_by_name_and_hash(
     home = tmp_path / "home" / "researcher"
     home.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    prompt = home / "persona.txt"
+    # The file's own name can carry a private name, so it is not recorded.
+    prompt = home / "notes-for-dr-example.txt"
     prompt.write_text("Answer as a careful reviewer.")
-    given = str(prompt) if spelling == "absolute" else "~/persona.txt"
+    given = str(prompt) if spelling == "absolute" else "~/notes-for-dr-example.txt"
     _, result = base.create(workspace, capsys, *base.base_args() + [
         "--system-prompt-file", given])
     written = (workspace / result["path"]).read_text()
@@ -60,11 +61,12 @@ def test_a_file_outside_the_workspace_is_recorded_by_name_and_hash(
     home_root = "/" + "Users" + "/"  # the macOS home root, spelled apart
     assert home_root not in written and "~/" not in written
     record = json.loads(written)["handmade"]
+    assert "dr-example" not in written
     assert record["inputs"]["systemPromptFile"] == {
-        "name": "persona.txt",
+        "outsideWorkspace": True,
         "sha256": hashlib.sha256(b"Answer as a careful reviewer.").hexdigest()}
     assert record["command"][record["command"].index("--system-prompt-file") + 1] \
-        == "persona.txt"
+        == "<a file outside the workspace>"
     # The same file is clean by the release's own artifact scan.
     env = {k: v for k, v in os.environ.items() if k != "STEERLAB_REQUIRE_PRIVATE_NAMES"}
     if names.is_file():
@@ -105,7 +107,8 @@ def test_band_width_and_centering_follow_the_editor(tmp_path, capsys):
     planned = preview["result"]
     assert planned["document"]["bandWidth"] == 3
     # A raw ablation is allowed, and the preview says what it risks.
-    assert any("ablated without centering" in note for note in planned["advisories"])
+    assert any("ablated at layer 2 only without centering" in note
+               for note in planned["advisories"])
     code, refused = base.cli(tmp_path, capsys, *base.base_args() + [
         "--vector", reference, "--vector-sha256", digest, "--layer", "2",
         "--strength", "1", "--mode", "ablate", "--centering", "neutralMean"])
@@ -361,11 +364,15 @@ def test_attach_refuses_an_agent_made_for_another_revision(tmp_path, capsys):
 
 
 def _promotable_at(root, effort):
+    """A promotable study whose sweep ran at ``effort``: its run's snapshot
+    says so, as the sweep writes it at its start."""
     import test_sweep_promote as sweep
     sweep._promotable(root)
     raw = store.load_raw("pr", root)
     raw.update(reasoningEffort=effort, reasoningMaxTokens=64)
     store.save_raw(raw, root)
+    snapshot = Path(root) / "runs" / sweep.SELECTION_BLOCK["sweepRun"] / "experiment.json"
+    snapshot.write_text(json.dumps(raw))
     return sweep
 
 
@@ -389,7 +396,7 @@ def test_minting_writes_the_sweeps_level_and_reuse_refuses_another(tmp_path):
     assert "--agent-name" in refused.value.repair_action
 
 
-def test_an_unpinned_sweep_run_must_have_run_at_the_studys_level(tmp_path):
+def test_an_unpinned_sweep_run_mints_at_the_level_it_ran_at(tmp_path):
     from steerlab_server.experiment import promote
     root = str(tmp_path)
     sweep = _promotable_at(root, "medium")
@@ -398,12 +405,11 @@ def test_an_unpinned_sweep_run_must_have_run_at_the_studys_level(tmp_path):
     snapshot.unlink()
     with pytest.raises(promote.PromoteError, match="thinking level its cells ran at is unknown"):
         promote.promote("pr", "fear", root=root, log=lambda *_: None, sweep_run=run)
+    # The study now says medium; the sweep ran off, and the agent says so.
     snapshot.write_text(json.dumps({"reasoningEffort": "off"}))
-    with pytest.raises(promote.PromoteError, match="ran its cells at reasoning effort off"):
-        promote.promote("pr", "fear", root=root, log=lambda *_: None, sweep_run=run)
-    snapshot.write_text(json.dumps({"reasoningEffort": "medium", "reasoningMaxTokens": 64}))
     minted = promote.promote("pr", "fear", root=root, log=lambda *_: None, sweep_run=run)
-    assert minted["variant"]["reasoningEffort"] == "medium"
+    assert "reasoningEffort" not in minted["variant"]
+    assert minted["variant"]["qwenThinkingEnabled"] is False
 
 
 # --- the cross-engine fixture ---------------------------------------------------------

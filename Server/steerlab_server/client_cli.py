@@ -2316,6 +2316,10 @@ def _experiment(invocation: Invocation) -> CLIResult:
             if arm_note:
                 sys.stderr.write(f"ADVISORY: {arm_note}\n")
                 advisories.append(_advisory("refusedWhenRun", arm_note))
+            # An agent revision the spelling cannot check is said, not refused.
+            for note in _agent_identity.manifest_arm_notes(manifest):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("agentRevisionNotChecked", note))
             # A study that measures the baseline agent alone verifies, and
             # says what it is. Swift twin: the Mac `experiment verify`.
             from .experiment import manifest as _manifest_module

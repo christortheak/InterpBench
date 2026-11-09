@@ -403,17 +403,19 @@ def test_the_template_rule_is_the_study_rule():
         prompt_render.effort_without_thinking_mode_reason("on", MODEL)]
 
 
-def test_promotion_keeps_the_studys_declared_level():
+def test_promotion_takes_the_level_the_sweep_ran_at(tmp_path):
     from steerlab_server.experiment import promote
-    declared = Manifest.from_dict({"name": "s", "modelID": "m", "concepts": [], "conditions": [],
-                                   "reasoningEffort": "medium", "reasoningMaxTokens": 64})
-    legacy = Manifest.from_dict({"name": "s", "modelID": "m", "concepts": [], "conditions": [],
-                                 "qwenThinkingEnabled": True})
-    off = Manifest.from_dict({"name": "s", "modelID": "m", "concepts": [], "conditions": [],
-                              "reasoningEffort": "off"})
-    assert promote.promoted_reasoning_effort(declared) == "medium"
-    assert promote.promoted_reasoning_effort(legacy) is None
-    assert promote.promoted_reasoning_effort(off) is None
+    for run, snapshot in (("declared", {"reasoningEffort": "medium", "reasoningMaxTokens": 64}),
+                          ("legacy", {"qwenThinkingEnabled": True}),
+                          ("off", {"reasoningEffort": "off"})):
+        (tmp_path / "runs" / run).mkdir(parents=True)
+        (tmp_path / "runs" / run / "experiment.json").write_text(json.dumps(snapshot))
+    level = lambda run: promote._sweep_run_level(run, "s", "c", str(tmp_path))  # noqa: E731
+    assert level("declared") == ("medium", True)
+    assert level("legacy") == (None, True)       # the bytes such a sweep always promoted
+    assert level("off") == (None, False)
+    with pytest.raises(promote.PromoteError, match="unknown"):
+        level("missing")
 
 
 # --- swept and handmade, everywhere ------------------------------------------------

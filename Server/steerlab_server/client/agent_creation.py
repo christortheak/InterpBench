@@ -53,6 +53,9 @@ VERB_SPECS = (
 
 PROGRAM = "steerlab"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
+#: ``--layer all``: an ablation of every layer, as the app's agent editor and
+#: the Playground ablate.
+ALL_LAYERS = "all"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PROMPT_MODES = ("chatAssistant", "rawCompletion")
 _MODES = ("add", "ablate")
@@ -138,11 +141,16 @@ def _grouped(invocation_flags: dict) -> list[dict]:
     for index, reference in enumerate(vectors):
         layer_text = columns["--layer"][index]
         strength_text = columns["--strength"][index]
-        try:
-            layer = int(layer_text)
-        except ValueError:
-            _usage(f"--layer {layer_text} is not a whole number.",
-                   "Give the layer as a whole number, such as --layer 14.")
+        mode = modes[index] if modes else "add"
+        if layer_text.strip() == ALL_LAYERS:
+            layer = None
+        else:
+            try:
+                layer = int(layer_text)
+            except ValueError:
+                _usage(f"--layer {layer_text} is not a whole number or all.",
+                       "Give the layer as a whole number, such as --layer 14, or "
+                       "--layer all for an ablation of every layer.")
         try:
             strength = float(strength_text)
         except ValueError:
@@ -152,7 +160,6 @@ def _grouped(invocation_flags: dict) -> list[dict]:
                    "Give the strength as a number: in residual-norm units when the "
                    "vector steers (such as --strength 0.12), or the fraction removed "
                    "when it ablates (such as --strength 1).")
-        mode = modes[index] if modes else "add"
         if mode not in _MODES:
             _usage(f"--mode {mode} is not add or ablate.",
                    "Use --mode add to steer along the vector, or --mode ablate to "
@@ -166,6 +173,10 @@ def _grouped(invocation_flags: dict) -> list[dict]:
             _usage("--centering applies only to an ablating vector (--mode ablate).",
                    "Give --centering none for a steering vector, or leave --centering "
                    "out.")
+        if layer is None and mode != "ablate":
+            _usage("--layer all applies only to an ablating vector (--mode ablate): a "
+                   "steering vector acts at one layer and the band around it.",
+                   "Give the steering vector one layer, such as --layer 14.")
         out.append({"reference": reference, "sha256": columns["--vector-sha256"][index],
                     "layer": layer, "strength": strength, "mode": mode,
                     "centering": centering})
@@ -205,32 +216,41 @@ def _vector(root: Path, spec: dict, model: str, revision: str, band_width: int,
         _refuse(f"The vector {reference} was extracted from {sidecar.get('modelID')}, "
                 f"not {model}: steering one model with another model's vector has "
                 "no meaning.", "Choose a vector extracted from the agent's base model.")
-    recorded = sidecar.get("revision")
-    if recorded is None:
-        notes.append(f"The vector {reference} does not record which revision of "
-                     f"{model} it was extracted from, so SteerLab cannot confirm it "
-                     f"matches {revision}.")
-    elif recorded != revision:
-        _refuse(f"The vector {reference} was extracted from revision {recorded} of "
-                f"{model}, not {revision}.",
-                "Use the vector's revision with --revision, or extract the concept "
-                "again at this revision.")
+    _check_revision(f"The vector {reference}", "extracted from", sidecar.get("revision"),
+                    model, revision, notes,
+                    redo="extract the concept again at this revision")
     count = sidecar.get("layerCount")
     layer = spec["layer"]
-    if not isinstance(count, int) or not 0 <= layer < count:
-        _refuse(f"Layer {layer} is not in the vector {reference}, which has layers "
-                f"0 to {(count - 1) if isinstance(count, int) else '?'}.",
-                "Choose a layer the vector has, with --layer.")
     norms = sidecar.get("normsPerLayer")
-    if isinstance(norms, list) and layer < len(norms) and not norms[layer]:
-        _refuse(f"The vector {reference} is empty at layer {layer}, so using it there "
-                "would change nothing.",
-                "Choose a layer where the vector has a direction (its sidecar's "
-                "normsPerLayer is not zero there).")
+    if not isinstance(count, int) or isinstance(count, bool):
+        _refuse(f"The vector {reference} does not say how many layers it has, so "
+                "SteerLab cannot check where it acts.",
+                "Restore the vector's sidecar from its extraction run, then preview "
+                "again.")
+    if layer is None:
+        if isinstance(norms, list) and norms and not any(norms):
+            _refuse(f"The vector {reference} is empty at every layer, so ablating it "
+                    "would change nothing.",
+                    "Choose a vector extracted with a direction.")
+    else:
+        if not 0 <= layer < count:
+            _refuse(f"Layer {layer} is not in the vector {reference}, which has layers "
+                    f"0 to {count - 1}.",
+                    "Choose a layer the vector has, with --layer.")
+        if isinstance(norms, list) and layer < len(norms) and not norms[layer]:
+            _refuse(f"The vector {reference} is empty at layer {layer}, so using it "
+                    "there would change nothing.",
+                    "Choose a layer where the vector has a direction (its sidecar's "
+                    "normsPerLayer is not zero there).")
+    scope = ("at every layer" if layer is None else f"at layer {layer} only")
     concept = str(sidecar.get("concept") or os.path.basename(reference))
     if spec["mode"] == "add":
         half = band_width // 2
         for band_layer in range(max(0, layer - half), min(count - 1, layer + half) + 1):
+            # A layer where the vector is zero adds nothing (the engine skips
+            # it), so it needs no residual norm.
+            if isinstance(norms, list) and band_layer < len(norms) and not norms[band_layer]:
+                continue
             if residual_norm_convention.residual_norm_problem(
                     sidecar.get("residualNormPerLayer"), band_layer,
                     artifact=concept) is not None:
@@ -251,25 +271,63 @@ def _vector(root: Path, spec: dict, model: str, revision: str, band_width: int,
         # Raw extracted vectors share a large component with the residual
         # mean, and ablating that at full strength collapses generation into
         # single-token repetition (2026-08-06 collapse study).
-        notes.append(f"The vector {reference} is ablated without centering: a raw "
-                     "direction carries part of the residual mean, and ablating it at "
-                     "strength 1 can collapse generation into repetition. Consider "
+        notes.append(f"The vector {reference} is ablated {scope} without centering: a "
+                     "raw direction carries part of the residual mean, and ablating it "
+                     "at strength 1 can collapse generation into repetition. Consider "
                      "--centering neutralMean.")
     if not catalog.covers_model_depth(covers=sidecar.get("coversModelDepth"),
                                       extraction_method=sidecar.get("extractionMethod"),
                                       recipe_method=None):
-        notes.append(f"The vector {reference} covers only some of the model's layers; "
-                     f"layer {layer} is one it has.")
-    injection = {"concept": concept, "vectorArtifactID": reference, "layer": layer,
+        notes.append(f"The vector {reference} covers only some of the model's layers"
+                     + ("; an ablation of every layer acts on the layers it has."
+                        if layer is None else f"; layer {layer} is one it has."))
+    if spec["mode"] == "ablate":
+        notes.append(f"The vector {reference} is ablated {scope}"
+                     + (", as the app's agent editor ablates." if layer is None
+                        else ": the layers above can restore what it removes; use "
+                             "--layer all to ablate every layer."))
+    # An ablation of every layer names no layer of its own; both engines leave
+    # its `layer` unused, and it is written at the vector's middle layer, as
+    # the editor seeds a new row.
+    injection = {"concept": concept, "vectorArtifactID": reference,
+                 "layer": (count // 2) if layer is None else layer,
                  "alpha": spec["strength"]}
     if spec["mode"] == "ablate":
         injection["mode"] = "ablate"
+        if layer is not None:
+            injection["layers"] = [layer]
         if spec["centering"] != "none":
             injection["centering"] = spec["centering"]
     return injection, {"artifactID": reference, "artifactSHA256": live,
-                       "sidecarSHA256": _sha256(sidecar_bytes), "layer": layer,
+                       "sidecarSHA256": _sha256(sidecar_bytes),
+                       "layer": ALL_LAYERS if layer is None else layer,
                        "strength": spec["strength"], "mode": spec["mode"],
                        "centering": spec["centering"]}
+
+
+def _check_revision(what: str, verb: str, recorded, model: str, revision: str,
+                    notes: list, *, redo: str) -> None:
+    """An input's recorded model revision against the agent's commit, by the
+    rule ``agent_identity.compare_revisions`` sets: refused only when both are
+    commits and they differ; a branch, a tag, or a shortened hash the commit
+    begins with is a note, because the spelling cannot say which commit it
+    named. Swift twin: ``StudyAgentCreation.checkRevision``."""
+    from ..experiment import agent_identity
+    if not isinstance(recorded, str) or not recorded.strip():
+        notes.append(f"{what} does not record which revision of {model} it was "
+                     f"{verb}, so SteerLab cannot confirm it matches {revision}.")
+        return
+    verdict = agent_identity.compare_revisions(recorded, revision)
+    if verdict == agent_identity.REVISIONS_UNCHECKED:
+        notes.append(f"{what} records revision {recorded} of {model}, which is not a "
+                     f"full commit, so SteerLab cannot confirm it matches {revision}.")
+    elif verdict == agent_identity.REVISIONS_DIFFER:
+        full = recorded.strip().lower()
+        _refuse(f"{what} was {verb} revision {recorded} of {model}, not {revision}.",
+                (f"Use its revision with --revision {full}, or "
+                 if _COMMIT.fullmatch(full) else
+                 "Give --revision the full 40-character commit it names, or ")
+                + f"{redo}.")
 
 
 def _weights_file(directory: Path, record: dict) -> str:
@@ -335,15 +393,8 @@ def _adapter(root: Path, reference: str, expected: str, model: str, revision: st
         _refuse(f"The adapter {reference} was trained on {trained_on}, not {model}: an "
                 "adapter only fits the model it was trained on.",
                 "Choose an adapter trained on the agent's base model.")
-    if declared_revision is None:
-        notes.append(f"The adapter {reference} does not record which revision of "
-                     f"{model} it was trained on, so SteerLab cannot confirm it "
-                     f"matches {revision}.")
-    elif declared_revision != revision:
-        _refuse(f"The adapter {reference} was trained on revision {declared_revision} "
-                f"of {model}, not {revision}.",
-                "Use the adapter's revision with --revision, or train it again at "
-                "this revision.")
+    _check_revision(f"The adapter {reference}", "trained on", declared_revision,
+                    model, revision, notes, redo="train it again at this revision")
     weights_name = _weights_file(directory, record)
     weights = _sha256((directory / weights_name).read_bytes())
     config_file = directory / "adapter_config.json"
@@ -376,18 +427,27 @@ def _adapter(root: Path, reference: str, expected: str, model: str, revision: st
 # --- the plan ------------------------------------------------------------------
 
 
+#: How a handmade record's command names a file outside the workspace: by no
+#: name at all (a file name can carry a person's or a machine's name); the
+#: hash recorded beside it identifies the file. Swift twin:
+#: ``StudyAgentCreation.outsideWorkspace``.
+OUTSIDE_WORKSPACE = "<a file outside the workspace>"
+
+
 def recorded_file(raw: str, root: Path) -> tuple[Path, dict]:
     """A file input as a handmade record may name it: workspace-relative when
-    it is inside the workspace, else by its file name alone, so no home folder
-    or other machine path reaches an agent file (and through it a frozen
-    study, a bundle, or an export). Returns the path to read and the record's
-    ``{"path"|"name": …}``. Swift twin: ``StudyAgentCreation.recordedFile``."""
+    it is inside the workspace, else by no name, so no home folder, machine
+    path, or outside file name reaches an agent file (and through it a frozen
+    study, a bundle, or an export); its SHA-256 identifies it. Returns the
+    path to read and the record's ``{"path": …}`` or
+    ``{"outsideWorkspace": True}``. Swift twin:
+    ``StudyAgentCreation.recordedFile``."""
     path = Path(os.path.expanduser(raw.strip()))
     absolute = path if path.is_absolute() else Path.cwd() / path
     try:
         relative = absolute.resolve().relative_to(root.resolve()).as_posix()
     except (OSError, ValueError):
-        return absolute, {"name": absolute.name}
+        return absolute, {"outsideWorkspace": True}
     return absolute, {"path": relative}
 
 
@@ -398,7 +458,7 @@ def _recorded_command(name: str, flags: dict, *, system_file: dict | None) -> li
     for flag in DEFINING_FLAGS:
         for value in flags.get(flag, []):
             if flag == "--system-prompt-file" and system_file is not None:
-                value = system_file.get("path") or system_file.get("name")
+                value = system_file.get("path") or OUTSIDE_WORKSPACE
             elif flag == "--adapter":
                 value = value.strip().rstrip("/")
             elif flag == "--vector":
@@ -499,7 +559,7 @@ def plan(name: str, flags: dict, *, root: Path) -> dict:
     system_file = one("--system-prompt-file")
     if system_file is not None:
         readable, named = recorded_file(system_file, root)
-        shown = named.get("path") or named.get("name")
+        shown = named.get("path") or readable.name
         try:
             data = readable.read_bytes()
             text = data.decode("utf-8")
@@ -537,6 +597,11 @@ def plan(name: str, flags: dict, *, root: Path) -> dict:
     reason = one("--reason")
     if reason is not None and not reason.strip():
         reason = None
+    if reason is not None and _names_a_home_path(reason):
+        notes.append("The --reason text names a home folder or a path under "
+                     f"{HOME_ROOT_TEXT}, and it is kept word for word in the agent file, "
+                     "which travels with every study, bundle, and export that uses the "
+                     "agent. Reword it before writing if that path should not.")
     document = {
         "schemaVersion": 1, "name": name, "baseModelID": model, "baseRevision": revision,
         "adapters": adapter_refs, "injections": injections, "bandWidth": band_width,
@@ -571,6 +636,19 @@ def plan(name: str, flags: dict, *, root: Path) -> dict:
     return {"document": document, "reviewSHA256": _sha256(_canonical(document)),
             "origin": agent_identity.agent_origin(document),
             "reasoningEffort": effort, "advisories": notes}
+
+
+#: The macOS home root, spelled apart so this file never carries the literal.
+HOME_ROOT_TEXT = "/" + "Users" + "/"
+
+
+def _names_a_home_path(text: str) -> bool:
+    """Whether text names a home folder: ``~/``, this machine's home, or a path
+    under the macOS or Linux home root. Swift twin:
+    ``StudyAgentCreation.namesAHomePath``."""
+    home = os.path.expanduser("~")
+    return ("~/" in text or (len(home) > 1 and home in text)
+            or HOME_ROOT_TEXT in text or "/home/" in text)
 
 
 def _now() -> str:
