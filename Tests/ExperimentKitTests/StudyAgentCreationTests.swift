@@ -622,6 +622,33 @@ struct StudyAgentCreationTests {
         }
     }
 
+    @Test func resavingAnOlderSwitchAsItsLevelIsNotAnEdit() throws {
+        // An older file's thinking switch (true, read as xhigh) saved back
+        // as an explicit xhigh is the same agent: its record stays.
+        var stored = try decode(["qwenThinkingEnabled": true])
+        stored.promotion = .init(
+            experiment: "s", experimentHash: "h", promotedAt: "t", promotedBy: "criterion",
+            substrate: "swift-mlx", appVersion: "0")
+        var edited = stored
+        edited.promotion = nil
+        edited.reasoningEffort = ReasoningEffort.xhigh.rawValue
+        let merge = AgentEditProvenance.merge(edited: edited, over: stored)
+        #expect(!merge.droppedPromotion)
+        #expect(merge.artifact.promotion == stored.promotion)
+    }
+
+    @Test func theEditorRecordsTheAgentsItSaves() throws {
+        let fresh = try decode([:])
+        let recorded = fresh.withEditorRecordIfUnrecorded()
+        #expect(recorded.handmade?.agentRecordObject?["madeWith"] == .string("agent editor"))
+        #expect(recorded.origin.summary.hasPrefix("Made by hand in the app's agent editor."))
+        var promoted = fresh
+        promoted.promotion = .init(
+            experiment: "s", experimentHash: "h", promotedAt: "t", promotedBy: "criterion",
+            substrate: "swift-mlx", appVersion: "0")
+        #expect(promoted.withEditorRecordIfUnrecorded().handmade == nil)
+    }
+
     @Test func anUneditedSaveKeepsTheHandmadeRecordAndAnEditDropsIt() throws {
         var stored = try decode(["reasoningEffort": "on"])
         stored.handmade = .object(["madeWith": .string("agent create")])
