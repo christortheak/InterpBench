@@ -1091,6 +1091,43 @@ def resume_rule_problem(scenario: Scenario, done: dict[str, dict], *,
                 "this run on the engine release that started it."))
 
 
+def run_resume_rule_problem(run_directory: str, manifest, root: str | None = None):
+    """:func:`resume_rule_problem` over every transcript a parked panel run
+    holds (``<run>/<condition>/turns.jsonl`` and
+    ``<run>/<condition>/replicate-<n>/turns.jsonl``), or None. Pure file
+    reads, so ``run_preflight.panel_resume_admission`` asks it BEFORE the
+    model loads; ``run_scenario`` asks the same question per transcript as
+    a second line. A panel that cannot be read here says nothing: the run
+    reports that itself."""
+    spath = getattr(manifest, "multi_agent_scenario_path", None)
+    if not spath or not os.path.isdir(run_directory):
+        return None
+    if not os.path.isabs(spath):
+        spath = os.path.join(paths.project_root() if root is None else root, spath)
+    try:
+        scenario, _ = load_scenario(spath)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            ScenarioError):
+        return None
+    for condition in sorted(os.listdir(run_directory)):
+        base = os.path.join(run_directory, condition)
+        if not os.path.isdir(base):
+            continue
+        candidates = [os.path.join(base, "turns.jsonl")] + [
+            os.path.join(base, name, "turns.jsonl")
+            for name in sorted(os.listdir(base)) if name.startswith("replicate-")]
+        for turns_path in candidates:
+            done = _completed_turns(turns_path)
+            if not done:
+                continue
+            problem = resume_rule_problem(
+                scenario, done, strip_interventions=condition == "baseline",
+                study_effort=getattr(manifest, "reasoning_effort", None))
+            if problem is not None:
+                return problem
+    return None
+
+
 def _agent_name(scenario: Scenario, agent_id: str) -> str:
     for agent in scenario.agents:
         if agent.id == agent_id:

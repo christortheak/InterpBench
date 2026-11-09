@@ -688,3 +688,10 @@ def panel_resume_admission(run_directory, *, manifest, shard,
                 f"shard {existing_stamp.get('shardIndex')}/"
                 f"{existing_stamp.get('shardCount')}, not {shard.label} — "
                 "refusing to mix shard ranges")
+    # A transcript an engine from before issue #15 started, which this engine
+    # would finish under a different routing rule (the panel twin of
+    # `seed_rule_admission`): refused before the model loads.
+    from . import multi_agent
+    problem = multi_agent.run_resume_rule_problem(run_directory, manifest)
+    if problem is not None:
+        raise problem

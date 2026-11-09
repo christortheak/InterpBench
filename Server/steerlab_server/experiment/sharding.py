@@ -689,6 +689,42 @@ def _prove_one_seed_rule(name: str, manifest, stamps: list[dict],
                 "engine release; do not merge these partials)"))
 
 
+def _prove_one_panel_rule(name: str, manifest, stamps: list[dict],
+                          shard_records: list[list[dict]], root) -> None:
+    """Refuse a panel merge whose shards played their turns under two routing
+    rules (issue #15): some written by an engine that passed a thinking
+    seat's reasoning on (their turn records carry no ``reasoningEffort``),
+    some by one that passes on only the answer — for a panel the change
+    actually touches (``multi_agent.panel_rule_changes``). A panel it does
+    not touch plays the same under both, and merges."""
+    if manifest.study_kind != "multiAgent":
+        return
+    from . import multi_agent
+    old, new = [], []
+    for stamp, records in zip(stamps, shard_records):
+        if not records:
+            continue
+        index = int(stamp["shardIndex"])
+        (new if all("reasoningEffort" in r for r in records) else old).append(index)
+    # All shards under one rule is one rule, whichever it is: only a mix is
+    # refused.
+    if not old or not new:
+        return
+    reasons = multi_agent.submission_panel_rule_changes(manifest, "run", root)
+    if not reasons:
+        return
+    raise ShardMergeRefusal(
+        f"shard merge refused: shard(s) {', '.join(str(i) for i in old)} of "
+        f"'{name}' were played by an engine that passed each turn's whole text "
+        "on, reasoning included, and this engine passes on only the answer, "
+        f"which changes this panel ({'; '.join(reasons)}) — merging would mix "
+        "two routing rules in one run; the shard partials are untouched",
+        gate=MANIFEST_EPOCH,
+        repair=(f"steerlab-server study submit {name} --verb run --executor "
+                f"slurm --parallel {len(stamps)}  (a fresh fan-out on one "
+                "engine release; do not merge these partials)"))
+
+
 def _prove_one_prompt_reading(name: str, stamps: list[dict]) -> None:
     """Refuse a merge whose shards read the study's prompts differently.
 
@@ -953,6 +989,7 @@ def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShar
             f"{experiment_hash[:12]}… — the experiment drifted since the "
             "fan-out (epoch guard); the shard partials are untouched")
     _prove_one_seed_rule(name, manifest, stamps, shard_records)
+    _prove_one_panel_rule(name, manifest, stamps, shard_records, root)
     _prove_one_prompt_reading(name, stamps)
     _prove_one_readout_reading(name, manifest, stamps)
 

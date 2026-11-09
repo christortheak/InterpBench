@@ -343,6 +343,45 @@ def test_a_transcript_an_older_engine_started_with_a_thinking_seat_refuses(
     assert "Start a new run" in caught.value.repair_action
 
 
+def test_the_parked_run_is_refused_before_the_model_loads(tmp_path):
+    """The run-level admission reads every transcript of a parked run, with
+    no model: the panel twin of the seed rule's admission."""
+    from steerlab_server.experiment import resume
+    scenario = _panel(tmp_path, endpoint=False)
+    root = _workspace_with_panel(tmp_path, scenario)
+    run_dir = os.path.join(str(tmp_path), "parked")
+    transcript = os.path.join(run_dir, "configured", "replicate-1")
+    os.makedirs(transcript)
+    with open(os.path.join(transcript, "turns.jsonl"), "w") as handle:
+        handle.write(json.dumps(_old_engine_turn("t1", "a", AVA_TEXT)) + "\n")
+    problem = multi_agent.run_resume_rule_problem(run_dir, _manifest(), root)
+    assert isinstance(problem, resume.ResumeRefusal)
+    assert "seat 'Ava' thinks" in str(problem)
+    # Turns this engine wrote carry their effort, and the run resumes.
+    with open(os.path.join(transcript, "turns.jsonl"), "w") as handle:
+        handle.write(json.dumps({**_old_engine_turn("t1", "a", AVA_ANSWER),
+                                 "reasoningEffort": "xhigh"}) + "\n")
+    assert multi_agent.run_resume_rule_problem(run_dir, _manifest(), root) is None
+
+
+def test_a_merge_of_shards_played_under_two_routing_rules_refuses(tmp_path):
+    from steerlab_server.experiment import sharding
+    scenario = _panel(tmp_path, endpoint=False)
+    root = _workspace_with_panel(tmp_path, scenario)
+    stamps = [{"shardIndex": 0}, {"shardIndex": 1}]
+    old = [{"output": AVA_TEXT}]
+    new = [{"output": AVA_ANSWER, "reasoningEffort": "xhigh"}]
+    with pytest.raises(sharding.ShardMergeRefusal, match="shard\\(s\\) 0 of 's'"):
+        sharding._prove_one_panel_rule("s", _manifest(), stamps, [old, new], root)
+    # One rule throughout, either one, merges.
+    sharding._prove_one_panel_rule("s", _manifest(), stamps, [new, new], root)
+    sharding._prove_one_panel_rule("s", _manifest(), stamps, [old, old], root)
+    # A panel the change does not touch merges across the two.
+    scenario.agents[0].variant_artifact_path = None
+    plain_root = _workspace_with_panel(tmp_path / "plain", scenario)
+    sharding._prove_one_panel_rule("s", _manifest(), stamps, [old, new], plain_root)
+
+
 def test_a_transcript_an_older_engine_started_without_thinking_resumes(
         tmp_path, monkeypatch):
     scenario = _panel(tmp_path, endpoint=False)
