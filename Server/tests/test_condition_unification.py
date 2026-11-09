@@ -172,7 +172,7 @@ def _split(records, condition):
 # record's "temperature" field is the single source of what governed
 # generation.
 PROVENANCE_FIELDS = {"variantArtifactPath", "variantArtifactHash",
-                     "agentPlaygroundTemperature"}
+                     "agentPlaygroundTemperature", "agentReasoningEffort"}
 
 
 # --- acceptance 1: field-set equality baseline vs variant ---------------------

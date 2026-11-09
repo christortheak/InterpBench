@@ -822,6 +822,13 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
         alpha_in_norm_units=alpha_in_norm_units,
         prompt_mode=manifest.prompt_mode,
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
+        # The level the sweep's cells ran at travels with the agent (public
+        # issue #16): a study that declares `medium` promotes an agent that
+        # thinks at `medium`, not one whose boolean later reads as xhigh. A
+        # study that does not think, or spells only the legacy boolean,
+        # promotes exactly the bytes it always did. Swift twin:
+        # `AgentPromotion`'s `promotedReasoningEffort`.
+        reasoning_effort=promoted_reasoning_effort(manifest),
         temperature=manifest.temperature,
         # A newborn agent's identity is BARE (2026-08-24 ruling). This used to
         # copy `manifest.system_prompt`, which made the study's deployment
@@ -838,6 +845,20 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
     log(f"promoted '{concept}' → agent '{variant.name}' "
         f"(L{layer}, α{alpha:g}, {promoted_by}) → {saved['path']}")
     return {"variant": variant.to_dict(), **saved}
+
+
+def promoted_reasoning_effort(manifest: Manifest) -> str | None:
+    """The ``reasoningEffort`` a promoted agent carries: the study's declared
+    effort when the study declares one and it is not off; otherwise ``None``,
+    and the agent's ``qwenThinkingEnabled`` says what it always said. Swift
+    twin: ``AgentPromotion.promotedReasoningEffort``."""
+    from . import prompt_render
+    effort = manifest.reasoning_effort
+    if (not manifest.reasoning_effort_declared
+            or effort == prompt_render.REASONING_OFF
+            or effort not in prompt_render.REASONING_EFFORTS):
+        return None
+    return effort
 
 
 def _sweep_run_name_matches(dirname: str, experiment: str) -> bool:

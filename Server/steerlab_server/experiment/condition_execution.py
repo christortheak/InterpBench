@@ -584,7 +584,12 @@ def effective_variant_condition(vc, manifest, model, root, *,
         raise ValueError(
             f"variant '{vc.name}' needs {variant.base_model_id} but {model.model_id} "
             f"is loaded")
-    if wants_choice and variant.qwen_thinking_enabled:
+    # How hard the agent thinks is the agent's (public issue #16): its own
+    # declared level, else the legacy boolean's meaning. The one reading both
+    # ordinary studies and panel seats use.
+    effort = model_variant.variant_reasoning_effort(variant)
+    thinking = effort != prompt_render.REASONING_OFF
+    if wants_choice and thinking:
         # Same rule the manifest enforces for its own arms: thinking-mode
         # answers are marginals over sampled reasoning paths, so the
         # answer-token instrument (conditional on NO reasoning prefix) is
@@ -609,15 +614,14 @@ def effective_variant_condition(vc, manifest, model, root, *,
         prompt_mode=variant.prompt_mode,
         system_prompt=system_prompt_mod.compose(
             variant.system_prompt, manifest.system_prompt),
-        qwen_thinking_enabled=variant.qwen_thinking_enabled,
-        # An agent artifact carries the boolean (its own schema), so its
-        # effort is that boolean's meaning: off, or the template default. The
-        # reasoning BUDGET is study-owned like the temperature below — the
-        # manifest's, applied only when the arm actually reasons.
-        reasoning_effort=prompt_render.resolve_reasoning_effort(
-            None, variant.qwen_thinking_enabled),
+        qwen_thinking_enabled=thinking,
+        # The agent owns its effort (its declared level, else the legacy
+        # boolean's meaning: off, or the template default). The reasoning
+        # BUDGET is study-owned like the temperature below — the manifest's,
+        # applied only when the arm actually reasons.
+        reasoning_effort=effort,
         reasoning_max_tokens=(manifest.reasoning_max_tokens
-                              if variant.qwen_thinking_enabled else None),
+                              if thinking else None),
         # Study-owned sampling (2026-07-21): the MANIFEST owns the measured-
         # run sampling policy for EVERY condition; an agent artifact's stored
         # temperature is a Playground convenience, never a measured-run
@@ -634,9 +638,14 @@ def effective_variant_condition(vc, manifest, model, root, *,
         temperature=manifest.temperature,
         agent_system_prompt=variant.system_prompt,
         study_system_prompt=manifest.system_prompt,
+        # `agentReasoningEffort` (additive, 2026-11-08): the effort this
+        # agent ran at, stamped on every record of the arm. Absent on records
+        # from an engine that predates it and on every non-agent arm, whose
+        # bytes are unchanged.
         provenance={"variantArtifactPath": vc.artifact_path,
                     "variantArtifactHash": vc.artifact_hash,
-                    "agentPlaygroundTemperature": variant.temperature},
+                    "agentPlaygroundTemperature": variant.temperature,
+                    "agentReasoningEffort": effort},
         variant=variant)
 
 
@@ -693,7 +702,8 @@ def run_arm_render_settings(manifest, root) -> list[dict]:
     def render(prompt_mode, system_prompt, thinking, effort, budget) -> dict:
         return {"prompt_mode": prompt_mode, "system_prompt": system_prompt,
                 "qwen_thinking_enabled": thinking,
-                "reasoning_effort": effort if budget else None}
+                "reasoning_effort": (effort if model_variant.effort_reaches_renderer(
+                    effort, budget) else None)}
 
     frame = manifest.system_prompt
     settings = [render(manifest.prompt_mode, system_prompt_mod.compose(None, frame),
@@ -707,12 +717,13 @@ def run_arm_render_settings(manifest, root) -> list[dict]:
                            paths.resolve_artifact(vc.artifact_path, root)))
         except (OSError, KeyError, ValueError, RuntimeError):
             continue  # surfaces as the loop's per-condition error record
+        effort = model_variant.variant_reasoning_effort(variant)
+        thinking = effort != prompt_render.REASONING_OFF
         setting = render(
             variant.prompt_mode,
             system_prompt_mod.compose(variant.system_prompt, frame),
-            variant.qwen_thinking_enabled,
-            prompt_render.resolve_reasoning_effort(None, variant.qwen_thinking_enabled),
-            manifest.reasoning_max_tokens if variant.qwen_thinking_enabled else None)
+            thinking, effort,
+            manifest.reasoning_max_tokens if thinking else None)
         if setting not in settings:
             settings.append(setting)
     return settings
@@ -855,6 +866,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
     # other arm's generate() call stays byte-for-byte unchanged, so the test
     # fakes built against it keep working. The `</think>` id is the split the
     # finish reason is read at, resolved once per condition.
+    from . import model_variant
     reasoning_kwargs = {}
     think_close_id = None
     if eff.reasoning_max_tokens:
@@ -862,6 +874,13 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                             "reasoning_max_tokens": eff.reasoning_max_tokens}
         think_close_id = truncation_gate.think_close_token_id(
             getattr(model, "tokenizer", None))
+    elif model_variant.effort_reaches_renderer(eff.reasoning_effort, None):
+        # An agent that declares a level the legacy boolean cannot express
+        # (`medium`, `on`) in a study with no reasoning budget: the level
+        # reaches the template, so the agent thinks at its own level rather
+        # than at the boolean's xhigh. Off and xhigh arms keep their exact
+        # historical call.
+        reasoning_kwargs = {"reasoning_effort": eff.reasoning_effort}
     # Threaded as kwargs ONLY for a latent condition, exactly as
     # transcript_kwargs and readout_kwargs are: every other condition's
     # generate/score_options call signature stays byte-for-byte unchanged, so
