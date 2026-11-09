@@ -1202,6 +1202,15 @@ def _panel(args: list[str]) -> int:
         except multi_agent.ScenarioError as exc:
             sys.stderr.write(f"invalid: {exc}\n")
             return 65
+        # The agents its seats are cast with meet the agent rules (public
+        # issues #16, #17), less the answer-token and revision ones: a seat
+        # whose agent breaks one refuses when the panel runs.
+        from .experiment import agent_identity
+        seats = agent_identity.scenario_seat_findings(scenario, root=None)
+        if seats:
+            sys.stderr.write("invalid: " + "; ".join(s for _, s, _ in seats) + "\n")
+            sys.stderr.write(f"repair: {agent_identity.SEAT_AGENT_REPAIR}\n")
+            return 65
         print(f"valid: {len(scenario.agents)} agents, "
               f"{len(scenario.turns)} turns — {target}")
         notes = multi_agent.advisories(scenario)

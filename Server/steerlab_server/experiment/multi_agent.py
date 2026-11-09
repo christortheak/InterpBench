@@ -1289,20 +1289,19 @@ def seat_reasoning(variant, *, study_effort: str,
     """``(effort, reasoning budget)`` one seat's turns generate under.
 
     Whether, and how hard, a seat thinks belongs to whoever sits in it: an
-    agent's own setting, or — for a bare seat — the study's
-    ``reasoningEffort``, as an ordinary study's baseline follows it (issue
-    #15; before, a bare seat never thought). The budget is a resource limit
-    and belongs to the study: its ``reasoningMaxTokens``, applied only when
-    the seat actually thinks. Swift twin: ``MultiAgentRunner.seatReasoning``.
+    agent's own level (``agent_identity.variant_reasoning_effort``, issue
+    #16: its declared ``reasoningEffort``, else its legacy thinking switch's
+    meaning), or — for a bare seat — the study's ``reasoningEffort``, as an
+    ordinary study's baseline follows it (issue #15; before, a bare seat
+    never thought). The budget is a resource limit and belongs to the study:
+    its ``reasoningMaxTokens``, applied only when the seat actually thinks.
+    Swift twin: ``MultiAgentRunner.seatReasoning``.
     """
     if variant is not None:
-        # STREAM B CALL SITE (FR6, issue #16): replace this expression with
-        # `model_variant.variant_reasoning_effort(variant)` once the agent
-        # file carries its own effort level. Until then an agent's effort is
-        # its boolean's meaning (off, or the template's default), exactly as
-        # `condition_execution.effective_variant_condition` reads it.
-        effort = prompt_render.resolve_reasoning_effort(
-            None, variant.qwen_thinking_enabled)
+        # The ONE reading of an agent's level, as an ordinary study's agent
+        # arm reads it (``condition_execution.effective_variant_condition``).
+        from . import agent_identity
+        effort = agent_identity.variant_reasoning_effort(variant)
     else:
         effort = study_effort or prompt_render.REASONING_OFF
     if effort == prompt_render.REASONING_OFF:
@@ -1874,22 +1873,44 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             if not seat_template(active_model):
                 effort, reasoning_budget = prompt_render.REASONING_OFF, None
             thinking = effort != prompt_render.REASONING_OFF
+            # Whether the seat's level is handed to the renderer, by the rule
+            # an ordinary study's agent arm follows (issue #16): always with
+            # a budget; without one only for a level the legacy switch cannot
+            # say (``medium``, ``on``), so an off or xhigh seat keeps the
+            # exact call it always had.
+            from . import agent_identity
+            level_reaches_renderer = agent_identity.effort_reaches_renderer(
+                effort, reasoning_budget)
             # Whether this turn's own rendered prompt opened the reasoning
             # block, read from that prompt (R2): the fact the split reads.
             opens_in_prompt = (prompt_opens_reasoning(
                 active_model, prompt, prompt_mode=prompt_mode,
                 system_prompt=system,
-                reasoning_effort=effort if reasoning_budget else None)
+                reasoning_effort=effort if level_reaches_renderer else None)
                 if thinking else None)
             # The study's reasoning budget, as an ordinary study's thinking
             # arm gets it: ``maxTokens`` (the turn's) is then the ANSWER's
             # budget and the reasoning block has its own, split at
             # ``</think>``. Passed only when the seat thinks under a declared
-            # budget, so every other turn's generate() call is the call it
-            # always was.
-            reasoning_kwargs = ({"reasoning_effort": effort,
-                                 "reasoning_max_tokens": reasoning_budget}
-                                if reasoning_budget else {})
+            # budget; a level the legacy switch cannot say reaches the
+            # renderer alone; every other turn's generate() call is the call
+            # it always was.
+            if reasoning_budget:
+                reasoning_kwargs = {"reasoning_effort": effort,
+                                    "reasoning_max_tokens": reasoning_budget}
+            elif level_reaches_renderer:
+                reasoning_kwargs = {"reasoning_effort": effort}
+            else:
+                reasoning_kwargs = {}
+            # The level that actually reached the renderer, read through the
+            # record the renderer itself uses (the loaded tokenizer's
+            # template): a level the template ignores renders as plain
+            # ``on``, and a template without a thinking switch renders none.
+            rendered_level = agent_identity.rendered_effort(
+                effort, active_model.model_id, prompt_render.capabilities_for(
+                    active_model.model_id,
+                    tokenizer=getattr(active_model, "tokenizer", None),
+                    revision=getattr(active_model, "revision", None)))
             think_close_id = (truncation_gate.think_close_token_id(
                 getattr(active_model, "tokenizer", None))
                 if reasoning_budget else None)
@@ -1968,11 +1989,12 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   # own declaration for this seat, or (an ad-hoc run) the
                   # panel file. Never the agent file.
                   "temperatureSource": temperature_source,
-                  # The reasoning protocol this turn ran under: its seat's
-                  # effort, and the study's reasoning budget when it thought
-                  # under one (null otherwise, including every turn whose
-                  # seat did not think).
-                  "reasoningEffort": effort,
+                  # The reasoning protocol this turn ran under: the level
+                  # its seat's effort rendered as (what reached the
+                  # template, issue #16), and the study's reasoning budget
+                  # when it thought under one (null otherwise, including
+                  # every turn whose seat did not think).
+                  "reasoningEffort": rendered_level,
                   "reasoningMaxTokens": reasoning_budget,
                   # Whether this thinking turn was read as one whose prompt
                   # opened the reasoning block: what its rendered prompt

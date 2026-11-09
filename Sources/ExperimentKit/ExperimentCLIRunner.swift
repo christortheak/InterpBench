@@ -2141,6 +2141,16 @@ public struct ExperimentCLIRunner: Sendable {
             let record = try Self.resolvePanel(args[1])
             // Hard errors first — these make the panel unrunnable.
             try MultiAgentRunner.validate(record.scenario)
+            // …and so does a seat whose agent breaks an agent rule (public
+            // issues #16, #17; less the answer-token and revision rules): it
+            // refuses when the panel runs. Server twin: `panel check`.
+            let seatFindings = ModelVariantArtifact.scenarioSeatFindings(
+                record.scenario, workspaceRoot: ExperimentStore.workspaceRoot)
+            if !seatFindings.isEmpty {
+                throw ExperimentError.refusing(
+                    .studyDeclaration, seatFindings.map(\.sentence).joined(separator: "; "),
+                    repair: ModelVariantArtifact.seatAgentRepair)
+            }
             let headline =
                 "valid: \(record.scenario.agents.count) agents, "
                 + "\(record.scenario.turns.count) turns — \(record.url.path)"

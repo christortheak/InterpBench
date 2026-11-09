@@ -280,7 +280,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     # refused for settings only its finished run read.
     to_run = _stages_still_to_run(stages, verb, resume_directory,
                                   target_for_paths)
-    _refuse_settings(manifest, verb, to_run)
+    _refuse_settings(manifest, verb, to_run, root)
     _refuse_inert_conditions(manifest, verb)
     _refuse_prompt_rules(manifest, verb, to_run,
                          _prompts_text_for_study(manifest, prompts_path, root))
@@ -889,7 +889,7 @@ def _authoring_place() -> str:
 
 
 def _refuse_settings(manifest: Manifest | None, verb: str,
-                     stages: list[str] | None) -> None:
+                     stages: list[str] | None, root: str | None = None) -> None:
     """Submission-preflight twin of run start's settings refusals
     (``study_admission.settings_refusal``): temperature 0 with several seeds
     (public issue #9), several samples per item at temperature 0, and an
@@ -898,11 +898,13 @@ def _refuse_settings(manifest: Manifest | None, verb: str,
     would let the job run. A study frozen under an older release meets them
     here, before anything is written or queued, rather than after the queue
     wait and the model load. Asked for the steps that run the study: ``run``,
-    and a pipeline whose declared stages include it."""
+    and a pipeline whose declared stages include it. ``root`` is where the
+    study's own files are (a panel's seats are read from there); a bundle's
+    are not unpacked yet, so its run start asks again."""
     if manifest is None or not _runs_the_study(verb, stages):
         return
     from ..experiment import study_admission
-    refusal = study_admission.settings_refusal(manifest)
+    refusal = study_admission.settings_refusal(manifest, root)
     if refusal is None:
         return
     raise SubmissionRefusal(

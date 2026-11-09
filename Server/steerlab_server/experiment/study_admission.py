@@ -74,10 +74,11 @@ def settings_refusal(manifest: Manifest,
     * ``ordinalScale`` without a known ``ordinalAggregation``
       (``task_inputs.resolve_ordinal_aggregation``).
 
-    A panel (``multiAgent``) runs none of these rules' paths, so it is never
-    refused here."""
+    A panel (``multiAgent``) runs none of these rules' paths; it is refused
+    here only for the agents its seats are cast with
+    (:func:`agent_arm_refusal`)."""
     if manifest.study_kind == "multiAgent":
-        return None
+        return agent_arm_refusal(manifest, root)
     from . import sampling, task_inputs
     frozen = manifest.status != "draft"
     problem = sampling.manifest_greedy_seed_list_problem(manifest)
@@ -112,11 +113,12 @@ def agent_arm_refusal(manifest: Manifest,
     (``agent_identity.manifest_arm_problems``: an unaccepted thinking level,
     contradictory or unknown fields, two adapters, a thinking agent beside an
     answer-token instrument, another model revision, or a missing layer or
-    residual norm). A verify violation on a draft, so freeze refuses it; a
-    study frozen before the rules meets them here, at submission and at run
-    start, before the queue and the model load (public issues #9, #16)."""
-    if manifest.study_kind == "multiAgent":
-        return None
+    residual norm), and for a panel study each seat's cast agent by the same
+    rules less the answer-token and revision ones
+    (``agent_identity.cast_agent_problems``). A verify violation on a draft,
+    so freeze refuses it; a study frozen before the rules meets them here, at
+    submission and at run start, before the queue and the model load (public
+    issues #9, #16)."""
     from . import agent_identity
     findings = agent_identity.manifest_arm_findings(manifest, root)
     if not findings:

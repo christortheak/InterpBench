@@ -13,6 +13,7 @@ Swift twin: the ``ModelVariantArtifact`` extension in ``ModelVariantStore.swift`
 from __future__ import annotations
 
 import json
+import os
 import re
 
 from . import prompt_render
@@ -419,6 +420,16 @@ def revision_note(label: str, artifact: dict, *, model_id: str,
 FIX_AGENT = "agent"
 FIX_REVISION = "revision"
 FIX_INSTRUMENT = "instrument"
+#: A panel seat's agent breaks a rule: make the agent again and cast it in
+#: that seat in place of the one it holds (:func:`manifest_seat_findings`).
+FIX_SEAT = "seat"
+
+#: The repair ``panel check`` gives for a seat whose agent breaks a rule,
+#: where no study names the panel to compile. Swift twin:
+#: ``ModelVariantArtifact.seatAgentRepair``.
+SEAT_AGENT_REPAIR = (
+    "Make the seat's agent again so that it meets these rules (agent create, or "
+    "the app's agent editor), and cast the new agent in the seat in its place.")
 
 
 def _findings(label: str, artifact: dict, *, model_id: str, model_revision: str | None,
@@ -557,6 +568,67 @@ def _injection_problems(artifact: dict, root: str | None) -> list[str]:
     return problems
 
 
+def scenario_seat_findings(scenario, *, root: str | None, study_model_id: str = "",
+                           study_revision: str | None = None,
+                           frozen: bool = False) -> list[tuple[str, str, str]]:
+    """:func:`cast_agent_problems` over every seat of ``scenario`` cast with
+    an agent file, as ``(seat name, sentence, FIX_SEAT)``.
+
+    Each seat's agent is judged against the capability record of ITS model
+    and revision (a panel may cast seats on another model, and loads each at
+    its own revision): the workspace record for a draft and for ``panel
+    check``, the id heuristic for a frozen study (the rules it was frozen
+    under), as :meth:`Manifest._capabilities_for_gates` does for a study's
+    own model. An agent file that cannot be read is not judged here: the run
+    refuses it by name, as it always has. Swift twin:
+    ``ModelVariantArtifact.scenarioSeatFindings``."""
+    from . import model_capabilities as mc, paths
+    out: list[tuple[str, str, str]] = []
+    for agent in scenario.agents:
+        if not agent.variant_artifact_path:
+            continue
+        try:
+            with open(paths.resolve_artifact(agent.variant_artifact_path, root),
+                      encoding="utf-8") as handle:
+                artifact = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(artifact, dict):
+            continue
+        model = str(artifact.get("baseModelID") or agent.base_model_id or study_model_id)
+        revision = artifact.get("baseRevision")
+        revision = revision if isinstance(revision, str) and revision.strip() else study_revision
+        capabilities = (mc.effective(mc.heuristic(model, revision)) if frozen
+                        else mc.resolve(model, revision, root))
+        out += [(agent.name, sentence, FIX_SEAT) for sentence in cast_agent_problems(
+            f"seat '{agent.name}'", artifact, model_id=model,
+            capabilities=capabilities, root=root)]
+    return out
+
+
+def manifest_seat_findings(manifest, root: str | None) -> list[tuple[str, str, str]]:
+    """:func:`scenario_seat_findings` for the panel a panel study pins, read
+    from its workspace ``root``; [] for any other study, and for a panel that
+    cannot be read here (verify and the run refuse that themselves)."""
+    if manifest.study_kind != "multiAgent":
+        return []
+    from . import multi_agent, paths
+    spath = manifest.raw.get("multiAgentScenarioPath")
+    if not isinstance(spath, str) or not spath:
+        return []
+    base = paths.project_root() if root is None else root
+    if not os.path.isabs(spath):
+        spath = os.path.join(base, spath)
+    try:
+        scenario, _ = multi_agent.load_scenario(spath)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            multi_agent.ScenarioError):
+        return []
+    return scenario_seat_findings(
+        scenario, root=base, study_model_id=manifest.model_id,
+        study_revision=manifest.model_revision, frozen=manifest.status != "draft")
+
+
 def _inline_arms(manifest):
     """Each attached agent arm with an inline file (a forward reference has no
     file yet), as ``(name, artifact)``."""
@@ -573,7 +645,12 @@ def _inline_arms(manifest):
 def manifest_arm_findings(manifest, root: str | None) -> list[tuple[str, str, str]]:
     """:func:`arm_problems` over every attached agent arm, as ``(arm,
     sentence, fix)``, against the capability record the declaration gates
-    read (``Manifest._capabilities_for_gates``)."""
+    read (``Manifest._capabilities_for_gates``). For a panel study, the same
+    for every seat its panel casts with an agent
+    (:func:`manifest_seat_findings`): one list, so verify, submission, and
+    run start judge an arm and a seat by the same rules."""
+    if manifest.study_kind == "multiAgent":
+        return manifest_seat_findings(manifest, root)
     capabilities = manifest._capabilities_for_gates(root)
     out: list[tuple[str, str, str]] = []
     for name, artifact in _inline_arms(manifest):
@@ -609,8 +686,9 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
     frozen study is duplicated first and repaired on the draft. An arm whose
     agent must change is replaced in place with ``attach-agent --replace``; a
     thinking agent beside an answer-token instrument is fixed by declaring
-    instruments that read the answer after the reasoning. Swift twin:
-    ``ModelVariantArtifact.armProblemsRepair``, the same steps."""
+    instruments that read the answer after the reasoning; a panel seat's
+    agent is made again and the panel compiled again with it in the seat.
+    Swift twin: ``ModelVariantArtifact.armProblemsRepair``, the same steps."""
     from . import command_vocabulary as vocabulary
     target = f"{manifest.name}-v2" if frozen else manifest.name
     steps = [authoring(f"experiment duplicate {manifest.name} {target}")] if frozen else []
@@ -618,6 +696,20 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
     for arm, _, fix in findings:
         fixes.setdefault(arm, set()).add(fix)
     revision = manifest.model_revision or "<sha>"
+    seats = [arm for arm, wanted in fixes.items() if FIX_SEAT in wanted]
+    if seats:
+        panel = manifest.raw.get("multiAgentSemanticScenarioPath") or "<panel>"
+        steps.append(
+            "make the agent again for "
+            + _listed([f"seat '{seat}'" for seat in seats]) + ": "
+            + authoring("agent create <new-name> --model <model> --revision <sha> …")
+            + " (or the app's agent editor), then cast it in place of the agent "
+            "the seat holds and compile the panel again, casting every seat: "
+            + authoring((f"panel compile {panel} --experiment {target} "
+                         "--seat <seat>=<agent-path> …",
+                         f"panel compile {panel} --experiment {target} "
+                         "--casting <file> --file-sha256 <digest> "
+                         "--manifest-sha256 <digest>")))
     for arm, wanted in fixes.items():
         if wanted & {FIX_AGENT, FIX_REVISION}:
             at = ("at the study's revision " if FIX_REVISION in wanted else "")
@@ -654,8 +746,9 @@ def frozen_arm_problems_advisory(manifest, root: str | None) -> str | None:
     """What ``verify`` says of a frozen study whose agent arms break a rule
     added since it froze: it still verifies, so its runs stay readable, and
     the reader learns here that running it needs a corrected duplicate.
-    Advisory code ``refusedWhenRun`` (the public issue #9 pattern)."""
-    if manifest.status == "draft" or manifest.study_kind == "multiAgent":
+    Advisory code ``refusedWhenRun`` (the public issue #9 pattern). A panel
+    study's seats are judged the same way (:func:`manifest_arm_findings`)."""
+    if manifest.status == "draft":
         return None
     findings = manifest_arm_findings(manifest, root)
     if not findings:

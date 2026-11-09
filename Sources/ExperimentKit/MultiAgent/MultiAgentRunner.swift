@@ -317,16 +317,14 @@ public enum MultiAgentRunner {
                 ) =
                     try runtimeSettings(for: speaker.spec, stripInterventions: stripInterventions)
                 // Whether and how hard this seat thinks is its occupant's; the
-                // budget is the study's. Its temperature is the study's unless
-                // the panel's design declares one for the seat.
-                var (effort, reasoningBudget) = try seatReasoning(
-                    for: speaker.spec, studyEffort: studyEffort,
-                    studyBudget: studyReasoningBudget)
-                // A seat thinks only on a template that can (N3).
-                // Only an exact-revision probe clears a seat that asks to think.
-                if !templateThinks(modelID: modelID, revision: variant?.baseRevision ?? defaultRevision) {
-                    (effort, reasoningBudget) = (.off, nil)
-                }
+                // budget is the study's; the level recorded is the one the
+                // template renders (`turnReasoning`). Its temperature is the
+                // study's unless the panel's design declares one for the seat.
+                let reasoning = try turnReasoning(
+                    for: speaker.spec, modelID: modelID,
+                    revision: variant?.baseRevision ?? defaultRevision,
+                    studyEffort: studyEffort, studyBudget: studyReasoningBudget)
+                let (effort, reasoningBudget) = (reasoning.effort, reasoning.budget)
                 let (turnTemperature, temperatureSource) = seatTemperature(
                     speaker.spec, studyTemperature: effectiveTemperature,
                     studyOwned: studyOwnedTemperature)
@@ -465,7 +463,8 @@ public enum MultiAgentRunner {
                     promptTokenCount: measured.promptTokenCount)
                 result.reasoning = said.reasoning
                 result.reasoningStatus = said.status?.rawValue
-                result.reasoningEffort = effort.rawValue
+                // The level that reached the template (issue #16).
+                result.reasoningEffort = reasoning.recorded.rawValue
                 result.reasoningMaxTokens = reasoningBudget
                 result.withheldText = said.withheldText
                 // What the split used: the prompt tail's answer, or "opened"
@@ -999,8 +998,7 @@ public enum MultiAgentRunner {
                             message: "variant artifact drifted for agent '\(agent.name)'; using the current artifact on disk"))
                 }
             }
-            let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+            return try seatAgent(agent, at: url)
         }
         let modelID = variant?.baseModelID ?? agent.baseModelID
         let promptMode = variant.flatMap { ExperimentManifest.PromptMode(rawValue: $0.promptMode) }
@@ -1561,28 +1559,66 @@ public enum MultiAgentRunner {
         return said.answer
     }
 
+    /// The agent file a seat is cast with, decoded: refused, by the seat's
+    /// name, when the file has a problem (fields that disagree, an unknown
+    /// level, or two accounts of how it was made), as the server's
+    /// `ModelVariant.from_file` refuses it, so a seat never plays on a file
+    /// that says two things. Decoding itself records the problem rather than
+    /// throwing (`ModelVariantArtifact.fileProblem`).
+    static func seatAgent(
+        _ agent: MultiAgentScenario.Agent, at url: URL
+    ) throws -> ModelVariantArtifact {
+        let variant = try JSONDecoder().decode(
+            ModelVariantArtifact.self, from: Data(contentsOf: url))
+        if let problem = variant.fileProblem {
+            throw ExperimentError.refusing(
+                .studyDeclaration, "seat '\(agent.name)': \(problem)",
+                repair: ModelVariantArtifact.seatAgentRepair)
+        }
+        return variant
+    }
+
+    /// The reasoning one seat's turn runs under, decided in one place for the
+    /// run loop: the seat's `(effort, budget)` (`seatReasoning`); off, with no
+    /// budget, when an exact-revision probe says the template has no thinking
+    /// switch (`templateThinks`, N3 — only a probe clears a seat that asks to
+    /// think); and the level the turn records, which is what that effort
+    /// renders as on the template (`renderedReasoningEffort`, issue #16: a
+    /// level it ignores renders as plain `on`, and a template without a
+    /// thinking switch renders none). Server twin: the reasoning lines of
+    /// `multi_agent.run_scenario`, which stamp `rendered_effort`.
+    static func turnReasoning(
+        for agent: MultiAgentScenario.Agent, modelID: String, revision: String?,
+        studyEffort: ReasoningEffort?, studyBudget: Int?
+    ) throws -> (effort: ReasoningEffort, budget: Int?, recorded: ReasoningEffort) {
+        var (effort, budget) = try seatReasoning(
+            for: agent, studyEffort: studyEffort, studyBudget: studyBudget)
+        if !templateThinks(modelID: modelID, revision: revision) {
+            (effort, budget) = (.off, nil)
+        }
+        return (effort, budget,
+                ModelVariantArtifact.renderedReasoningEffort(effort, modelID: modelID))
+    }
+
     /// `(effort, reasoning budget)` one seat's turns generate under.
     ///
     /// Whether, and how hard, a seat thinks belongs to whoever sits in it: an
-    /// agent's own setting, or — for a bare seat — the study's
-    /// `reasoningEffort`, as an ordinary study's baseline follows it (issue
-    /// #15). The budget is the study's, applied only when the seat thinks.
-    /// Server twin: `multi_agent.seat_reasoning`.
+    /// agent's own level (`ModelVariantArtifact.resolvedReasoningEffort`,
+    /// issue #16), or — for a bare seat — the study's `reasoningEffort`, as
+    /// an ordinary study's baseline follows it (issue #15). The budget is the
+    /// study's, applied only when the seat thinks. Server twin:
+    /// `multi_agent.seat_reasoning`.
     static func seatReasoning(
         for agent: MultiAgentScenario.Agent, studyEffort: ReasoningEffort?,
         studyBudget: Int?
     ) throws -> (effort: ReasoningEffort, budget: Int?) {
         let effort: ReasoningEffort
         if let path = agent.variantArtifactPath {
-            let data = try Data(contentsOf: ModelVariantStore.absoluteURL(path))
-            let variant = try JSONDecoder().decode(ModelVariantArtifact.self, from: data)
-            // STREAM B CALL SITE (FR6, issue #16): replace this expression
-            // with the shared agent-effort helper (the Swift twin of
-            // `model_variant.variant_reasoning_effort`) once the agent file
-            // carries its own effort level. Until then an agent's effort is
-            // its boolean's meaning, as `StudySampling.reasoningEffort` reads
-            // it for an ordinary study's agent arm.
-            effort = ReasoningEffort.resolve(nil, qwenThinkingEnabled: variant.qwenThinkingEnabled)
+            let variant = try seatAgent(agent, at: ModelVariantStore.absoluteURL(path))
+            // The ONE reading of an agent's level (issue #16): its declared
+            // `reasoningEffort`, else its legacy thinking switch's meaning, as
+            // `StudySampling.reasoningEffort` reads it for an agent arm.
+            effort = variant.resolvedReasoningEffort
         } else {
             effort = studyEffort ?? .off
         }

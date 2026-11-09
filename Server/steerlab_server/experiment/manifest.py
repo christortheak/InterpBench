@@ -1600,14 +1600,14 @@ class Manifest:
             greedy_seeds = _sampling.manifest_greedy_seed_list_problem(self)
             if greedy_seeds:
                 violations.append(greedy_seeds)
-            # The settings-only rules of each attached agent arm (public
-            # issues #16, #17): a DRAFT only, by the same pattern, so freeze
-            # refuses it; a study frozen before them meets them at submission
-            # and run start (``study_admission.agent_arm_refusal``). Swift
-            # twin: ExperimentStore.verify, same sentences.
-            if self.study_kind != "multiAgent":
-                from . import agent_identity
-                violations += agent_identity.manifest_arm_problems(self, root)
+            # The settings-only rules of each attached agent arm, and of each
+            # agent a panel study's seats are cast with (public issues #15,
+            # #16, #17): a DRAFT only, by the same pattern, so freeze refuses
+            # it; a study frozen before them meets them at submission and run
+            # start (``study_admission.agent_arm_refusal``). Swift twin:
+            # ExperimentStore.verify, same sentences.
+            from . import agent_identity
+            violations += agent_identity.manifest_arm_problems(self, root)
 
         from . import experiment_store, multiconcept
 

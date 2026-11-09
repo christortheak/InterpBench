@@ -1085,6 +1085,68 @@ extension ModelVariantArtifact {
     /// study's instruments. Server twin: `agent_identity.FIX_*`.
     public enum ArmFix: String, Sendable {
         case agent, revision, instrument
+        /// A panel seat's agent breaks a rule: make the agent again and cast
+        /// it in that seat in place of the one it holds.
+        case seat
+    }
+
+    /// The repair `panel check` gives for a seat whose agent breaks a rule,
+    /// where no study names the panel to compile. Server twin:
+    /// `agent_identity.SEAT_AGENT_REPAIR`.
+    public static let seatAgentRepair =
+        "Make the seat's agent again so that it meets these rules (agent create, or "
+        + "the app's agent editor), and cast the new agent in the seat in its place."
+
+    /// `castAgentProblems` over every seat of `scenario` cast with an agent
+    /// file, as findings with `ArmFix.seat`. Each seat's agent is judged
+    /// against the capability record of ITS model and revision: the
+    /// workspace record for a draft and for `panel check`, the id heuristic
+    /// for a frozen study. An agent file that cannot be read is not judged
+    /// here: the run refuses it by name. Server twin:
+    /// `agent_identity.scenario_seat_findings`.
+    public static func scenarioSeatFindings(
+        _ scenario: MultiAgentScenario, studyModelID: String = "",
+        studyRevision: String? = nil, frozen: Bool = false, workspaceRoot: URL
+    ) -> [ArmFinding] {
+        scenario.agents.flatMap { seat -> [ArmFinding] in
+            guard let path = seat.variantArtifactPath else { return [] }
+            let url = path.hasPrefix("/")
+                ? URL(fileURLWithPath: path) : workspaceRoot.appending(path: path)
+            guard let data = try? Data(contentsOf: url),
+                let artifact = try? JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+            else { return [] }
+            let model = !artifact.baseModelID.isEmpty ? artifact.baseModelID
+                : (!seat.baseModelID.isEmpty ? seat.baseModelID : studyModelID)
+            let revision = artifact.baseRevision.flatMap {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+            } ?? studyRevision
+            let capabilities = frozen
+                ? ModelCapabilities.heuristicView(modelID: model, revision: revision)
+                : ModelCapabilitiesStore.resolve(
+                    modelID: model, revision: revision, root: workspaceRoot)
+            return artifact.castAgentProblems(
+                label: "seat '\(seat.name)'", modelID: model, capabilities: capabilities,
+                workspaceRoot: workspaceRoot
+            ).map { ArmFinding(arm: seat.name, sentence: $0, fix: .seat) }
+        }
+    }
+
+    /// `scenarioSeatFindings` for the panel a panel study pins, read from
+    /// `workspaceRoot`; [] for any other study and for a panel that cannot
+    /// be read here (verify and the run refuse that themselves). Server twin:
+    /// `agent_identity.manifest_seat_findings`.
+    public static func manifestSeatFindings(
+        _ manifest: ExperimentManifest, workspaceRoot: URL
+    ) -> [ArmFinding] {
+        guard manifest.studyKind == .multiAgent,
+            let path = manifest.multiAgentScenarioPath, !path.isEmpty,
+            let data = try? Data(contentsOf: ExperimentStore.resolveProjectPath(
+                path, root: workspaceRoot)),
+            let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
+        else { return [] }
+        return scenarioSeatFindings(
+            scenario, studyModelID: manifest.modelID, studyRevision: manifest.modelRevision,
+            frozen: manifest.status != .draft, workspaceRoot: workspaceRoot)
     }
 
     /// One broken rule: the arm, the sentence, and what fixes it.
@@ -1213,11 +1275,16 @@ extension ModelVariantArtifact {
 
     /// `armProblems` over every attached agent arm (a forward reference has
     /// no file yet), with what fixes each, against the record the declaration
-    /// gates read. Server twin: `agent_identity.manifest_arm_findings`.
+    /// gates read. For a panel study, the same for every seat its panel casts
+    /// with an agent (`manifestSeatFindings`): one list, so verify,
+    /// submission, and run start judge an arm and a seat by the same rules.
+    /// Server twin: `agent_identity.manifest_arm_findings`.
     public static func manifestArmFindings(
         _ manifest: ExperimentManifest, workspaceRoot: URL
     ) -> [ArmFinding] {
-        guard manifest.studyKind != .multiAgent else { return [] }
+        guard manifest.studyKind != .multiAgent else {
+            return manifestSeatFindings(manifest, workspaceRoot: workspaceRoot)
+        }
         let capabilities = manifest.status == .draft
             ? ModelCapabilitiesStore.resolve(
                 modelID: manifest.modelID, revision: manifest.modelRevision, root: workspaceRoot)
@@ -1245,8 +1312,10 @@ extension ModelVariantArtifact {
     /// A frozen study is duplicated first and repaired on the draft. An arm
     /// whose agent must change is replaced in place with `attach-agent
     /// --replace`; a thinking agent beside an answer-token instrument is fixed
-    /// by declaring instruments that read the answer after the reasoning.
-    /// Server twin: `agent_identity.arm_problems_repair`, the same steps.
+    /// by declaring instruments that read the answer after the reasoning; a
+    /// panel seat's agent is made again and the panel compiled again with it
+    /// in the seat. Server twin: `agent_identity.arm_problems_repair`, the
+    /// same steps.
     public static func armProblemsRepair(
         _ manifest: ExperimentManifest, findings: [ArmFinding], frozen: Bool
     ) -> String {
@@ -1261,6 +1330,16 @@ extension ModelVariantArtifact {
             fixes[finding.arm, default: []].insert(finding.fix)
         }
         let revision = manifest.modelRevision ?? "<sha>"
+        let seats = arms.filter { fixes[$0]?.contains(.seat) == true }
+        if !seats.isEmpty {
+            let panel = manifest.multiAgentSemanticScenarioPath ?? "<panel>"
+            steps.append("make the agent again for "
+                + listed(seats.map { "seat '\($0)'" }) + ": \(program) agent create "
+                + "<new-name> --model <model> --revision <sha> … (or the app's agent editor), "
+                + "then cast it in place of the agent the seat holds and compile the panel "
+                + "again, casting every seat: \(program) panel compile \(panel) --experiment "
+                + "\(target) --seat <seat>=<agent-path> …")
+        }
         for arm in arms {
             let wanted = fixes[arm] ?? []
             guard wanted.contains(.agent) || wanted.contains(.revision) else { continue }
