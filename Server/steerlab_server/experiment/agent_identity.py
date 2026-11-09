@@ -846,17 +846,25 @@ def seat_repair(manifest, seat_ids, *, target: str, authoring,
                     "seat and save, which compiles the panel again")
     semantic = manifest.raw.get("multiAgentSemanticScenarioPath")
     if isinstance(semantic, str) and semantic:
+        from . import command_vocabulary as vocabulary
         client = (f"panel compile {q(semantic)} --experiment {q(target)} --casting "
                   "<file> --file-sha256 <digest> --manifest-sha256 <digest>")
+        lead = ("compile the panel again, casting every seat, with each new agent in "
+                "place of the one its seat holds: ")
         if any("=" in seat for seat in seat_ids):
-            mac = seats_editor + " (a seat ID with '=' cannot be named on the Mac command line)"
-            return make + _either_client(mac, client, mac_is_command=False)
+            # Both clients' casting-file form names seats by ID; only the Mac's
+            # `--seat <id>=<path>` cannot name one that holds '='.
+            note = (" (a casting file names each seat by its ID; --seat cannot name "
+                    "one that contains '=')")
+            if vocabulary.surface() == vocabulary.MAC:
+                return (make + lead + f"{vocabulary.MAC_PROGRAM} {client}" + note
+                        + ", or " + seats_editor)
+            text = make + lead + _either_client(client, client, mac_is_command=True)
+            return text if vocabulary.is_client() else text + note
         casts = " ".join(f"--seat {q(seat)}=<agent-path>" for seat in seat_ids)
         mac = (f"panel compile {q(semantic)} --experiment {q(target)} {casts} "
                "--seat <each other seat>=<its agent-path>")
-        return (make + "compile the panel again, casting every seat, with each new "
-                "agent in place of the one its seat holds: "
-                + _either_client(mac, client, mac_is_command=True))
+        return make + lead + _either_client(mac, client, mac_is_command=True)
     pinned = manifest.raw.get("multiAgentScenarioPath") or "<panel>"
     copy = (f"save a copy of the panel {pinned} in which each of those seats' "
             "variantArtifactPath and variantArtifactHash name its new agent, and pin "

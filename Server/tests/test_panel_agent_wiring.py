@@ -14,6 +14,7 @@
 
 Python twin of ``PanelAgentWiringTests``. Uses a stub generate(): no model.
 """
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -517,9 +518,14 @@ QUOTED_MAC = ("make a new agent for each seat whose agent breaks a rule (seat ID
               "'it'\"'\"'s'=<agent-path> --seat <each other seat>=<its agent-path>")
 EQUALS_MAC = ("make a new agent for each seat whose agent breaks a rule (seat ID "
               "a=b): steerlab-cli agent create <new-name> --model <model> --revision "
-              "<sha> … (or the app's agent editor), then in the Mac app's study editor "
-              "(Seats), put each new agent in its seat and save, which compiles the "
-              "panel again (a seat ID with '=' cannot be named on the Mac command line)")
+              "<sha> … (or the app's agent editor), then compile the panel again, "
+              "casting every seat, with each new agent in place of the one its seat "
+              "holds: steerlab-cli panel compile 'prompts/panels/my panel.json' "
+              "--experiment study --casting <file> --file-sha256 <digest> "
+              "--manifest-sha256 <digest> (a casting file names each seat by its ID; "
+              "--seat cannot name one that contains '='), or in the Mac app's study "
+              "editor (Seats), put each new agent in its seat and save, which compiles "
+              "the panel again")
 
 
 def test_printed_seat_repairs_quote_their_values(tmp_path):
@@ -698,3 +704,118 @@ def test_a_json_member_over_the_metadata_limit_is_left_out(tmp_path, monkeypatch
     monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path / "engine"))
     with pytest.raises(submissions.SubmissionRefusal, match="seat 'Ava': "):
         _submit_bundle(tmp_path, monkeypatch, bundle)
+
+
+# --- Round 4 -----------------------------------------------------------------------
+
+
+def _two_seat_frozen(root, *, first_pinned, second_pinned):
+    """A frozen panel study, effort off with a budget of 256, whose seats a
+    and b are cast with thinking agents, each pinned or not."""
+    root = Path(root)
+    store.create("study", model_id=QWEN, revision=REVISION, root=str(root))
+    files = {}
+    for seat in ("a", "b"):
+        path = root / "runs" / "model-variants" / seat / "model-variant.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"name": seat, "baseModelID": QWEN, "reasoningEffort": "on"}))
+        files[seat] = path
+
+    def pin(seat, pinned):
+        return hashlib.sha256(files[seat].read_bytes()).hexdigest() if pinned else None
+
+    agents = [multi_agent.Agent(id=seat, name=name, base_model_id=QWEN,
+                                variant_artifact_path=str(files[seat].relative_to(root)),
+                                variant_artifact_hash=pin(seat, pinned))
+              for seat, name, pinned in (("a", "Ava", first_pinned),
+                                         ("b", "Ben", second_pinned))]
+    scenario = multi_agent.Scenario(
+        name="p", base_model_id=QWEN, agents=agents,
+        turns=[multi_agent.Turn(id="t1", title="x", speaker_agent_id="a",
+                                prompt_template="Speak.", output_label="o1", routing="all"),
+               multi_agent.Turn(id="t2", title="y", speaker_agent_id="b",
+                                prompt_template="Speak.", output_label="o2", routing="all")])
+    panel = root / "prompts" / "panels" / "p.json"
+    panel.parent.mkdir(parents=True, exist_ok=True)
+    panel.write_text(json.dumps(multi_agent._scenario_to_dict(scenario)))
+    raw = store.load_raw("study", str(root))
+    raw.update(studyKind="multiAgent", studyType="multiAgent",
+               multiAgentScenarioPath="prompts/panels/p.json",
+               multiAgentScenarioHash=hashlib.sha256(panel.read_bytes()).hexdigest(),
+               status="frozen", reasoningEffort="off", reasoningMaxTokens=256)
+    store.save_raw(raw, str(root))
+    return files
+
+
+def test_an_unreadable_unpinned_seat_never_hides_the_seats_after_it(tmp_path):
+    """Frozen: seat a has no pin and its agent file is gone; seat b's pinned
+    agent was saved in place to off. Each seat is read on its own, and a file
+    that cannot be read counts as thinking, so the study keeps verifying."""
+    files = _two_seat_frozen(tmp_path, first_pinned=False, second_pinned=True)
+    root = str(tmp_path)
+    files["a"].unlink()
+    files["b"].write_text(json.dumps({"name": "b", "baseModelID": QWEN,
+                                      "reasoningEffort": "off"}))
+    assert multi_agent.panel_seat_thinks(store.load_raw("study", root), root) is True
+    assert prompt_render.BUDGET_WITHOUT_EFFORT_REASON not in Manifest.load(
+        "study", root).verify(root)
+
+
+def _submit_bundle_verb(tmp_path, monkeypatch, bundle, verb):
+    """``submit_run_bundle`` of ``bundle`` for ``verb``, up to the settings
+    preflight, recording what the admission helper extracted."""
+    from steerlab_server.api import submissions
+    seen = []
+    original = submissions._bundle_json_members
+
+    @contextlib.contextmanager
+    def spy(path, **kwargs):
+        with original(path, **kwargs) as folder:
+            base = Path(folder)
+            seen.append(sorted(str(p.relative_to(base)) for p in base.rglob("*")
+                               if p.is_file()))
+            yield folder
+
+    class PastSettings(Exception):
+        pass
+
+    def past(*args, **kwargs):
+        raise PastSettings
+
+    monkeypatch.setattr(submissions, "_bundle_json_members", spy)
+    monkeypatch.setattr(submissions.bundles, "inspect_bundle",
+                        lambda path: {"kind": "runBundle", "experiment": "study"})
+    monkeypatch.setattr(submissions, "_refuse_inert_conditions", past)
+    try:
+        submissions.submit_run_bundle(bundle, verb=verb, jobs=None, executor="local",
+                                      dry_run=True)
+    except PastSettings:
+        return seen
+    raise AssertionError("submission went past the sentinel")
+
+
+def test_a_verb_that_does_not_run_the_study_extracts_nothing(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    panel_study(source, {"reasoningEffort": "off"}, model=PLAIN, status="frozen")
+    bundle = _bundle(source, tmp_path / "b.tar.gz")
+    (tmp_path / "engine").mkdir()
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path / "engine"))
+    assert _submit_bundle_verb(tmp_path, monkeypatch, bundle, "analyze") == [[]]
+    assert AGENT_PATH in _submit_bundle_verb(tmp_path, monkeypatch, bundle, "run")[0]
+
+
+def test_json_members_that_sum_over_the_metadata_limit_extract_nothing(tmp_path,
+                                                                       monkeypatch):
+    """Each JSON member is under the metadata limit, but together they are
+    over it: nothing is written, and the checks fall to run start."""
+    import tarfile
+    source = tmp_path / "source"
+    panel_study(source, {"reasoningEffort": "medium"}, model=PLAIN, status="frozen")
+    bundle = _bundle(source, tmp_path / "b.tar.gz")
+    with tarfile.open(bundle, "r:gz") as tar:
+        sizes = [m.size for m in tar.getmembers()
+                 if m.isfile() and m.name.endswith(".json")]
+    assert AGENT_PATH in _extracted(bundle)
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_METADATA_BYTES", str(max(sizes)))
+    assert sum(sizes) > max(sizes)
+    assert _extracted(bundle) == []

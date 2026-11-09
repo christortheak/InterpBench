@@ -383,9 +383,14 @@ import Testing
             #expect(ModelVariantArtifact.seatRepair(manifest, seatIDs: ["a=b"], target: "study")
                 == "make a new agent for each seat whose agent breaks a rule (seat ID "
                 + "a=b): steerlab-cli agent create <new-name> --model <model> --revision "
-                + "<sha> … (or the app's agent editor), then in the Mac app's study editor "
-                + "(Seats), put each new agent in its seat and save, which compiles the "
-                + "panel again (a seat ID with '=' cannot be named on the Mac command line)")
+                + "<sha> … (or the app's agent editor), then compile the panel again, "
+                + "casting every seat, with each new agent in place of the one its seat "
+                + "holds: steerlab-cli panel compile 'prompts/panels/my panel.json' "
+                + "--experiment study --casting <file> --file-sha256 <digest> "
+                + "--manifest-sha256 <digest> (a casting file names each seat by its ID; "
+                + "--seat cannot name one that contains '='), or in the Mac app's study "
+                + "editor (Seats), put each new agent in its seat and save, which compiles "
+                + "the panel again")
         }
     }
 
@@ -530,6 +535,67 @@ import Testing
             }
             #expect(try DraftAuthoringSnapshot(workspaceRoot: root, name: "study").file.data
                 == budgeted.file.data)
+        }
+    }
+
+    // MARK: - Round 4
+
+    /// Frozen: seat a has no pin and its agent file is gone; seat b's pinned
+    /// agent was saved in place to off. Each seat is read on its own, and an
+    /// unreadable file counts as thinking, so the budget stays allowed.
+    @Test func anUnreadableUnpinnedSeatNeverHidesTheSeatsAfterIt() async throws {
+        try await withWorkspace { root in
+            var paths: [String: URL] = [:]
+            for seat in ["a", "b"] {
+                let url = root.appending(path: "runs/model-variants/\(seat)/model-variant.json")
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try JSONSerialization.data(withJSONObject: [
+                    "name": seat, "baseModelID": Self.qwen, "reasoningEffort": "on",
+                ]).write(to: url)
+                paths[seat] = url
+            }
+            let pinB = sha(try Data(contentsOf: try #require(paths["b"])))
+            let scenario = MultiAgentScenario(
+                name: "p", baseModelID: Self.qwen,
+                agents: [
+                    .init(id: "a", name: "Ava", baseModelID: Self.qwen,
+                          variantArtifactPath: "runs/model-variants/a/model-variant.json"),
+                    .init(id: "b", name: "Ben", baseModelID: Self.qwen,
+                          variantArtifactPath: "runs/model-variants/b/model-variant.json",
+                          variantArtifactHash: pinB),
+                ],
+                turns: [
+                    .init(id: "t1", title: "x", speakerAgentID: "a", promptTemplate: "Speak.",
+                          outputLabel: "o1"),
+                    .init(id: "t2", title: "y", speakerAgentID: "b", promptTemplate: "Speak.",
+                          outputLabel: "o2"),
+                ])
+            try FileManager.default.removeItem(at: try #require(paths["a"]))
+            try JSONSerialization.data(withJSONObject: [
+                "name": "b", "baseModelID": Self.qwen, "reasoningEffort": "off",
+            ]).write(to: try #require(paths["b"]))
+            #expect(MultiAgentRunner.seatThinks(
+                in: scenario, studyRevision: Self.revision, frozen: true))
+        }
+    }
+
+    /// The repair reads the editor's rule against the workspace it is given,
+    /// not whatever the process points at.
+    @Test func theSeatRepairReadsTheGivenWorkspace() async throws {
+        try await withWorkspace { _ in
+            let other = FileManager.default.temporaryDirectory
+                .resolvingSymlinksInPath()
+                .appending(component: "fr6-other-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: other) }
+            var manifest = ExperimentManifest(name: "study", description: "", modelID: Self.plain)
+            manifest.studyKind = .multiAgent
+            manifest.multiAgentScenarioPath = other.appending(
+                path: "prompts/panels/compiled/p.json").path
+            let findings = [ModelVariantArtifact.ArmFinding(arm: "a", sentence: "x", fix: .seat)]
+            #expect(ModelVariantArtifact.armProblemsRepair(
+                manifest, findings: findings, frozen: false, workspaceRoot: other)
+                == Self.macMake + Self.macSeats)
         }
     }
 

@@ -727,7 +727,8 @@ def panel_seat_thinks(manifest, root: str | None = None) -> bool:
     asks to think counts unless a probed record for its exact revision says
     the template cannot. A study that is no longer a draft is read by the
     rules it froze under, never by a record probed since (its own first run
-    probes one): a seat counts when its agent's level is not off. The run
+    probes one): a seat counts when its agent's level is not off, or when
+    its agent file is no longer the one it pins or cannot be read. The run
     still asks the template whether a seat really thinks, so a budget a seat
     cannot use simply goes unstamped. Swift twin:
     ``MultiAgentRunner.panelSeatThinks``."""
@@ -759,8 +760,13 @@ def panel_seat_thinks(manifest, root: str | None = None) -> bool:
                         current = None
                     if current != agent.variant_artifact_hash:
                         return True
-                if seat_reasoning(_runtime_settings(agent, True, root=base)[0],
-                                  study_effort=prompt_render.REASONING_OFF,
+                # Per seat: a file that cannot be read, pinned or not, counts
+                # as thinking too, and never hides the seats after it.
+                try:
+                    variant = _runtime_settings(agent, True, root=base)[0]
+                except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                    return True
+                if seat_reasoning(variant, study_effort=prompt_render.REASONING_OFF,
                                   study_budget=None)[0] != prompt_render.REASONING_OFF:
                     return True
             return False

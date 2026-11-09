@@ -1335,7 +1335,8 @@ extension ModelVariantArtifact {
     /// in the seat. Server twin: `agent_identity.arm_problems_repair`, the
     /// same steps.
     public static func armProblemsRepair(
-        _ manifest: ExperimentManifest, findings: [ArmFinding], frozen: Bool
+        _ manifest: ExperimentManifest, findings: [ArmFinding], frozen: Bool,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) -> String {
         let program = ExperimentCLIHelp.program
         let target = frozen ? "\(manifest.name)-v2" : manifest.name
@@ -1350,7 +1351,8 @@ extension ModelVariantArtifact {
         let revision = manifest.modelRevision ?? "<sha>"
         let seats = arms.filter { fixes[$0]?.contains(.seat) == true }
         if !seats.isEmpty {
-            steps.append(seatRepair(manifest, seatIDs: seats, target: target))
+            steps.append(seatRepair(
+                manifest, seatIDs: seats, target: target, workspaceRoot: workspaceRoot))
         }
         for arm in arms {
             let wanted = fixes[arm] ?? []
@@ -1425,8 +1427,14 @@ extension ModelVariantArtifact {
             + "seat and save, which compiles the panel again"
         if let semantic = manifest.multiAgentSemanticScenarioPath, !semantic.isEmpty {
             if seatIDs.contains(where: { $0.contains("=") }) {
-                return make + seatsEditor
-                    + " (a seat ID with '=' cannot be named on the Mac command line)"
+                // The casting-file form names seats by ID; only `--seat
+                // <id>=<path>` cannot name one that holds '='.
+                return make + "compile the panel again, casting every seat, with each new "
+                    + "agent in place of the one its seat holds: \(program) panel compile "
+                    + "\(shellQuoted(semantic)) --experiment \(shellQuoted(target)) --casting "
+                    + "<file> --file-sha256 <digest> --manifest-sha256 <digest> (a casting file "
+                    + "names each seat by its ID; --seat cannot name one that contains '='), or "
+                    + seatsEditor
             }
             let casts = seatIDs.map { "--seat \(shellQuoted($0))=<agent-path>" }
                 .joined(separator: " ")
@@ -1457,7 +1465,8 @@ extension ModelVariantArtifact {
         guard !findings.isEmpty else { return nil }
         return "this study will be refused when its run is submitted or started, because "
             + findings.map(\.sentence).joined(separator: "; ") + ". To run it: "
-            + armProblemsRepair(manifest, findings: findings, frozen: true)
+            + armProblemsRepair(
+                manifest, findings: findings, frozen: true, workspaceRoot: workspaceRoot)
     }
 
     /// The refusal a step that runs the study gives on its agent arms, or
@@ -1470,7 +1479,8 @@ extension ModelVariantArtifact {
         return .refusing(
             .studyDeclaration, findings.map(\.sentence).joined(separator: "; "),
             repair: armProblemsRepair(
-                manifest, findings: findings, frozen: manifest.status != .draft))
+                manifest, findings: findings, frozen: manifest.status != .draft,
+                workspaceRoot: workspaceRoot))
     }
 }
 

@@ -556,8 +556,11 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # of a file at the same path. A bundle that cannot be read yields an
     # empty folder, so the seat and arm file checks are skipped here and run
     # start judges the unpacked bundle.
-    with _bundle_json_members(bundle_path) as bundle_root:
-        _refuse_settings(manifest, verb, _pipeline_stages(manifest), bundle_root)
+    stages = _pipeline_stages(manifest)
+    with _bundle_json_members(
+            bundle_path,
+            extract=manifest is not None and _runs_the_study(verb, stages)) as bundle_root:
+        _refuse_settings(manifest, verb, stages, bundle_root)
     _refuse_inert_conditions(manifest, verb)
     _refuse_prompt_rules(manifest, verb, _pipeline_stages(manifest),
                          _prompts_text_for_bundle(bundle_path, manifest,
@@ -909,8 +912,11 @@ def _refuse_settings(manifest: Manifest | None, verb: str,
     here, before anything is written or queued, rather than after the queue
     wait and the model load. Asked for the steps that run the study: ``run``,
     and a pipeline whose declared stages include it. ``root`` is where the
-    study's own files are (a panel's seats are read from there); a bundle's
-    are not unpacked yet, so its run start asks again."""
+    study's own files are (a panel's seats are read from there): for a
+    bundle, its own members, extracted for this check
+    (``_bundle_json_members``), never this engine's root; when they cannot
+    be extracted within the unpack's limits, run start judges the unpacked
+    bundle."""
     if manifest is None or not _runs_the_study(verb, stages):
         return
     from ..experiment import study_admission
@@ -1981,7 +1987,7 @@ def _prompts_text_for_study(manifest: Manifest | None, prompts_path: str | None,
 
 
 @contextlib.contextmanager
-def _bundle_json_members(bundle_path: str):
+def _bundle_json_members(bundle_path: str, *, extract: bool = True):
     """A scratch folder holding the bundle's own JSON members at their
     workspace paths: the files the settings preflight reads (a panel, its
     seats' agent files, vector sidecars, capability records), never the
@@ -1992,12 +1998,18 @@ def _bundle_json_members(bundle_path: str):
     (``bundles``), on the DECLARED sizes, before anything is written: an
     archive with more members than ``max_member_count()``, or whose files
     declare more than ``max_total_bytes()`` in all, extracts nothing; and a
-    JSON member over ``max_metadata_bytes()`` is left out. The folder is
-    empty when the bundle cannot be read or breaks a limit, so these checks
-    fall to run start, where the real unpack refuses such a bundle. Removed
-    on exit."""
+    JSON member over ``max_metadata_bytes()`` is left out, and if the
+    members to extract still sum to more than ``max_metadata_bytes()``,
+    nothing is. The folder is empty when the bundle cannot be read or breaks
+    a limit, so these checks fall to run start, where the real unpack
+    refuses such a bundle. Nothing is read at all unless ``extract``: the
+    caller asks only for a bundle whose manifest it read and whose
+    submission runs the study, the only case its checks read files for.
+    Removed on exit."""
     with tempfile.TemporaryDirectory(prefix="steerlab-bundle-settings-") as scratch:
         try:
+            if not extract:
+                raise bundles.BundleError("nothing here reads the bundle's files")
             with tarfile.open(bundle_path, "r:gz") as tar:
                 every = tar.getmembers()
                 if len(every) > bundles.max_member_count():
@@ -2007,6 +2019,8 @@ def _bundle_json_members(bundle_path: str):
                 limit = bundles.max_metadata_bytes()
                 members = [m for m in every
                            if m.isfile() and m.name.endswith(".json") and m.size <= limit]
+                if sum(m.size for m in members) > limit:
+                    raise bundles.BundleError("more JSON than the metadata limit")
                 tar.extractall(scratch, members=members, filter="data")
         except Exception:  # noqa: BLE001 - unreadable: judged at run start instead
             shutil.rmtree(scratch, ignore_errors=True)

@@ -1799,35 +1799,35 @@ public enum MultiAgentRunner {
     /// says the template cannot. A study that is no longer a draft is read by
     /// the rules it froze under, never by a record probed since (its own
     /// first run probes one): a seat counts when its agent's level is not
-    /// off. The run still asks the template whether a seat really thinks.
-    /// False for a panel whose agent files cannot be read. Server twin:
+    /// off, or when its agent file is no longer the one it pins or cannot be
+    /// read. The run still asks the template whether a seat really thinks.
+    /// For a draft, false for a panel whose agent files cannot be read.
+    /// Server twin:
     /// `multi_agent.panel_seat_thinks`.
     static func seatThinks(
         in scenario: MultiAgentScenario, studyRevision: String?, frozen: Bool
     ) -> Bool {
         if frozen {
-            do {
-                for agent in scenario.agents {
-                    guard let path = agent.variantArtifactPath else { continue }
-                    // An agent whose file is no longer the one the seat pins
-                    // (saved in place after the freeze, or gone) counts as
-                    // thinking: the study froze with this budget allowed, and
-                    // an edit made since must never stop it verifying.
-                    if let pinned = agent.variantArtifactHash, !pinned.isEmpty {
-                        let current = (try? Data(contentsOf: ModelVariantStore.absoluteURL(path)))
-                            .map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
-                        if current != pinned { return true }
-                    }
-                    if try seatReasoning(for: agent, studyEffort: .off, studyBudget: nil)
-                        .effort.isOn
-                    {
-                        return true
-                    }
+            for agent in scenario.agents {
+                guard let path = agent.variantArtifactPath else { continue }
+                // An agent whose file is no longer the one the seat pins
+                // (saved in place after the freeze, or gone) counts as
+                // thinking: the study froze with this budget allowed, and an
+                // edit made since must never stop it verifying.
+                if let pinned = agent.variantArtifactHash, !pinned.isEmpty {
+                    let current = (try? Data(contentsOf: ModelVariantStore.absoluteURL(path)))
+                        .map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+                    if current != pinned { return true }
                 }
-                return false
-            } catch {
-                return false
+                // Per seat: a file that cannot be read, pinned or not, counts
+                // as thinking too, and never hides the seats after it.
+                guard
+                    let reasoning = try? seatReasoning(
+                        for: agent, studyEffort: .off, studyBudget: nil)
+                else { return true }
+                if reasoning.effort.isOn { return true }
             }
+            return false
         }
         guard
             let changes = try? panelRuleChanges(
