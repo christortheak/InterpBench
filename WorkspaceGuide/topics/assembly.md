@@ -38,9 +38,12 @@ and `--centering` belong to the k-th `--vector`), `--band-width <1|3|…|11>`,
 `--reasoning-effort <level>`, `--system-prompt-file <file>`,
 `--prompt-mode <mode>`, and `--reason <text>`. A steering strength is in
 residual-norm units, as the app's agent editor uses; an ablation's strength is
-the fraction of the direction removed, and the preview advises when an
-ablation keeps the raw direction (`--centering neutralMean` removes the
-vector's stored neutral mean first). It previews first and writes nothing: show
+the fraction of the direction removed. An ablation with `--layer <n>` removes
+the direction at that layer only (the layers above can restore it); `--layer
+all` removes it at every layer, as the app's agent editor and the Playground
+ablate. The preview says which, and advises when an ablation keeps the raw
+direction (`--centering neutralMean` removes the vector's stored neutral mean
+first). It previews first and writes nothing: show
 the researcher the agent file and the checks, then repeat the command with
 `--review-sha256 <reviewSHA256>` (`result.confirmCommand` is the exact
 command). It refuses a revision that is not a pinned commit, an adapter or
@@ -50,16 +53,21 @@ norm at that layer, more than one adapter (both engines run only the first), a
 thinking level the model's chat template does not accept, and a name another
 agent has (ignoring case). Get vector digests from `{{cli}} experiment inspect-artifact`.
 The agent lands in `runs/model-variants/` with a `handmade` record: the
-command, each input and its hash, when it was made, and the reason. The record
+command, each input and its hash, when it was made, and the reason, kept word
+for word (the preview warns when the reason names a home folder). The record
 names a file inside the workspace by its workspace path and a file outside it
-by its name and SHA-256 only, never by a home-folder path. Attach it with the
-returned `artifactFileSHA256`; attach refuses an agent made for another
-revision of the model than the study's. There is no `--temperature`: the study
+by its SHA-256 alone, never by its name or a home-folder path. Attach it with
+the returned `artifactFileSHA256`, adding `--replace <arm>` to put it in place
+of an attached arm on a draft; attach refuses an agent made for another commit
+of the model than the study's. There is no `--temperature`: the study
 sets the temperature every arm runs at. `agent inspect`, `agent list`, and
 `attach-agent` say whether an agent is `swept` (a sweep chose its settings and
-`experiment promote` made it) or `handmade`, and its thinking level
+promotion from that sweep made it) or `handmade`, and its thinking level
 (`result.agent`). The app's agent editor records the agents it saves as
-handmade too. A handmade steered agent passes the same freeze gates as a
+handmade too; an agent it saves from an edited one records the agent it was
+edited from (`editedFrom`: its kind, its file's SHA-256, and for a promoted
+agent the study and sweep run) and the fields the researcher changed. A
+handmade steered agent passes the same freeze gates as a
 promoted one; say in METHODS who chose its settings and why.
 
 **Renaming and deleting:** `{{cli}} experiment rename <name> <new-name>`,

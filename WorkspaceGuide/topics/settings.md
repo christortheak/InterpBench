@@ -144,8 +144,9 @@ draft study (`workspace guide methods` covers the roster checks).
 
 **What an agent keeps and what the study sets.** How hard an agent thinks
 belongs to the agent: its file's `reasoningEffort` (set with `agent create
---reasoning-effort`, in the app's agent editor, or carried from the study by
-`experiment promote`) is the level an agent arm of an ordinary study runs at. An
+--reasoning-effort`, in the app's agent editor, or by promotion from a sweep, which
+gives the agent the level the sweep's cells ran at, read from the sweep run's
+own `experiment.json`) is the level an agent arm of an ordinary study runs at. An
 agent file that spells only the older `qwenThinkingEnabled` reads as before
 (true is the template's default effort, false is off); a file whose two fields
 disagree is refused. The study keeps the reasoning budget
@@ -159,10 +160,18 @@ level that reached the chat template (a level the template ignores is stamped
 `on`). `verify` names each attached agent arm that breaks a rule, so freeze
 refuses it: a level the template does not accept, a file whose fields
 disagree, more than one adapter, an agent that thinks beside an answer-token
-instrument, a revision other than the study's, or a vector without that layer
-or its residual norm. A study frozen before these rules verifies with a
-`refusedWhenRun` note and is refused when its run is submitted or started;
-duplicate it and attach a corrected agent.
+instrument, a commit other than the study's, or a vector without that layer
+or its residual norm. A revision is refused only when both the agent and the
+study name full commits that differ (or a shortened hash the study's commit
+does not begin with); a branch, a tag, a shortened hash the other begins with,
+or an agent that records no revision gets an `agentRevisionNotChecked` note
+instead. To fix an arm, make the corrected agent and put it in the arm's place
+with `attach-agent <name> --replace <arm> …`, which replaces that arm on a
+draft; for a thinking agent beside an answer-token instrument, declare
+instruments that read the answer after the reasoning instead. A study frozen
+before these rules verifies with a `refusedWhenRun` note and is refused when
+its run is submitted or started; duplicate it, then repair the duplicate the
+same way. Each refusal's repair names the commands.
 
 **`set-system-prompt <name> "<text>"`** — declares the study's system prompt
 on a draft: the deployment frame every arm is read under. `""` clears it. The

@@ -270,7 +270,7 @@ steerlab design instantiate <name> --casting <value> --file-sha256 <value> [--st
 steerlab design batch <name> --file-sha256 <value> --rows <value>
 steerlab agent inspect <path>
 steerlab agent list
-steerlab experiment attach-agent <study> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest>
+steerlab experiment attach-agent <study> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest> [--replace <value>]
 steerlab experiment set-pipeline <study> --file <path> --manifest-sha256 <digest>
 steerlab panel list
 steerlab panel inspect <path>
@@ -1068,7 +1068,7 @@ steerlab-cli experiment manifest <name>
 steerlab-cli experiment create <name> [--description <text>] --model <id> [--revision <commit>]
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
-steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <sha256> --manifest-sha256 <sha256>
+steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <sha256> --manifest-sha256 <sha256> [--replace <value>]
 steerlab-cli experiment acknowledge-custom-code <name> [--sha256 <hex>]
 steerlab-cli experiment inspect-artifact <path>
 steerlab-cli experiment attach-artifact <study> <concept> --artifact <value> --artifact-sha256 <sha256> [--eval-run <run>] --manifest-sha256 <sha256> --sidecar-sha256 <sha256> [--source-concept <concept>]
@@ -1104,7 +1104,7 @@ steerlab-cli experiment delete <name> [--manifest-sha256 <sha256>] [--yes]
 | `experiment create` | Create a draft manifest pinned to a model. |
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
 | `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |
-| `experiment attach-agent` | Attach an agent using the reviewed study and artifact file versions. |
+| `experiment attach-agent` | Attach an agent using the reviewed study and artifact file versions; --replace <arm> puts it in place of that attached arm. |
 | `experiment acknowledge-custom-code` | Show the custom code (intervention-policy expert providers) a study carries; with --sha256, record that you trust it, so the study can run. The code runs with your permissions; it is not sandboxed. |
 | `experiment inspect-artifact` | Inspect a vector pair's exact digests and scientific sidecar before attaching. |
 | `experiment attach-artifact` | Attach reviewed vector bytes through scientific admission, preserving their provenance. |
