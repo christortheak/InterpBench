@@ -5,10 +5,8 @@
 <!-- flag here against the client's own verb table, and the rendered card has a size budget. -->
 <!-- client: all -->
 
-One line per task: the command, and the rule that applies. Add `--json` to
-every command. When a line does not answer the question, load the topic in
-its heading (`{{cli}} workspace guide <topic>`) or ask the verb itself
-(`<family> <verb> --help`).
+Add `--json` to every command. For more, load the topic a heading names
+(`{{cli}} workspace guide <topic>`) or ask the verb (`<family> <verb> --help`).
 
 ## Every command (`contract`)
 
@@ -168,9 +166,10 @@ its heading (`{{cli}} workspace guide <topic>`) or ask the verb itself
 - Templates: `{{cli}} design list`, then `{{cli}} design instantiate <name>
   --casting <file.json> --file-sha256 <digest>`. Save one with `{{cli}} design
   save <study> --manifest-sha256 <digest>`.
-- Agents: `{{cli}} agent list`, `{{cli}} agent inspect <path>`, then `{{cli}}
+- Agents: `{{cli}} agent list`, `agent inspect <path>`, then `{{cli}}
   experiment attach-agent <study> --artifact <path> --artifact-sha256 <digest>
-  --manifest-sha256 <digest>`.
+  --manifest-sha256 <digest>`. Make one by hand, without a sweep: `{{cli}}
+  agent create <name> --model <id> --revision <sha>`.
 - Study packs: `{{cli}} pack preview <file>`, then `{{cli}} pack apply <file>
   --review-sha256 <digest>`.
 - Panels: `{{cli}} panel check <file>`, then `{{cli}} panel compile` (the

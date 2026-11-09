@@ -1,9 +1,7 @@
 # Verbs: the quick card
 
-One line per task: the command, and the rule that applies. Add `--json` to
-every command. When a line does not answer the question, load the topic in
-its heading (`steerlab workspace guide <topic>`) or ask the verb itself
-(`<family> <verb> --help`).
+Add `--json` to every command. For more, load the topic a heading names
+(`steerlab workspace guide <topic>`) or ask the verb (`<family> <verb> --help`).
 
 ## Every command (`contract`)
 
@@ -95,9 +93,10 @@ its heading (`steerlab workspace guide <topic>`) or ask the verb itself
 - Templates: `steerlab design list`, then `steerlab design instantiate <name>
   --casting <file.json> --file-sha256 <digest>`. Save one with `steerlab design
   save <study> --manifest-sha256 <digest>`.
-- Agents: `steerlab agent list`, `steerlab agent inspect <path>`, then `steerlab
+- Agents: `steerlab agent list`, `agent inspect <path>`, then `steerlab
   experiment attach-agent <study> --artifact <path> --artifact-sha256 <digest>
-  --manifest-sha256 <digest>`.
+  --manifest-sha256 <digest>`. Make one by hand, without a sweep: `steerlab
+  agent create <name> --model <id> --revision <sha>`.
 - Study packs: `steerlab pack preview <file>`, then `steerlab pack apply <file>
   --review-sha256 <digest>`.
 - Panels: `steerlab panel check <file>`, then `steerlab panel compile` (the
