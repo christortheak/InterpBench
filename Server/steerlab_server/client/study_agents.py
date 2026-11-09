@@ -107,9 +107,13 @@ def attach(name: str, artifact: str, *, root: Path, expected: str, artifact_sha2
                         f"the name or the file of agent {arm['name']}, besides arm "
                         f"{replace}; replacing {replace} with it would drop that arm too.",
                         gate="studyDeclaration",
-                        repair=(f"Replace arm {existing['name']} instead (--replace "
-                                f"{existing['name']}), or make the corrected agent under a "
-                                "name no attached arm has."))
+                        # The arm the researcher named comes first: a new
+                        # name keeps both arms. Replacing the other arm is
+                        # offered only as what it is, a different intent.
+                        repair=(f"Make the corrected agent under a name no attached arm has "
+                                f"(agent create <new-name> …), then attach it with --replace "
+                                f"{replace} again; or, if arm {existing['name']} is the one "
+                                f"you meant to replace, use --replace {existing['name']}."))
                 position -= index < position
                 continue
             kept.append(existing)

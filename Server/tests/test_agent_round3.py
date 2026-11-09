@@ -306,8 +306,8 @@ def test_an_edited_agent_names_what_it_was_edited_from():
     summary = agent_identity.agent_origin(artifact)["summary"]
     assert summary == ("Made by hand in the app's agent editor. The researcher edited it "
                        "from an agent experiment promote made from study tone (sweep run "
-                       "sweep-1) and changed its thinking level and persona. No reason "
-                       "was stated.")
+                       "sweep-1); its edits touched its thinking level and persona. No "
+                       "reason was stated.")
     assert "no sweep selected" not in summary
     # Saved as a new agent with nothing changed: a copy, not an edit.
     record["changed"] = []
@@ -316,8 +316,11 @@ def test_an_edited_agent_names_what_it_was_edited_from():
     assert "edited" not in copied
     record["editedFrom"] = {"kind": "handmade", "handmade": {"madeWith": "agent create"}}
     record["changed"] = ["injections", "bandWidth", "temperature"]
-    assert ("edited it from an agent made by hand and changed its steering, layer band, "
-            "and Playground temperature.") in agent_identity.agent_origin(artifact)["summary"]
+    assert ("edited it from an agent made by hand; its edits touched its steering, layer "
+            "band, and Playground temperature.") in agent_identity.agent_origin(artifact)["summary"]
+    # A chain of edits records the union of what its edits touched, so a field
+    # a later edit set back is still listed: the summary never says it changed.
+    assert "changed" not in agent_identity.agent_origin(artifact)["summary"]
 
 
 # --- R6: an ablation's layers ---------------------------------------------------------
@@ -427,7 +430,12 @@ def test_replace_refuses_to_drop_another_arm_and_names_the_rename(tmp_path, caps
     code, document = _attach(tmp_path, capsys, first_path,
                              base.sha(tmp_path / first_path), "--replace", "second")
     assert code == 65 and "would drop that arm too" in document["error"]["reason"]
-    assert "--replace first" in document["error"]["repairAction"]
+    # The repair leads with the arm the researcher named (a new name keeps
+    # both arms); replacing the other arm is offered only as another intent.
+    assert document["error"]["repairAction"].startswith(
+        "Make the corrected agent under a name no attached arm has (agent create "
+        "<new-name> …), then attach it with --replace second again; or, if arm first "
+        "is the one you meant to replace, use --replace first.")
     arms = [a["name"] for a in store.load_raw("study", str(tmp_path))["variantConditions"]]
     assert arms == ["first", "second"]
     code, document = _attach(tmp_path, capsys, *_agent_file(tmp_path, "fixed"),

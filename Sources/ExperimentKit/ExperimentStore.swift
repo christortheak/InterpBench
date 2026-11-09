@@ -1988,9 +1988,13 @@ public enum ExperimentStore {
                         "Study \(manifest.name) already has an agent arm, \(existing.name), with "
                             + "the name or the file of agent \(condition.name), besides arm "
                             + "\(arm); replacing \(arm) with it would drop that arm too.",
-                        repair: "Replace arm \(existing.name) instead (--replace "
-                            + "\(existing.name)), or make the corrected agent under a name no "
-                            + "attached arm has.")
+                        // The arm the researcher named comes first: a new
+                        // name keeps both arms. Replacing the other arm is
+                        // offered only as what it is, a different intent.
+                        repair: "Make the corrected agent under a name no attached arm has "
+                            + "(agent create <new-name> …), then attach it with --replace "
+                            + "\(arm) again; or, if arm \(existing.name) is the one you "
+                            + "meant to replace, use --replace \(existing.name).")
                 }
                 if index < position { position -= 1 }
                 continue

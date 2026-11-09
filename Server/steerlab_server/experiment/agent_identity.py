@@ -227,10 +227,12 @@ def _listed(words: list[str]) -> str:
 def edited_from_phrase(edited: dict, changed) -> str:
     """What an editor record says of the agent it was edited from
     (``editedFrom``: the EARLIEST origin of a chain of edits, so a promoted
-    agent edited twice still reads as promoted) and the fields the researcher
-    changed along the way. No changed field is a copy saved unchanged. The
-    record is written by the app's agent editor; every reader words it here.
-    Swift twin: ``ModelVariantArtifact.editedFromPhrase``."""
+    agent edited twice still reads as promoted) and the fields the edits
+    touched along the way. ``changed`` is the union of every edit's fields,
+    so a field a later edit set back is still listed: the sentence says the
+    edits TOUCHED it, never that it differs now. No field at all is a copy
+    saved unchanged. The record is written by the app's agent editor; every
+    reader words it here. Swift twin: ``ModelVariantArtifact.editedFromPhrase``."""
     kind = edited.get("kind")
     if kind == AGENT_KIND_SWEPT:
         study, run = edited.get("experiment"), edited.get("sweepRun")
@@ -246,7 +248,7 @@ def edited_from_phrase(edited: dict, changed) -> str:
               if isinstance(changed, list) and key in changed]
     if not fields:
         return f"The researcher saved it as an unchanged copy of {source}."
-    return f"The researcher edited it from {source} and changed its {_listed(fields)}."
+    return f"The researcher edited it from {source}; its edits touched its {_listed(fields)}."
 
 
 #: How a handmade record's ``madeWith`` reads in a sentence.

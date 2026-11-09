@@ -91,7 +91,7 @@
       "injections": [],
       "name": "agent"
     },
-    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone (sweep run sweep-1) and changed its persona. No reason was stated."
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone (sweep run sweep-1); its edits touched its persona. No reason was stated."
   },
   {
     "artifact": {
@@ -122,7 +122,7 @@
       ],
       "name": "agent"
     },
-    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone (sweep run sweep-1) and changed its persona. No reason was stated."
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone (sweep run sweep-1); its edits touched its persona. No reason was stated."
   },
   {
     "artifact": {
@@ -147,7 +147,7 @@
       "injections": [],
       "name": "agent"
     },
-    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone and changed its steering, thinking level, and Playground temperature. No reason was stated."
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone; its edits touched its steering, thinking level, and Playground temperature. No reason was stated."
   },
   {
     "artifact": {
@@ -179,7 +179,7 @@
       ],
       "name": "agent"
     },
-    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone and changed its steering, thinking level, and Playground temperature. No reason was stated."
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone; its edits touched its steering, thinking level, and Playground temperature. No reason was stated."
   },
   {
     "artifact": {
@@ -255,7 +255,7 @@
       "injections": [],
       "name": "agent"
     },
-    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent with no record of how it was made and changed its adapter and prompt mode. No reason was stated."
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent with no record of how it was made; its edits touched its adapter and prompt mode. No reason was stated."
   },
   {
     "artifact": {
@@ -285,6 +285,6 @@
       ],
       "name": "agent"
     },
-    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent with no record of how it was made and changed its adapter and prompt mode. No reason was stated."
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent with no record of how it was made; its edits touched its adapter and prompt mode. No reason was stated."
   }
 ]

@@ -312,8 +312,8 @@ import Testing
             #expect(record["changed"] == .array([.string("systemPrompt")]))
             #expect(updated.artifact.origin.summary == "Made by hand in the app's agent "
                 + "editor. The researcher edited it from an agent experiment promote made "
-                + "from study tone (sweep run sweep-1) and changed its persona. No reason "
-                + "was stated.")
+                + "from study tone (sweep run sweep-1); its edits touched its persona. No "
+                + "reason was stated.")
             #expect(!updated.artifact.origin.summary.contains("no sweep selected"))
         }
     }
@@ -539,7 +539,12 @@ import Testing
             let clash = try await attach("first", ["--replace", "second"])
             #expect(clash.envelope.exitCode == 65)
             #expect(clash.envelope.error?.reason.contains("would drop that arm too") == true)
-            #expect(clash.envelope.error?.repairAction.contains("--replace first") == true)
+            // The repair leads with the arm the researcher named (a new name
+            // keeps both arms); replacing the other arm is another intent.
+            #expect(clash.envelope.error?.repairAction == "Make the corrected agent under a "
+                + "name no attached arm has (agent create <new-name> …), then attach it with "
+                + "--replace second again; or, if arm first is the one you meant to replace, "
+                + "use --replace first.")
             #expect(try ExperimentStore.load(name: "study").variantConditions.map(\.name)
                 == ["first", "second"])
             let renamed = try await attach("fixed", ["--replace", "second"])
@@ -578,7 +583,12 @@ import Testing
         #expect(origin["artifactFileSHA256"] == .string("e"))
         #expect(record["changed"] == .array([.string("bandWidth"), .string("systemPrompt")]))
         #expect(second.origin.summary.contains("edited it from an agent experiment promote "
-            + "made from study tone (sweep run sweep-1) and changed its layer band and persona"))
+            + "made from study tone (sweep run sweep-1); its edits touched its layer band and "
+            + "persona"))
+        // A chain records the union of what its edits touched, so a field a
+        // later edit set back is still listed: the summary never says it
+        // changed.
+        #expect(!second.origin.summary.contains("changed"))
     }
 
     @Test func aPromotionWhoseSweepRunCannotBeReadSaysWhy() async throws {

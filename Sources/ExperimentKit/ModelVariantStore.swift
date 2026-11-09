@@ -799,9 +799,11 @@ extension ModelVariantArtifact {
 
     /// What an editor record says of the agent it was edited from
     /// (`editedFrom`: the EARLIEST origin of a chain of edits) and the fields
-    /// the researcher changed along the way; none changed is a copy saved
-    /// unchanged. Server twin: `agent_identity.edited_from_phrase`, the same
-    /// sentence.
+    /// its edits touched along the way. `changed` is the union of every
+    /// edit's fields, so a field a later edit set back is still listed: the
+    /// sentence says the edits TOUCHED it, never that it differs now. No
+    /// field at all is a copy saved unchanged. Server twin:
+    /// `agent_identity.edited_from_phrase`, the same sentence.
     static func editedFromPhrase(_ edited: [String: JSONValue], changed: JSONValue?) -> String {
         let source: String
         switch edited["kind"]?.agentRecordString {
@@ -824,7 +826,7 @@ extension ModelVariantArtifact {
         guard !fields.isEmpty else {
             return "The researcher saved it as an unchanged copy of \(source)."
         }
-        return "The researcher edited it from \(source) and changed its \(listed(fields))."
+        return "The researcher edited it from \(source); its edits touched its \(listed(fields))."
     }
 
     /// The fields of this agent that differ from `source`, by name, in the
