@@ -166,14 +166,228 @@ def _agent_made(artifact: dict) -> dict:
         return {"kind": kind,
                 "summary": ("This agent carries no promotion record, so nothing "
                             "records that a sweep selected its settings, and no "
-                            "record of how it was made (the app's agent editor and "
-                            "new agent versions leave none).")}
+                            "record of how it was made (agents saved before such "
+                            "records existed, and new agent versions, carry "
+                            "none).")}
     reason = record.get("reason") if isinstance(record.get("reason"), str) else None
     made_with = record.get("madeWith") if isinstance(record.get("madeWith"), str) else None
     return {"kind": kind,
-            "summary": ((f"Made by hand with {made_with}. " if made_with
-                         else "Made by hand. ") + chose
+            "summary": (made_with_phrase(made_with) + chose
                         + (f" Stated reason: \"{reason}\"." if reason
                            else " No reason was stated."))}
+
+
+#: How a handmade record's ``madeWith`` reads in a sentence.
+MADE_WITH_AGENT_CREATE = "agent create"
+MADE_WITH_AGENT_EDITOR = "agent editor"
+
+
+def made_with_phrase(made_with: str | None) -> str:
+    """The opening of a handmade agent's summary. Swift twin:
+    ``ModelVariantArtifact.madeWithPhrase``."""
+    if made_with == MADE_WITH_AGENT_EDITOR:
+        return "Made by hand in the app's agent editor. "
+    if made_with:
+        return f"Made by hand with {made_with}. "
+    return "Made by hand. "
+
+
+# --- what reached the renderer --------------------------------------------------
+
+
+def rendered_effort(effort: str, model_id: str, capabilities=None) -> str:
+    """The effort a template actually renders for ``effort`` under this
+    capability record, by :func:`prompt_render.thinking_template_kwargs`'s
+    own rule: ``off`` when the template has no thinking switch, ``on`` for a
+    level the template ignores (or, with a probed record, does not read), and
+    the level itself otherwise. What a record stamps, so no record says
+    ``medium`` for a turn that rendered as plain ``on``. Swift twin:
+    ``ModelVariantArtifact.renderedReasoningEffort``."""
+    from . import model_capabilities as mc
+    record = prompt_render.capabilities_for(model_id, capabilities=capabilities)
+    if not record.has_thinking_switch or effort == prompt_render.REASONING_OFF:
+        return prompt_render.REASONING_OFF
+    if effort == prompt_render.REASONING_ON:
+        return effort
+    verdict = record.effort_verdict(effort)
+    if verdict == mc.IGNORED or (verdict is None and record.effort_variable_read is False):
+        return prompt_render.REASONING_ON
+    return effort
+
+
+# --- the rules an attached agent arm must meet ------------------------------------
+
+
+#: The instruments that read an answer from its first tokens, with no
+#: reasoning before it (``condition_execution.CHOICE_INSTRUMENTS``).
+ANSWER_TOKEN_INSTRUMENTS = frozenset({"answerTokenLogprob", "choiceProbability",
+                                      "ordinalScale"})
+
+
+def _artifact_effort(artifact: dict) -> str:
+    effort = artifact.get(prompt_render.REASONING_EFFORT_KEY)
+    if isinstance(effort, str) and effort in prompt_render.REASONING_EFFORTS:
+        return effort
+    return prompt_render.resolve_reasoning_effort(
+        None, artifact.get(prompt_render.LEGACY_THINKING_KEY) is True)
+
+
+def an_attached_agent_arm_thinks(raw: dict) -> bool:
+    """Whether at least one agent arm attached to this study thinks (its file
+    reads as a non-off effort). The one predicate under which a study whose
+    own effort is off may still declare a reasoning budget: that budget then
+    reaches only the arms that think. Swift twin:
+    ``ModelVariantArtifact.anAttachedAgentArmThinks``."""
+    for condition in raw.get("variantConditions") or []:
+        artifact = condition.get("artifact") if isinstance(condition, dict) else None
+        if isinstance(artifact, dict) and _artifact_effort(artifact) != prompt_render.REASONING_OFF:
+            return True
+    return False
+
+
+def arm_problems(name: str, artifact: dict, *, model_id: str, model_revision: str | None,
+                 outcome_instruments, capabilities, root: str | None) -> list[str]:
+    """Every settings-only rule one attached agent arm breaks, as sentences.
+
+    Decidable from the study's settings and the agent's file (and, for its
+    vectors, their sidecars when this workspace holds them), so they are
+    verify violations on a draft, notes on a frozen study, and refusals at
+    submission and at run start, never something a run discovers after the
+    queue and the model load (the public issue #9 rule).
+
+    - the file's own problems (:func:`agent_file_problem`);
+    - a declared level the template does not accept, by the rule a study's
+      ``set-sampling --reasoning-effort`` uses (accepted and assumed pass);
+    - more than one adapter (both engines run only the first);
+    - an agent that thinks, in a study with an answer-token instrument;
+    - a ``baseRevision`` other than the study's pinned revision (an agent with
+      none, written before agents recorded one, is not judged);
+    - an injection at a layer its vector does not have, or a steering
+      strength in residual-norm units where the vector records no norm.
+
+    Swift twin: ``ModelVariantArtifact.armProblems``, same sentences."""
+    from .model_variant import ModelVariant
+    label = f"agent arm '{name}'"
+    problem = agent_file_problem(artifact)
+    if problem is not None:
+        return [f"{label}: {problem}"]
+    problems: list[str] = []
+    probe = ModelVariant(name=name, base_model_id=str(artifact.get("baseModelID") or model_id),
+                         reasoning_effort=artifact.get(prompt_render.REASONING_EFFORT_KEY))
+    problems += [f"{label}: {p}" for p in variant_effort_violations(probe, capabilities)]
+    if len(artifact.get("adapters") or []) > 1:
+        problems.append(
+            f"{label}: the agent lists {len(artifact['adapters'])} adapters, and both "
+            "engines run only the first, so the others would be recorded but never "
+            "run")
+    effort = _artifact_effort(artifact)
+    if (effort != prompt_render.REASONING_OFF
+            and set(outcome_instruments or ()) & ANSWER_TOKEN_INSTRUMENTS):
+        problems.append(
+            f"{label}: the agent thinks (reasoning effort {effort}) but the study "
+            "declares an answer-token instrument, which reads the answer with no "
+            "reasoning before it")
+    revision = artifact.get("baseRevision")
+    if isinstance(revision, str) and revision and model_revision and revision != model_revision:
+        problems.append(
+            f"{label}: the agent was made for revision {revision} of "
+            f"{artifact.get('baseModelID') or model_id}, but the study pins revision "
+            f"{model_revision}")
+    problems += [f"{label}: {p}" for p in _injection_problems(artifact, root)]
+    return problems
+
+
+def _injection_problems(artifact: dict, root: str | None) -> list[str]:
+    from . import paths
+    from ..steering import residual_norm_convention
+    problems: list[str] = []
+    norm_units = bool(artifact.get("alphaInNormUnits", False))
+    half = max(1, int(artifact.get("bandWidth") or 1)) // 2
+    for inj in artifact.get("injections") or []:
+        if not isinstance(inj, dict) or not inj.get("vectorArtifactID"):
+            continue
+        sidecar_path = paths.resolve_artifact(str(inj["vectorArtifactID"]), root) + ".json"
+        try:
+            with open(sidecar_path, encoding="utf-8") as handle:
+                sidecar = json.load(handle)
+        except (OSError, ValueError):
+            continue  # a missing vector is the artifact preflight's refusal
+        count = sidecar.get("layerCount") if isinstance(sidecar, dict) else None
+        concept = str(inj.get("concept") or inj["vectorArtifactID"])
+        try:
+            layer = int(inj.get("layer"))
+        except (TypeError, ValueError):
+            continue
+        if isinstance(count, bool) or not isinstance(count, int):
+            continue  # a sidecar that states no depth decides nothing here
+        if not 0 <= layer < count:
+            problems.append(
+                f"its injection of '{concept}' is at layer {layer}, which its vector "
+                f"does not have (layers 0 to {count - 1})")
+            continue
+        if str(inj.get("mode") or "add") == "ablate" or not norm_units:
+            continue
+        for band_layer in range(max(0, layer - half), min(count - 1, layer + half) + 1):
+            if residual_norm_convention.residual_norm_problem(
+                    sidecar.get("residualNormPerLayer"), band_layer, artifact=concept):
+                problems.append(
+                    f"its injection of '{concept}' gives a strength in residual-norm "
+                    f"units, but the vector records no residual norm at layer "
+                    f"{band_layer}")
+                break
+    return problems
+
+
+def manifest_arm_problems(manifest, root: str | None) -> list[str]:
+    """:func:`arm_problems` over every attached agent arm (an inline
+    artifact; a forward reference has no file yet), against the capability
+    record the declaration gates read (``Manifest._capabilities_for_gates``)."""
+    capabilities = manifest._capabilities_for_gates(root)
+    out: list[str] = []
+    for condition in manifest.raw.get("variantConditions") or []:
+        if not isinstance(condition, dict) or isinstance(condition.get("fromPromotion"), dict):
+            continue
+        artifact = condition.get("artifact")
+        if not isinstance(artifact, dict):
+            continue
+        out += arm_problems(str(condition.get("name") or artifact.get("name") or "?"),
+                            artifact, model_id=manifest.model_id,
+                            model_revision=manifest.model_revision,
+                            outcome_instruments=manifest.outcome_instruments,
+                            capabilities=capabilities, root=root)
+    return out
+
+
+def arm_problems_repair(name: str, *, frozen: bool, authoring) -> str:
+    """The repair for :func:`manifest_arm_problems`, as commands the reader's
+    client spells (``authoring`` is ``command_vocabulary.authoring``)."""
+    target = f"{name}-v2" if frozen else name
+    steps = []
+    if frozen:
+        steps.append(authoring(f"experiment duplicate {name} {target}"))
+    steps.append(
+        "make a corrected agent (" + authoring("agent create <new-name> --model <id> "
+                                               "--revision <sha> …")
+        + ", or the app's agent editor) and attach it in place of the one named: "
+        + authoring(f"experiment attach-agent {target} --artifact <path> "
+                    "--artifact-sha256 <digest> --manifest-sha256 <digest>"))
+    return "; then ".join(steps)
+
+
+def frozen_arm_problems_advisory(manifest, root: str | None) -> str | None:
+    """What ``verify`` says of a frozen study whose agent arms break a rule
+    added since it froze: it still verifies, so its runs stay readable, and
+    the reader learns here that running it needs a corrected duplicate.
+    Advisory code ``refusedWhenRun`` (the public issue #9 pattern)."""
+    if manifest.status == "draft" or manifest.study_kind == "multiAgent":
+        return None
+    problems = manifest_arm_problems(manifest, root)
+    if not problems:
+        return None
+    from . import command_vocabulary as vocabulary
+    return ("this study will be refused when its run is submitted or started, "
+            "because " + "; ".join(problems) + ". To run it: "
+            + arm_problems_repair(manifest.name, frozen=True,
+                                  authoring=vocabulary.authoring))
 
 

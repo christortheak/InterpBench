@@ -310,6 +310,15 @@ def materialize_sae_latent_conditions(manifest: manifest_module.Manifest, log):
     return resolved
 
 
+def study_arm_budget(manifest) -> int | None:
+    """The reasoning budget a study's own arms (baseline, concept, and SAE
+    latent arms) generate under: the declared budget when the study itself
+    thinks, else none. A study whose effort is off may declare a budget for
+    its agent arms that think (ruling 2026-11-08); it never reaches an arm
+    that does not think. Swift twin: the condition loops' budget rule."""
+    return manifest.reasoning_max_tokens if manifest.qwen_thinking_enabled else None
+
+
 def effective_sae_latent_condition(spec, edit, provenance,
                                     manifest) -> EffectiveCondition:
     """A latent condition's resolved execution configuration.
@@ -335,7 +344,7 @@ def effective_sae_latent_condition(spec, edit, provenance,
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         temperature=manifest.temperature,
         reasoning_effort=manifest.reasoning_effort,
-        reasoning_max_tokens=manifest.reasoning_max_tokens,
+        reasoning_max_tokens=study_arm_budget(manifest),
         agent_system_prompt=None,
         study_system_prompt=manifest.system_prompt)
 
@@ -527,7 +536,7 @@ def effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCondi
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         temperature=manifest.temperature,
         reasoning_effort=manifest.reasoning_effort,
-        reasoning_max_tokens=manifest.reasoning_max_tokens,
+        reasoning_max_tokens=study_arm_budget(manifest),
         agent_system_prompt=None,
         study_system_prompt=manifest.system_prompt)
 
@@ -642,10 +651,19 @@ def effective_variant_condition(vc, manifest, model, root, *,
         # agent ran at, stamped on every record of the arm. Absent on records
         # from an engine that predates it and on every non-agent arm, whose
         # bytes are unchanged.
+        # The stamp is the level that REACHES the renderer, read through the
+        # record the renderer itself uses (the loaded tokenizer's template):
+        # a level the template ignores renders as plain `on`, and the record
+        # says so rather than repeating the agent's declaration.
         provenance={"variantArtifactPath": vc.artifact_path,
                     "variantArtifactHash": vc.artifact_hash,
                     "agentPlaygroundTemperature": variant.temperature,
-                    "agentReasoningEffort": effort},
+                    "agentReasoningEffort": agent_identity.rendered_effort(
+                        effort, manifest.model_id,
+                        prompt_render.capabilities_for(
+                            manifest.model_id,
+                            tokenizer=getattr(model, "tokenizer", None),
+                            revision=manifest.model_revision))},
         variant=variant)
 
 
@@ -708,7 +726,7 @@ def run_arm_render_settings(manifest, root) -> list[dict]:
     frame = manifest.system_prompt
     settings = [render(manifest.prompt_mode, system_prompt_mod.compose(None, frame),
                        manifest.qwen_thinking_enabled, manifest.reasoning_effort,
-                       manifest.reasoning_max_tokens)]
+                       study_arm_budget(manifest))]
     for vc in manifest.variant_conditions:
         try:
             variant = (model_variant.ModelVariant.from_dict(vc.artifact)
@@ -873,7 +891,8 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                             "reasoning_max_tokens": eff.reasoning_max_tokens}
         think_close_id = truncation_gate.think_close_token_id(
             getattr(model, "tokenizer", None))
-    elif agent_identity.effort_reaches_renderer(eff.reasoning_effort, None):
+    elif eff.variant is not None and agent_identity.effort_reaches_renderer(
+            eff.reasoning_effort, None):
         # An agent that declares a level the legacy boolean cannot express
         # (`medium`, `on`) in a study with no reasoning budget: the level
         # reaches the template, so the agent thinks at its own level rather

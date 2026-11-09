@@ -362,13 +362,15 @@ def test_a_run_hands_the_agents_level_to_generation_and_stamps_it(tmp_path, monk
     import test_variant_study_sampling as fixture
     from steerlab_server.experiment import tasks
     root = str(tmp_path)
+    qwen = "Qwen/Qwen3.8-27B"  # a template with a thinking switch (id heuristic)
     prompts = fixture._study_fixture(
         root, "effort-run",
         agent_a=fixture._artifact("agent-a", reasoningEffort="medium",
-                                  qwenThinkingEnabled=True),
-        agent_b=fixture._artifact("agent-b", qwenThinkingEnabled=True))
+                                  qwenThinkingEnabled=True, baseModelID=qwen),
+        agent_b=fixture._artifact("agent-b", qwenThinkingEnabled=True, baseModelID=qwen))
     raw = store.load_raw("effort-run", root)
     raw["outcomeInstruments"] = ["sampledText"]
+    raw["modelID"] = qwen
     store.save_raw(raw, root)
     calls = []
 

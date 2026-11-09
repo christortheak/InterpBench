@@ -1448,14 +1448,23 @@ class Manifest:
         # under — so no frozen study stops verifying over a fact probed after
         # its freeze; ``capability_advisories`` says those out loud instead.
         record = self._capabilities_for_gates(root)
+        # A study whose own effort is off may still declare a reasoning budget
+        # when an attached agent arm thinks: it then reaches only the arms
+        # that think (the maintainer's ruling, 2026-11-08). The predicate is
+        # kept separate so a panel seat's twin can join it.
+        from . import agent_identity
+        budget_for_agents = agent_identity.an_attached_agent_arm_thinks(self.raw)
         if self.reasoning_effort_declared:
-            violations += prompt_render.reasoning_protocol_violations(
-                effort=self.raw.get(prompt_render.REASONING_EFFORT_KEY),
-                reasoning_max_tokens=self.raw.get(
-                    prompt_render.REASONING_MAX_TOKENS_KEY),
-                model_id=self.model_id, capabilities=record)
+            violations += [
+                v for v in prompt_render.reasoning_protocol_violations(
+                    effort=self.raw.get(prompt_render.REASONING_EFFORT_KEY),
+                    reasoning_max_tokens=self.raw.get(
+                        prompt_render.REASONING_MAX_TOKENS_KEY),
+                    model_id=self.model_id, capabilities=record)
+                if not (budget_for_agents
+                        and v == prompt_render.BUDGET_WITHOUT_EFFORT_REASON)]
         elif (self.raw.get(prompt_render.REASONING_MAX_TOKENS_KEY) is not None
-              and not self.qwen_thinking_enabled):
+              and not self.qwen_thinking_enabled and not budget_for_agents):
             # A budget beside no effort at all: meaningless unless the legacy
             # boolean already says the study reasons (then the run honours it).
             violations.append(prompt_render.BUDGET_WITHOUT_EFFORT_REASON)
@@ -1587,6 +1596,14 @@ class Manifest:
             greedy_seeds = _sampling.manifest_greedy_seed_list_problem(self)
             if greedy_seeds:
                 violations.append(greedy_seeds)
+            # The settings-only rules of each attached agent arm (public
+            # issues #16, #17): a DRAFT only, by the same pattern, so freeze
+            # refuses it; a study frozen before them meets them at submission
+            # and run start (``study_admission.agent_arm_refusal``). Swift
+            # twin: ExperimentStore.verify, same sentences.
+            if self.study_kind != "multiAgent":
+                from . import agent_identity
+                violations += agent_identity.manifest_arm_problems(self, root)
 
         from . import experiment_store, multiconcept
 

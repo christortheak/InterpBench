@@ -257,6 +257,13 @@ def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None) -> No
             effort=merged_effort, reasoning_max_tokens=merged_budget,
             model_id=str(d.get("modelID") or ""),
             capabilities=capabilities)
+        # An off study may declare a budget for its agent arms that think;
+        # the budget reaches only those arms (ruling 2026-11-08). Swift twin:
+        # ManifestDraftEdits.setSamplingProtocol.
+        from . import agent_identity
+        if agent_identity.an_attached_agent_arm_thinks(d):
+            problems = [p for p in problems
+                        if p != prompt_render.BUDGET_WITHOUT_EFFORT_REASON]
         if problems:
             raise ExperimentStoreError(
                 "; ".join(problems),

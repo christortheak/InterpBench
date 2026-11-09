@@ -54,7 +54,8 @@ def verify_or_warn(manifest: Manifest, root: str | None) -> None:
 
 
 
-def settings_refusal(manifest: Manifest) -> lifecycle_gates.LifecycleError | None:
+def settings_refusal(manifest: Manifest,
+                     root: str | None = None) -> lifecycle_gates.LifecycleError | None:
     """The refusal an ordinary study's run gives on its SETTINGS alone, or
     None: what nothing after submission (the queue, the node, the model, its
     tokenizer) can change, so it is decidable before anything is queued.
@@ -102,7 +103,29 @@ def settings_refusal(manifest: Manifest) -> lifecycle_gates.LifecycleError | Non
             repair=(f"{duplicate}declare ordinalAggregation 'expectedValue' "
                     "or 'argmax' in the study's settings "
                     f"{vocabulary.authoring_place()}, and run it again"))
-    return None
+    return agent_arm_refusal(manifest, root)
+
+
+def agent_arm_refusal(manifest: Manifest,
+                      root: str | None = None) -> lifecycle_gates.LifecycleError | None:
+    """The refusal an attached agent arm's settings give, or None
+    (``agent_identity.manifest_arm_problems``: an unaccepted thinking level,
+    contradictory or unknown fields, two adapters, a thinking agent beside an
+    answer-token instrument, another model revision, or a missing layer or
+    residual norm). A verify violation on a draft, so freeze refuses it; a
+    study frozen before the rules meets them here, at submission and at run
+    start, before the queue and the model load (public issues #9, #16)."""
+    if manifest.study_kind == "multiAgent":
+        return None
+    from . import agent_identity
+    problems = agent_identity.manifest_arm_problems(manifest, root)
+    if not problems:
+        return None
+    return lifecycle_gates.refusing(
+        lifecycle_gates.STUDY_DECLARATION, "; ".join(problems),
+        repair=agent_identity.arm_problems_repair(
+            manifest.name, frozen=manifest.status != "draft",
+            authoring=vocabulary.authoring))
 
 
 def declare_an_arm_repair(name: str) -> str:
@@ -125,9 +148,9 @@ def inert_arms_repair(name: str) -> str:
             + declare_an_arm_repair(name))
 
 
-def refuse_settings(manifest: Manifest) -> None:
+def refuse_settings(manifest: Manifest, root: str | None = None) -> None:
     """Raise :func:`settings_refusal`'s refusal, when there is one."""
-    refusal = settings_refusal(manifest)
+    refusal = settings_refusal(manifest, root)
     if refusal is not None:
         raise refusal
 
