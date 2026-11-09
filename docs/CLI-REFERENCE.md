@@ -270,13 +270,14 @@ steerlab design instantiate <name> --casting <value> --file-sha256 <value> [--st
 steerlab design batch <name> --file-sha256 <value> --rows <value>
 steerlab agent inspect <path>
 steerlab agent list
-steerlab experiment attach-agent <study> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest>
+steerlab experiment attach-agent <study> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest> [--replace <value>]
 steerlab experiment set-pipeline <study> --file <path> --manifest-sha256 <digest>
 steerlab panel list
 steerlab panel inspect <path>
 steerlab panel check <file>
 steerlab panel import <file> --file-sha256 <value>
 steerlab panel compile <path> --casting <value> --experiment <value> --file-sha256 <value> --manifest-sha256 <digest>
+steerlab agent create <name> --model <id> --revision <commit> [--adapter <value>] [--adapter-sha256 <value>] [--band-width <k>] [--centering <value>] [--layer <value>] [--mode <value>] [--prompt-mode <value>] [--reason <value>] [--reasoning-effort <value>] [--review-sha256 <digest>] [--strength <value>] [--system-prompt-file <value>] [--vector <value>] [--vector-sha256 <value>]
 steerlab experiment rename <name> <new-name> [--manifest-sha256 <digest>] [--yes]
 steerlab experiment delete <name> [--manifest-sha256 <digest>] [--yes]
 steerlab design rename <name> <new-name> [--file-sha256 <value>] [--yes]
@@ -940,7 +941,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   results export <study> [--run <run-dir>] [--out <dir>]  Export a run's results as tables, transcripts, a methods summary, and a codebook.
   results report <study> [--run <run-dir>] [--out <file>]  Write a run's results as one readable page to open in a browser or send.
   pack preview | apply | export …               Review and import study packs, or export text inputs and dependency names.
-  agent list | inspect <path>                   Inspect local agents for reviewed attachment.
+  agent list | inspect <path> | create <name> | delete <path>  Make an agent by hand, or inspect local agents for reviewed attachment.
   design list | inspect | describe | instantiate | batch | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
@@ -1067,7 +1068,7 @@ steerlab-cli experiment manifest <name>
 steerlab-cli experiment create <name> [--description <text>] --model <id> [--revision <commit>]
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
-steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <sha256> --manifest-sha256 <sha256>
+steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <sha256> --manifest-sha256 <sha256> [--replace <value>]
 steerlab-cli experiment acknowledge-custom-code <name> [--sha256 <hex>]
 steerlab-cli experiment inspect-artifact <path>
 steerlab-cli experiment attach-artifact <study> <concept> --artifact <value> --artifact-sha256 <sha256> [--eval-run <run>] --manifest-sha256 <sha256> --sidecar-sha256 <sha256> [--source-concept <concept>]
@@ -1103,7 +1104,7 @@ steerlab-cli experiment delete <name> [--manifest-sha256 <sha256>] [--yes]
 | `experiment create` | Create a draft manifest pinned to a model. |
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
 | `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |
-| `experiment attach-agent` | Attach an agent using the reviewed study and artifact file versions. |
+| `experiment attach-agent` | Attach an agent using the reviewed study and artifact file versions; --replace <arm> puts it in place of that attached arm. |
 | `experiment acknowledge-custom-code` | Show the custom code (intervention-policy expert providers) a study carries; with --sha256, record that you trust it, so the study can run. The code runs with your permissions; it is not sandboxed. |
 | `experiment inspect-artifact` | Inspect a vector pair's exact digests and scientific sidecar before attaching. |
 | `experiment attach-artifact` | Attach reviewed vector bytes through scientific admission, preserving their provenance. |
@@ -2770,6 +2771,7 @@ of bytes, not scientific validity or cleanup authorization. See
 ```
 steerlab-cli agent list
 steerlab-cli agent inspect <path>
+steerlab-cli agent create <name> [--adapter <value>] [--adapter-sha256 <value>] [--band-width <k>] [--centering <value>] [--layer <value>] [--mode <value>] --model <id> [--prompt-mode <mode>] [--reason <text>] [--reasoning-effort <value>] [--review-sha256 <sha256>] --revision <commit> [--strength <value>] [--system-prompt-file <value>] [--vector <value>] [--vector-sha256 <value>]
 steerlab-cli agent delete <path> [--artifact-sha256 <sha256>] [--yes]
 ```
 
@@ -2777,6 +2779,7 @@ steerlab-cli agent delete <path> [--artifact-sha256 <sha256>] [--yes]
 |---|---|
 | `agent list` | List discoverable local agent artifacts and their file digests. |
 | `agent inspect` | Inspect a workspace agent artifact before attachment. |
+| `agent create` | Preview an agent made by hand: a base model at a pinned revision, at most one adapter, vectors at the layers and strengths you choose (a steering strength is in residual-norm units, an ablation's is the fraction removed), a thinking level, a system prompt, and a prompt mode. Repeat with --review-sha256 to write it into the agent library with a record of how it was made. The study that casts the agent sets its temperature. |
 | `agent delete` | Preview deleting an agent no study uses; repeat with its reviewed --artifact-sha256 and --yes to move it into a .trash folder. Refused while any study uses it. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.

@@ -96,7 +96,12 @@ struct ModelVariantsPanelView: View {
     @State private var alphaInNormUnits = true
     @State private var neutralPCBasisID: String?
     @State private var promptMode: ExperimentManifest.PromptMode = .chatAssistant
-    @State private var qwenThinkingEnabled = false
+    /// How hard the agent thinks (public issue #16), and whether that level
+    /// was stated (picked here, or declared by the loaded file). An agent
+    /// whose file spells only the older thinking switch loads undeclared, so
+    /// saving it unedited writes the switch back and its bytes stay the same.
+    @State private var reasoningEffort: ReasoningEffort = .off
+    @State private var reasoningEffortDeclared = false
     @State private var temperature = 0.0
     @State private var systemPrompt = ""
     /// Set when Save Changes would remove the selected library agent's
@@ -918,6 +923,14 @@ struct ModelVariantsPanelView: View {
                     after: origin, current: adapterID)
                 neutralPCBasisID = AgentEditorSelection.dependentSelection(
                     after: origin, current: neutralPCBasisID)
+                // A user's model change resets a declared thinking level the
+                // new model's template does not take (FR6-B round 2); a
+                // definition's own load keeps exactly what it declares.
+                if origin == .userPick, reasoningEffortDeclared,
+                    !thinkingChoices.offered.contains(reasoningEffort)
+                {
+                    reasoningEffort = .off
+                }
                 injections.removeAll { draft in
                     // Refs loaded from the definition are DATA: they survive
                     // a base-model change (and this onChange also fires when
@@ -987,22 +1000,7 @@ struct ModelVariantsPanelView: View {
                     + "template, or as raw completion text. It changes the "
                     + "tokens the model actually sees, so a study must not "
                     + "mix modes across its arms")
-            Toggle("Qwen thinking mode", isOn: $qwenThinkingEnabled)
-                .disabled(!isQwenBaseModel)
-                .help(
-                    isQwenBaseModel
-                        ? "asks Qwen for its <think> block before the answer "
-                            + "— longer generations, and the thinking text is "
-                            + "stripped from the recorded response"
-                        : qwenThinkingDisabledHelp)
-            if !isQwenBaseModel {
-                Text(
-                    "thinking mode is a Qwen chat-template feature; this base "
-                        + "model does not offer it")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            thinkingPicker(thinkingChoices)
             AgentTemperatureRow(value: $temperature)
             TextField("System prompt", text: $systemPrompt, axis: .vertical)
                 .lineLimit(1 ... 5)
@@ -1022,17 +1020,83 @@ struct ModelVariantsPanelView: View {
         }
     }
 
-    /// Thinking mode is a Qwen chat-template feature; every other base model
-    /// gets the toggle disabled, and now says why.
-    private var isQwenBaseModel: Bool {
-        baseModelID.lowercased().contains("qwen")
+    /// The base model's capability record and the levels offered from it,
+    /// resolved ONCE per redraw (the record is a file read): the levels its
+    /// chat template accepts, or is assumed to accept, and an older file's
+    /// reading of its thinking switch. A declared level the template rejects
+    /// or ignores is not offered.
+    private struct ThinkingChoices {
+        let record: ModelCapabilities
+        let offered: [ReasoningEffort]
+    }
+
+    private var thinkingChoices: ThinkingChoices {
+        let record = ModelCapabilitiesStore.resolve(
+            modelID: baseModelID, revision: nilIfEmpty(baseRevision),
+            root: ExperimentStore.workspaceRoot)
+        return ThinkingChoices(
+            record: record,
+            offered: ModelVariantArtifact.offeredReasoningEfforts(
+                capabilities: record, current: reasoningEffort,
+                currentDeclared: reasoningEffortDeclared))
+    }
+
+    @ViewBuilder
+    private func thinkingPicker(_ choices: ThinkingChoices) -> some View {
+        Picker("Thinking", selection: reasoningEffortSelection) {
+            ForEach(choices.offered, id: \.self) { effort in
+                Text(Self.reasoningEffortLabel(effort, record: choices.record)).tag(effort)
+            }
+        }
+        .disabled(choices.offered.count < 2)
+        .help(
+            "how hard the agent thinks before it answers, in a study that casts it; "
+                + "the levels offered are the ones this model's chat template accepts, "
+                + "and \"assumed\" marks a level taken from the model's family with no "
+                + "probed template. The study sets how many tokens the thinking may use")
+        if !choices.offered.contains(reasoningEffort) {
+            Text(Self.unofferedLevelCaption(reasoningEffort))
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if choices.offered.count < 2 {
+            Text(thinkingUnavailableCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Picking a level states it, so the saved file declares it.
+    private var reasoningEffortSelection: Binding<ReasoningEffort> {
+        Binding(
+            get: { reasoningEffort },
+            set: { reasoningEffort = $0; reasoningEffortDeclared = true })
+    }
+
+    private static func reasoningEffortLabel(
+        _ effort: ReasoningEffort, record: ModelCapabilities
+    ) -> String {
+        switch effort {
+        case .off: return "Off"
+        case .on: return "On (the template's default)"
+        default:
+            return record.effortVerdict(effort.rawValue) == .assumed
+                ? "\(effort.rawValue) (assumed)" : effort.rawValue
+        }
+    }
+
+    private static func unofferedLevelCaption(_ effort: ReasoningEffort) -> String {
+        "this agent declares the level \(effort.rawValue), which this model's chat "
+            + "template does not accept; choose another level before saving"
     }
 
     /// Built outside the view builder (the `ExperimentsPanelView` rule:
     /// string arithmetic in a body tips the type-checker over).
-    private var qwenThinkingDisabledHelp: String {
+    private var thinkingUnavailableCaption: String {
         let model = baseModelID.isEmpty ? "no base model is selected" : "'\(baseModelID)'"
-        return "only Qwen base models expose a thinking mode — \(model) does not"
+        return "\(model): this model's chat template has no thinking switch, so the "
+            + "agent does not think"
     }
 
     private var layerBandCaption: String {
@@ -1516,7 +1580,8 @@ struct ModelVariantsPanelView: View {
         alphaInNormUnits = artifact.alphaInNormUnits
         neutralPCBasisID = neutralBasisID(for: artifact)
         promptMode = ExperimentManifest.PromptMode(rawValue: artifact.promptMode) ?? .chatAssistant
-        qwenThinkingEnabled = artifact.qwenThinkingEnabled
+        reasoningEffort = artifact.resolvedReasoningEffort
+        reasoningEffortDeclared = artifact.reasoningEffort != nil
         temperature = artifact.temperature
         systemPrompt = artifact.systemPrompt ?? ""
     }
@@ -1647,6 +1712,14 @@ struct ModelVariantsPanelView: View {
         applyAfterSave: Bool = false, asNewAgent: Bool = false
     ) -> (written: Bool, summary: String?) {
         let artifact = artifactFromEditor()
+        // A declared level the model's template does not take is refused
+        // here, by the rule agent create and a study's verify apply.
+        let effortProblems = artifact.effortViolations(capabilities: thinkingChoices.record)
+        guard effortProblems.isEmpty else {
+            let note = "could not save agent: " + effortProblems.joined(separator: "; ")
+            panel.setWarningStatus(note)
+            return (false, note)
+        }
         let selected = panel.selectedVariant
         let takenNames = panel.variants.map(\.artifact.name)
         do {
@@ -1655,7 +1728,8 @@ struct ModelVariantsPanelView: View {
             var droppedPromotion = false
             var savedACopy = asNewAgent
             if asNewAgent {
-                record = try ModelVariantStore.saveAsNewAgent(artifact, takenNames: takenNames)
+                record = try ModelVariantStore.saveAsNewAgent(
+                    artifact, takenNames: takenNames, source: selected)
                 summary = selected.map {
                     AgentEditProvenance.savedAsNewAgentNote(
                         agent: record.artifact.name, original: $0.artifact.name,
@@ -1672,9 +1746,12 @@ struct ModelVariantsPanelView: View {
                 case .updated(let updated, let dropped):
                     record = updated
                     droppedPromotion = dropped
-                    summary = dropped
+                    summary = (dropped
                         ? AgentEditProvenance.afterSaveNote(agent: updated.artifact.name)
-                        : "Updated agent '\(updated.artifact.name)'."
+                        : "Updated agent '\(updated.artifact.name)'.")
+                        + (selected.artifact.handmade != nil && updated.artifact.handmade != selected.artifact.handmade
+                            ? " Its earlier record no longer describes it, so a new record says the agent editor made it from that agent, and what changed."
+                            : "")
                 case .savedAsNewAgent(let copy):
                     record = copy
                     savedACopy = true
@@ -1690,7 +1767,7 @@ struct ModelVariantsPanelView: View {
                     return (false, note)
                 }
             } else {
-                record = try ModelVariantStore.save(artifact)
+                record = try ModelVariantStore.save(artifact.withEditorRecordIfUnrecorded())
                 summary = "Saved agent '\(record.artifact.name)'."
             }
             panel.refresh()
@@ -1747,10 +1824,11 @@ struct ModelVariantsPanelView: View {
             neutralPCBasisPath: basis.map(NeutralPCStore.relativePath),
             neutralPCBasisLabel: basis?.label,
             promptMode: promptMode.rawValue,
-            qwenThinkingEnabled: qwenThinkingEnabled,
+            qwenThinkingEnabled: reasoningEffort.isOn,
             temperature: temperature,
             systemPrompt: systemPrompt,
-            interventionPolicies: interventionPolicies)
+            interventionPolicies: interventionPolicies,
+            reasoningEffort: reasoningEffortDeclared ? reasoningEffort : nil)
     }
 
     private func currentSteeringArtifact(name: String) -> ModelVariantArtifact {

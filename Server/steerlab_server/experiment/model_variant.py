@@ -48,11 +48,29 @@ class ModelVariant:
     # hand-created variant. Preserved verbatim across round-trips.
     promotion: dict | None = None
     intervention_policies: list[dict] | None = None
+    #: How hard the agent thinks (public issue #16): the study's own
+    #: vocabulary (``prompt_render.REASONING_EFFORTS``), kept on the agent.
+    #: ``None`` is every agent file written before the field existed, and
+    #: every agent file whose writer had no level to state:
+    #: ``qwen_thinking_enabled`` then answers, as it always has (true is the
+    #: template's default effort, false is off). Read it through
+    #: :func:`agent_identity.variant_reasoning_effort`, never directly.
+    reasoning_effort: str | None = None
+    #: The record of an agent a researcher made by hand with ``agent create``
+    #: (public issue #17): the command, its inputs and their hashes, when it
+    #: was made, and the stated reason. Kept beside ``promotion``; an agent
+    #: carries at most one of the two. Preserved verbatim across round-trips.
+    handmade: dict | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "ModelVariant":
         from .policy_artifacts import load_attached
+        from .agent_identity import agent_file_problem
         load_attached(d.get('interventionPolicies'))
+        problem = agent_file_problem(d)
+        if problem is not None:
+            raise ValueError(problem)
+        effort = d.get("reasoningEffort")
         return cls(
             intervention_policies=d.get('interventionPolicies'),
             name=d.get("name", "variant"), base_model_id=d["baseModelID"],
@@ -67,13 +85,20 @@ class ModelVariant:
             alpha_in_norm_units=bool(d.get("alphaInNormUnits", False)),
             neutral_pc_basis_path=d.get("neutralPCBasisPath"),
             prompt_mode=d.get("promptMode", "chatAssistant"),
-            qwen_thinking_enabled=bool(d.get("qwenThinkingEnabled", False)),
+            # The boolean is the effort's shadow: a file that spells only the
+            # effort thinks exactly when the effort is not off.
+            qwen_thinking_enabled=(
+                bool(d.get("qwenThinkingEnabled", False))
+                if effort is None or "qwenThinkingEnabled" in d
+                else effort != "off"),
+            reasoning_effort=effort,
             temperature=float(d.get("temperature", 0.0)),
             system_prompt=d.get("systemPrompt"),
             # Preserve the artifact's provenance across a server round-trip so an
             # uploaded variant keeps its original creation timestamp.
             created_at=d.get("createdAt"),
-            promotion=d.get("promotion") if isinstance(d.get("promotion"), dict) else None)
+            promotion=d.get("promotion") if isinstance(d.get("promotion"), dict) else None,
+            handmade=d.get("handmade") if isinstance(d.get("handmade"), dict) else None)
 
     @classmethod
     def from_file(cls, path: str) -> "ModelVariant":
@@ -87,10 +112,20 @@ class ModelVariant:
             "injections": self.injections, "bandWidth": self.band_width,
             "alphaInNormUnits": self.alpha_in_norm_units,
             "neutralPCBasisPath": self.neutral_pc_basis_path,
-            "promptMode": self.prompt_mode, "qwenThinkingEnabled": self.qwen_thinking_enabled,
+            # With a declared effort the boolean is written as its shadow, so
+            # the two fields of a file this writer produces always agree, and
+            # a client that predates the effort still reads whether the agent
+            # thinks.
+            "promptMode": self.prompt_mode,
+            "qwenThinkingEnabled": (
+                self.qwen_thinking_enabled if self.reasoning_effort is None
+                else self.reasoning_effort != "off"),
             "temperature": self.temperature, "systemPrompt": self.system_prompt,
+            **({"reasoningEffort": self.reasoning_effort}
+               if self.reasoning_effort is not None else {}),
             **({"createdAt": self.created_at} if self.created_at else {}),
             **({"promotion": self.promotion} if self.promotion else {}),
+            **({"handmade": self.handmade} if self.handmade else {}),
             **({"interventionPolicies": self.intervention_policies} if self.intervention_policies is not None else {}),
         }
 

@@ -97,6 +97,7 @@ struct PinnedPromotionTests {
         ]
         try JSONSerialization.data(withJSONObject: ["fear": entry])
             .write(to: runDir.appending(component: "recommendations.json"))
+        try ExperimentStoreTests.plantLevelSnapshot(in: runDir)
         // `nil` outer = stamp the live hash; `.some(nil)` = no stamp at all.
         let stamp: String?
         switch epochHash {
@@ -455,6 +456,7 @@ struct PromotionContractReachTests {
         ]
         try JSONSerialization.data(withJSONObject: ["fear": entry])
             .write(to: sweepDir.appending(component: "recommendations.json"))
+        try ExperimentStoreTests.plantLevelSnapshot(in: sweepDir)
         try Data(ExperimentStore.manifestHash(
             try ExperimentStore.load(name: "fo")).utf8)
             .write(to: sweepDir.appending(component: "experiment-hash.txt"))

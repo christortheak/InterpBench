@@ -341,6 +341,12 @@ struct StudyArmsSection: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                    } else {
+                        // Handmade: who chose the settings, as the export says.
+                        Text(variant.artifact.origin.summary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
                     ForEach(conditionEvidenceNotes(variant)) { note in
                         evidenceNoteCaption(note)

@@ -219,40 +219,51 @@ public enum AgentEditProvenance {
     /// absent centering is none), so spellings that mean the same thing never
     /// read as an edit.
     static func doesTheSame(_ a: ModelVariantArtifact, as b: ModelVariantArtifact) -> Bool {
-        func behaviour(_ artifact: ModelVariantArtifact) -> ModelVariantArtifact {
-            var copy = ModelVariantStore.workspaceRelativeNormalized(artifact)
-            copy.name = ""
-            copy.createdAt = ""
-            copy.promotion = nil
-            copy.neutralPCBasisLabel = nil
-            // The prompt is compared as the editor shows it, below: its hash
-            // is derived from the text, and a hash-only older file shows as
-            // an empty prompt the editor cannot change without typing one.
-            copy.systemPrompt = nil
-            copy.systemPromptHash = nil
-            copy.adapters = copy.adapters.map { adapter in
-                var plain = adapter
-                plain.name = ""  // labels; the directory and hashes are what load
-                plain.artifactPath = ""
-                return plain
-            }
-            copy.injections = copy.injections.map { injection in
-                let ablates = injection.effectiveMode == .ablate
-                var plain = injection
-                // By resolved location, not spelling: the editor shows a
-                // saved reference as its catalog entry, and a reference
-                // written on another machine resolves into this workspace.
-                plain.vectorArtifactID = ArtifactIdentity.canonical(injection.vectorArtifactID)
-                plain.concept = ""  // a label; the vector reference is what acts
-                plain.mode = ablates ? .ablate : nil
-                plain.layers = ablates ? injection.declaredAblationLayers : nil
-                plain.centering = ablates && injection.effectiveCentering != "none"
-                    ? injection.centering : nil
-                return plain
-            }
-            return copy
+        behaviour(a) == behaviour(b) && (a.systemPrompt ?? "") == (b.systemPrompt ?? "")
+    }
+
+    /// An agent reduced to what it does (see `doesTheSame`): no name, no
+    /// record of its making, no labels, every field in its effective form.
+    /// The system prompt is left out here and compared as the editor shows it.
+    static func behaviour(_ artifact: ModelVariantArtifact) -> ModelVariantArtifact {
+        var copy = ModelVariantStore.workspaceRelativeNormalized(artifact)
+        copy.name = ""
+        copy.createdAt = ""
+        copy.promotion = nil
+        copy.handmade = nil  // the agent create record, like the promotion
+        copy.fileProblemOnRead = nil
+        // The level as it runs, not as spelled: an older file's thinking
+        // switch (true, read as xhigh) and an explicit xhigh are the same
+        // agent, so re-saving one as the other is not an edit.
+        let effort = copy.resolvedReasoningEffort
+        copy.reasoningEffort = effort.rawValue
+        copy.qwenThinkingEnabled = effort.isOn
+        copy.neutralPCBasisLabel = nil
+        // The prompt is compared as the editor shows it, below: its hash
+        // is derived from the text, and a hash-only older file shows as
+        // an empty prompt the editor cannot change without typing one.
+        copy.systemPrompt = nil
+        copy.systemPromptHash = nil
+        copy.adapters = copy.adapters.map { adapter in
+            var plain = adapter
+            plain.name = ""  // labels; the directory and hashes are what load
+            plain.artifactPath = ""
+            return plain
         }
-        return behaviour(a) == behaviour(b)
-            && (a.systemPrompt ?? "") == (b.systemPrompt ?? "")
+        copy.injections = copy.injections.map { injection in
+            let ablates = injection.effectiveMode == .ablate
+            var plain = injection
+            // By resolved location, not spelling: the editor shows a
+            // saved reference as its catalog entry, and a reference
+            // written on another machine resolves into this workspace.
+            plain.vectorArtifactID = ArtifactIdentity.canonical(injection.vectorArtifactID)
+            plain.concept = ""  // a label; the vector reference is what acts
+            plain.mode = ablates ? .ablate : nil
+            plain.layers = ablates ? injection.declaredAblationLayers : nil
+            plain.centering = ablates && injection.effectiveCentering != "none"
+                ? injection.centering : nil
+            return plain
+        }
+        return copy
     }
 }

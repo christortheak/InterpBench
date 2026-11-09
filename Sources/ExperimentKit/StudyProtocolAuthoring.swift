@@ -156,11 +156,15 @@ public enum StudyProtocolAuthoring {
         // rules (budget beside a non-off effort, on a family with a
         // thinking mode) are refused HERE with the store's sentences so
         // a draft the run would refuse is never saved.
-        let reasoningProblems = MultiAgentRunner.permitPanelBudget(
-            ReasoningEffort.protocolViolations(
-                effort: fields.reasoningEffort, reasoningMaxTokens: fields.reasoningMaxTokens,
-                modelID: manifest.modelID),
-            manifest: manifest)
+        // The one budget predicate: an agent arm, or a cast panel seat, that
+        // thinks lets an off study declare a budget. Server twin:
+        // draft_protocol_policy.apply_protocol.
+        let budgetForAgents = fields.reasoningMaxTokens != nil
+            && ModelVariantArtifact.budgetPermittedWithoutEffort(manifest)
+        let reasoningProblems = ReasoningEffort.protocolViolations(
+            effort: fields.reasoningEffort, reasoningMaxTokens: fields.reasoningMaxTokens,
+            modelID: manifest.modelID
+        ).filter { !(budgetForAgents && $0 == ReasoningEffort.budgetWithoutEffortReason) }
         guard reasoningProblems.isEmpty else {
             throw ExperimentError.malformed(
                 reasoningProblems.joined(separator: "; "),

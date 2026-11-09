@@ -229,6 +229,13 @@ ADVISORY_CODES: tuple[str, ...] = (
     # (Swift twin ``MultiAgentRunner.seatTemperatureAdvisories``), byte for
     # byte.
     "seatTemperatureChangesNothing",
+    # An attached agent's model revision could not be checked against the
+    # revision the study pins: the agent records none (saved before agents
+    # recorded one), or one side is a branch, a tag, or a shortened hash the
+    # other begins with. Said at `verify`, never a refusal; two commits that
+    # differ are refused instead. The detail is ``agent_identity.revision_note``
+    # (Swift twin ``ModelVariantArtifact.revisionNote``), byte for byte.
+    "agentRevisionNotChecked",
 )
 
 

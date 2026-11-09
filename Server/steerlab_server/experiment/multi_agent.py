@@ -717,10 +717,12 @@ def submission_panel_rule_changes(manifest, verb: str,
 
 def panel_seat_thinks(manifest, root: str | None = None) -> bool:
     """Whether a panel study casts an agent that thinks (on a template that
-    can): the case in which the study may declare a ``reasoningMaxTokens``
-    for those seats although its own ``reasoningEffort`` is off (maintainer
-    decision, FR6 round 2). False for every other study, and for a panel
-    that cannot be read. Swift twin: ``MultiAgentRunner.panelSeatThinks``."""
+    can): the panel's clause of the one budget predicate,
+    ``agent_identity.budget_permitted_without_effort``, under which the study
+    may declare a ``reasoningMaxTokens`` for those seats although its own
+    ``reasoningEffort`` is off (maintainer decision, FR6). False for every
+    other study, and for a panel that cannot be read. Swift twin:
+    ``MultiAgentRunner.panelSeatThinks``."""
     document = getattr(manifest, "raw", manifest)
     if not isinstance(document, dict) or document.get("studyKind") != "multiAgent":
         return False
@@ -740,16 +742,6 @@ def panel_seat_thinks(manifest, root: str | None = None) -> bool:
             ScenarioError, PanelUnreadable):
         return False
     return any(kind == RULE_REASONING_PASSED_ON for kind, _ in changes)
-
-
-def permit_panel_budget(problems: list[str], manifest, root: str | None = None) -> list[str]:
-    """``problems`` without the budget-without-effort refusal when a panel
-    study casts a thinking agent (:func:`panel_seat_thinks`): the budget is
-    then the one those seats think under. Every other refusal stands."""
-    if (prompt_render.BUDGET_WITHOUT_EFFORT_REASON in problems
-            and panel_seat_thinks(manifest, root)):
-        return [p for p in problems if p != prompt_render.BUDGET_WITHOUT_EFFORT_REASON]
-    return problems
 
 
 def panel_seat_temperatures(manifest, root: str | None = None) -> list[float]:

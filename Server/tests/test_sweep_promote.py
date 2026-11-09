@@ -611,6 +611,12 @@ def _plant_completed_sweep_run(root, sweep_run=SELECTION_BLOCK["sweepRun"],
     with open(os.path.join(run_dir, "recommendations.json"), "w",
               encoding="utf-8") as handle:
         json.dump({concept: entry}, handle)
+    # The manifest snapshot every sweep run writes (run_artifacts); an
+    # unpinned --sweep-run promotion reads the sweep's thinking level from it.
+    # These fixtures' studies do not think.
+    with open(os.path.join(run_dir, "experiment.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"reasoningEffort": "off"}, handle)
     return run_dir
 
 
@@ -997,7 +1003,21 @@ def _plant_sweep_run(root, run, recommendations):
            "fear,-1,0,0.01,0.8,50,1.0\n")
     _write(os.path.join(run_dir, "recommendations.json"),
            json.dumps(recommendations))
+    _write_snapshot(root, run_dir, run.split("-exp-", 1)[-1].rsplit("-sweep", 1)[0])
     return run
+
+
+def _write_snapshot(root, run_dir, experiment):
+    """The manifest snapshot every sweep run writes at its start
+    (run_artifacts): promotion reads the level the sweep's cells ran at from
+    it, on every path."""
+    live = os.path.join(root, "experiments", experiment, "experiment.json")
+    try:
+        with open(live, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        text = json.dumps({"name": experiment})
+    _write(os.path.join(run_dir, "experiment.json"), text)
 
 
 def test_promote_cell_override_without_any_sweep_refuses(tmp_path):
@@ -1405,10 +1425,18 @@ def _sweep_evidence_run(root, experiment, entry, *, run=None,
         entry = {**entry, "sweepRun": entry_stamped_run or run}
     _write(os.path.join(run_dir, "recommendations.json"),
            json.dumps({"fear": entry}))
+    faithful = epoch_hash is None
     if epoch_hash is None:
         epoch_hash = Manifest.load(experiment, root).content_hash()
     if epoch_hash is not False:
         _write(os.path.join(run_dir, "experiment-hash.txt"), epoch_hash)
+    if faithful:
+        _write_snapshot(root, run_dir, experiment)
+    else:
+        # A forged or missing epoch is the test's lever: the snapshot then
+        # carries only the level, so the epoch evidence is the stamp alone.
+        _write(os.path.join(run_dir, "experiment.json"),
+               json.dumps({"name": experiment, "reasoningEffort": "off"}))
     return run
 
 

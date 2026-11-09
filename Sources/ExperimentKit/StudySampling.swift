@@ -15,6 +15,35 @@ public enum StudySampling {
         return manifest.resolvedReasoningEffort
     }
 
+    /// The effort an arm generates at: an agent arm at the agent's own level
+    /// (`ModelVariantArtifact.resolvedReasoningEffort` — its declared level,
+    /// else its thinking switch's meaning, public issue #16), the baseline at
+    /// the study's. Python twin: `effective_variant_condition`'s
+    /// `agent_identity.variant_reasoning_effort`.
+    public static func reasoningEffort(
+        _ manifest: ExperimentManifest, variant: ModelVariantArtifact?
+    ) -> ReasoningEffort {
+        variant?.resolvedReasoningEffort ?? manifest.resolvedReasoningEffort
+    }
+
+    /// The reasoning budget an arm generates under: the study's declared
+    /// budget, for an arm that thinks; none for one that does not. A study
+    /// whose own effort is off may declare a budget for its thinking agent
+    /// arms (ruling 2026-11-08); it never reaches baseline or an off agent.
+    /// Python twin: `effective_variant_condition` and `study_arm_budget`.
+    public static func reasoningBudget(
+        _ manifest: ExperimentManifest, variant: ModelVariantArtifact?
+    ) -> Int? {
+        reasoningEffort(manifest, variant: variant).isOn ? manifest.reasoningMaxTokens : nil
+    }
+
+    /// The reasoning budget the study's own arms (baseline, concept, and SAE
+    /// latent arms) run under: the declared budget when the study itself
+    /// thinks, else none. Server twin: `condition_execution.study_arm_budget`.
+    public static func studyArmBudget(_ manifest: ExperimentManifest) -> Int? {
+        manifest.resolvedReasoningEffort.isOn ? manifest.reasoningMaxTokens : nil
+    }
+
     public static func deriveSeed(
         experimentHash: String, condition: String, promptID: String, sampleIndex: Int
     ) -> UInt64 {

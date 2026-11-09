@@ -172,7 +172,7 @@ def _split(records, condition):
 # record's "temperature" field is the single source of what governed
 # generation.
 PROVENANCE_FIELDS = {"variantArtifactPath", "variantArtifactHash",
-                     "agentPlaygroundTemperature"}
+                     "agentPlaygroundTemperature", "agentReasoningEffort"}
 
 
 # --- acceptance 1: field-set equality baseline vs variant ---------------------
@@ -487,11 +487,19 @@ def test_thinking_variant_refuses_answer_token_instrument(tmp_path, monkeypatch)
     prompts = _study_fixture(root, "unithink", artifact=artifact,
                              variant_name="v-think")
     _patch(monkeypatch, _fake_generate(), _fake_score_options())
-    run_dir = tasks.run("unithink", prompts, root, model_provider=_fake_model,
-                        log=lambda *_: None)
-    errors = [r for r in _records(run_dir) if "error" in r]
-    assert len(errors) == 1
-    assert "thinking" in errors[0]["error"]
+    # Refused at run start, before any generation (public issues #16 and #17
+    # moved the rule from the per-condition error record to the settings
+    # refusals): a draft's verify names it too, so it cannot freeze.
+    from steerlab_server.experiment.lifecycle_gates import LifecycleError
+    calls = []
+    _patch(monkeypatch, lambda *a, **k: calls.append(1) or "x", _fake_score_options())
+    with pytest.raises(LifecycleError, match="thinks .* answer-token instrument"):
+        tasks.run("unithink", prompts, root, model_provider=_fake_model,
+                  log=lambda *_: None)
+    assert calls == []
+    from steerlab_server.experiment.manifest import Manifest
+    assert any("answer-token instrument" in v
+               for v in Manifest.load("unithink", root).verify(root))
 
 
 def test_inert_carried_conditions_warn_loudly_and_stamp_config(

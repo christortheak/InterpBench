@@ -1596,6 +1596,16 @@ def _describe_condition(name, snapshot):
             carried.append("settings chosen by a sweep and promoted before the run")
         text += (" The agent carries " + _and(carried) + "." if carried
                  else " The settings snapshot records no intervention for this agent.")
+        if artifact:
+            # How the agent was made and how hard it thinks, as its own file
+            # states them (public issues #16 and #17): read, never inferred.
+            from ..experiment.agent_identity import agent_origin
+            origin = agent_origin(artifact)
+            text += (f" How it was made ({_code(origin['kind'])}): {origin['summary']}"
+                     + (f" Its file declares reasoning effort {_code(origin['reasoningEffort'])}."
+                        if origin["reasoningEffortSource"] == "agent" else
+                        f" Its file's thinking switch reads as reasoning effort "
+                        f"{_code(origin['reasoningEffort'])}."))
         return text
     latent = snapshot.get("saeLatentConditions")
     entries = latent if isinstance(latent, list) else []

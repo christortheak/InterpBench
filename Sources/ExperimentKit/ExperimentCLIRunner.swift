@@ -4364,6 +4364,19 @@ public struct ExperimentCLIRunner: Sendable {
                     sink.err("ADVISORY: \(note)\n")
                     capabilityAdvisories.append(.init(CLIAdvisory.refusedWhenRun, note))
                 }
+                // …and the agent-arm rules (FR6-B round 2), the same way.
+                if let note = ModelVariantArtifact.frozenArmProblemsAdvisory(
+                    manifest, workspaceRoot: ExperimentStore.workspaceRoot)
+                {
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(.init(CLIAdvisory.refusedWhenRun, note))
+                }
+                // An agent revision the spelling cannot check is said, not
+                // refused. Server twin: the client's `verify`.
+                for note in ModelVariantArtifact.manifestArmNotes(manifest) {
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(.init(CLIAdvisory.agentRevisionNotChecked, note))
+                }
                 // A study that measures the baseline agent alone verifies,
                 // and says what it is. Server twin: the client's `verify`.
                 if ExperimentStore.isBaselineOnlyStudy(manifest) {

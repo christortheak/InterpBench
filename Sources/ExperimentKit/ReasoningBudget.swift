@@ -130,14 +130,22 @@ extension ExperimentManifest {
     public func reasoningProtocolViolations(
         capabilities: ModelCapabilities?
     ) -> [String] {
+        // A study whose own effort is off may still declare a budget when an
+        // attached agent arm, or a cast panel seat, thinks; it reaches only
+        // the arms and seats that think (ruling 2026-11-08), as the one
+        // predicate says. Read only when a budget is declared: the panel
+        // clause reads the panel's files. Server twin: Manifest.verify.
+        let budgetForAgents = reasoningMaxTokens != nil
+            && ModelVariantArtifact.budgetPermittedWithoutEffort(self)
         if reasoningEffort != nil {
             return ReasoningEffort.protocolViolations(
                 effort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens,
-                modelID: modelID, capabilities: capabilities)
+                modelID: modelID, capabilities: capabilities
+            ).filter { !(budgetForAgents && $0 == ReasoningEffort.budgetWithoutEffortReason) }
         }
         // A budget beside no effort at all: meaningless unless the legacy
         // boolean already says the study reasons (then the run honours it).
-        if reasoningMaxTokens != nil, !thinkingEnabled {
+        if reasoningMaxTokens != nil, !thinkingEnabled, !budgetForAgents {
             return [ReasoningEffort.budgetWithoutEffortReason]
         }
         return []

@@ -296,6 +296,10 @@ def promote(name: str, concept: str, agent_name: str | None = None,
     if ref is None:
         raise PromoteError(
             f"concept '{concept}' is not attached to experiment '{name}'")
+    # The request as typed, so a refusal's repair can repeat every flag.
+    request = {"agent_name": agent_name, "cell": cell, "override_reason": override_reason,
+               "sweep_run": sweep_run if pins is None else pins.sweep_run, "pins": pins,
+               "qualification": qualification}
 
     if pins is not None:
         if sweep_run is not None and sweep_run != pins.sweep_run:
@@ -304,15 +308,17 @@ def promote(name: str, concept: str, agent_name: str | None = None,
                 f"contract's '{pins.sweep_run}' — pass one or the other")
         return _promote_pinned(manifest, ref, name, concept, pins, agent_name,
                                cell, override_reason, root, log,
-                               qualification=qualification)
+                               qualification=qualification, request=request)
 
     if sweep_run is not None:
         # The named run is the ONLY evidence consulted — never the
         # manifest's (possibly stale) recommended condition, never the
         # newest run in the workspace.
+        _require_plain_run_name(sweep_run, "the sweep_run argument")
         return _promote_from_sweep_run(
             manifest, ref, name, concept, sweep_run, agent_name, cell,
-            override_reason, root, log, qualification=qualification)
+            override_reason, root, log, qualification=qualification,
+            request=request)
 
     recommended = next(
         (c for c in manifest.raw.get("conditions", [])
@@ -421,12 +427,13 @@ def promote(name: str, concept: str, agent_name: str | None = None,
                  override_reason=override_reason,
                  failure_sweep_run=failure_sweep_run,
                  selection_outcome=selection_outcome, agent_name=agent_name,
-                 root=root, log=log, qualification=qualification)
+                 root=root, log=log, qualification=qualification, request=request)
 
 
 def _promote_pinned(manifest, ref, name: str, concept: str,
                     pins: PromotionPins, agent_name, cell, override_reason,
-                    root, log, qualification: str | None = None) -> dict:
+                    root, log, qualification: str | None = None,
+                    request: dict | None = None) -> dict:
     """Promotion under the PINNED contract: every input verified against the
     caller's declaration, nothing discovered by recency, retries idempotent.
 
@@ -463,7 +470,8 @@ def _promote_pinned(manifest, ref, name: str, concept: str,
 
     result = _promote_from_sweep_run(
         manifest, ref, name, concept, pins.sweep_run, agent_name, cell,
-        override_reason, root, log, pins=pins, qualification=qualification)
+        override_reason, root, log, pins=pins, qualification=qualification,
+        request=request)
     return result
 
 
@@ -596,7 +604,8 @@ def _promote_from_sweep_run(manifest, ref, name: str, concept: str,
                             sweep_run: str, agent_name, cell,
                             override_reason, root, log,
                             pins: PromotionPins | None = None,
-                            qualification: str | None = None) -> dict:
+                            qualification: str | None = None,
+                            request: dict | None = None) -> dict:
     """Criterion promotion whose evidence is PINNED to one named sweep
     run's recommendations.json — the chain-runner path. A failure entry
     refuses (unless a loud manual ``cell`` override documents the
@@ -660,7 +669,8 @@ def _promote_from_sweep_run(manifest, ref, name: str, concept: str,
                  override_reason=override_reason,
                  failure_sweep_run=failure_sweep_run,
                  selection_outcome=selection_outcome, agent_name=agent_name,
-                 root=root, log=log, pins=pins, qualification=qualification)
+                 root=root, log=log, pins=pins, qualification=qualification,
+                 request=request)
 
 
 def _mint(manifest, ref, name: str, concept: str, *, layer: int,
@@ -668,9 +678,11 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
           promoted_by: str, selection, manual_override: bool,
           override_reason, failure_sweep_run, selection_outcome, agent_name,
           root, log, pins: PromotionPins | None = None,
-          qualification: str | None = None) -> dict:
+          qualification: str | None = None, request: dict | None = None) -> dict:
     """The shared minting tail: match the vector artifact by full recipe
-    identity, stamp the birth certificate, save the variant."""
+    identity, stamp the birth certificate, save the variant. The agent
+    thinks at the level the sweep's cells ran at, read from the sweep run's
+    own manifest snapshot, never the study's level now."""
     artifact, recipe_identity_hash = _matching_vector_artifact(
         manifest, ref, root, pins=pins)
     artifact_hash = _artifact_content_hash(artifact)
@@ -778,6 +790,12 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
             f"(decision {promotion['qualification']['decision']}, "
             f"{promotion['qualification']['contentHash'][:12]}…)")
 
+    # The level the sweep's cells ran at (public issue #16), from the run's
+    # own snapshot: a `set-sampling` after the sweep changes the study, not
+    # what the sweep measured.
+    swept_effort, swept_thinking = _sweep_run_level(
+        promotion.get("sweepRun"), name, concept, root)
+
     key = promotion_key(
         experiment=name, experiment_hash=promotion["experimentHash"],
         concept=concept, sweep_run=promotion.get("sweepRun"),
@@ -792,6 +810,23 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
     # every picker, with nothing to distinguish them.
     existing = _existing_promotion(key, root)
     if existing is not None:
+        # The key leaves the thinking level out (it is the cross-engine
+        # identity of the REQUEST), so an agent minted before promotion
+        # carried the sweep's level can match it while thinking at another
+        # level. Never hand that back silently (FR6-B round 2).
+        from . import agent_identity, prompt_render
+        want = prompt_render.resolve_reasoning_effort(swept_effort, swept_thinking)
+        have = agent_identity._artifact_effort(existing["variant"])
+        if have != want:
+            raise PromoteError(
+                f"promote '{concept}': the agent already minted for this promotion "
+                f"({existing['path']}) thinks at reasoning effort {have}, but the "
+                f"sweep's cells ran at {want}; returning it would hand back an agent "
+                "at a level the sweep never measured",
+                gate=lifecycle_gates.PROMOTION_EVIDENCE,
+                repair=("promote again under a new name, which mints an agent at "
+                        f"{want}: " + _promote_command(
+                            name, concept, request, agent_name=f"{variant_name}-{want}")))
         log(f"promote '{concept}': an agent for this exact promotion already "
             f"exists ({existing['path']}) — returning it unchanged")
         # The citation is outside the key (see above), so a retry that cites
@@ -821,7 +856,14 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
         band_width=band_width,
         alpha_in_norm_units=alpha_in_norm_units,
         prompt_mode=manifest.prompt_mode,
-        qwen_thinking_enabled=manifest.qwen_thinking_enabled,
+        # The level the sweep's cells ran at travels with the agent (public
+        # issue #16): a sweep that ran at `medium` promotes an agent that
+        # thinks at `medium`, not one whose boolean later reads as xhigh. A
+        # sweep that did not think, or spelled only the legacy boolean,
+        # promotes exactly the bytes it always did. Swift twin:
+        # `AgentPromotion.sweepRunLevel`.
+        qwen_thinking_enabled=swept_thinking,
+        reasoning_effort=swept_effort,
         temperature=manifest.temperature,
         # A newborn agent's identity is BARE (2026-08-24 ruling). This used to
         # copy `manifest.system_prompt`, which made the study's deployment
@@ -838,6 +880,101 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
     log(f"promoted '{concept}' → agent '{variant.name}' "
         f"(L{layer}, α{alpha:g}, {promoted_by}) → {saved['path']}")
     return {"variant": variant.to_dict(), **saved}
+
+
+def _sweep_run_level(sweep_run, name: str, concept: str,
+                     root: str | None) -> tuple[str | None, bool]:
+    """The level a sweep run's cells ran at, as a promoted agent spells it:
+    ``(reasoningEffort, qwenThinkingEnabled)``, read from the run's own
+    ``experiment.json`` snapshot by ``prompt_render.read_reasoning_effort``. A
+    declared non-off level is the agent's ``reasoningEffort``; a sweep that
+    spelled only the legacy boolean gives the boolean alone, so such an agent
+    keeps the bytes it always had. Refused when the run holds no readable
+    snapshot, or a level outside the vocabulary: the agent would carry a level
+    no cell was measured at. Swift twin: ``AgentPromotion.sweepRunLevel``."""
+    from . import prompt_render
+    if not isinstance(sweep_run, str) or not sweep_run:
+        # A hand-written or legacy selection that names no sweep run.
+        raise PromoteError(
+            "the sweep evidence this promotion uses names no sweep run, so the "
+            "thinking level the sweep's cells ran at cannot be read, and the agent "
+            "would carry a level no cell was measured at",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=_sweep_again_repair(name, concept))
+    _require_plain_run_name(sweep_run, "the promotion's sweep run")
+    run_dir = os.path.join(paths.runs_directory(root), sweep_run)
+    if not os.path.isdir(run_dir):
+        raise PromoteError(
+            f"sweep run '{sweep_run}' is not in this workspace's runs/ folder, so its "
+            "experiment.json, which records the thinking level the sweep's cells ran "
+            "at, cannot be read",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=("fetch the sweep's results into runs/ (a bundle-submitted sweep "
+                    "returns them in its results tarball) and promote again; or "
+                    + _sweep_again_repair(name, concept)))
+    try:
+        with open(os.path.join(run_dir, "experiment.json"), encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+    except (OSError, ValueError):
+        snapshot = None
+    if not isinstance(snapshot, dict):
+        raise PromoteError(
+            f"sweep run '{sweep_run}' holds no readable experiment.json, so the "
+            "thinking level its cells ran at is unknown, and the agent would "
+            "carry a level no cell was measured at",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=_sweep_again_repair(name, concept))
+    ran_at = prompt_render.read_reasoning_effort(snapshot)
+    if ran_at not in prompt_render.REASONING_EFFORTS:
+        raise PromoteError(
+            f"sweep run '{sweep_run}' records reasoning effort {ran_at!r}, which is "
+            "not a level SteerLab knows, so the agent's level cannot be read from it",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=_sweep_again_repair(name, concept))
+    declared = snapshot.get(prompt_render.REASONING_EFFORT_KEY)
+    if declared == ran_at and ran_at != prompt_render.REASONING_OFF:
+        return ran_at, True
+    return None, ran_at != prompt_render.REASONING_OFF
+
+
+def _promote_command(name: str, concept: str, request: dict | None, *,
+                     agent_name: str) -> str:
+    """``experiment promote`` as the request was typed, with ``agent_name``:
+    every flag the original carried (the cell and its reason, the sweep run
+    and its pins, the citation), so following the repair repeats the same
+    promotion under the new name."""
+    import shlex
+    request = request or {}
+    words = ["steerlab-server", "experiment", "promote", name, concept,
+             "--agent-name", agent_name]
+    cell = request.get("cell")
+    if cell is not None:
+        words += ["--cell", f"{int(cell[0])}:{float(cell[1]):g}"]
+        if request.get("override_reason"):
+            words += ["--reason", str(request["override_reason"])]
+    pins = request.get("pins")
+    if request.get("sweep_run"):
+        words += ["--sweep-run", str(request["sweep_run"])]
+    if pins is not None:
+        if pins.winning_cell is not None:
+            words += ["--expect-cell",
+                      f"{int(pins.winning_cell[0])}:{float(pins.winning_cell[1]):g}"]
+        for flag, value in (("--expect-artifact", pins.vector_artifact_id),
+                            ("--expect-artifact-hash", pins.vector_artifact_hash),
+                            ("--expect-epoch", pins.experiment_hash)):
+            if value is not None:
+                words += [flag, str(value)]
+    if request.get("qualification"):
+        words += ["--qualification", str(request["qualification"])]
+    return " ".join(shlex.quote(word) for word in words)
+
+
+def _sweep_again_repair(name: str, concept: str) -> str:
+    """Sweep again, then promote that run."""
+    from . import command_vocabulary as vocabulary
+    return (vocabulary.study_verb("sweep", name) + ", then promote from the new "
+            f"sweep run (steerlab-server experiment promote {name} {concept} "
+            "--sweep-run <run>)")
 
 
 def _sweep_run_name_matches(dirname: str, experiment: str) -> bool:

@@ -142,6 +142,40 @@ draft study (`workspace guide methods` covers the roster checks).
 
 <!-- client: all -->
 
+**What an agent keeps and what the study sets.** How hard an agent thinks
+belongs to the agent: its file's `reasoningEffort` (set with `agent create
+--reasoning-effort`, in the app's agent editor, or by promotion from a sweep, which
+gives the agent the level the sweep's cells ran at, read from the sweep run's
+own `experiment.json`) is the level an agent arm of an ordinary study runs at. An
+agent file that spells only the older `qwenThinkingEnabled` reads as before
+(true is the template's default effort, false is off); a file whose two fields
+disagree is refused. The study keeps the reasoning budget
+(`reasoningMaxTokens`), which applies to every arm that thinks and to no arm
+that does not, and the temperature, which applies to every arm: an agent
+file's `temperature` is a Playground setting, stamped on records as
+`agentPlaygroundTemperature` and never used for a measured run. A study whose
+own effort is off may still declare a reasoning budget when an attached agent
+arm thinks. Each response of an agent arm stamps `agentReasoningEffort`, the
+level that reached the chat template (a level the template ignores is stamped
+`on`). `verify` names each attached agent arm that breaks a rule, so freeze
+refuses it: a level the template does not accept, a file whose fields
+disagree, more than one adapter, an agent that thinks beside an answer-token
+instrument, a commit other than the study's, or a vector without that layer
+or its residual norm. A revision is refused only when both the agent and the
+study name full commits that differ (or a shortened hash the study's commit
+does not begin with); a branch, a tag, a shortened hash the other begins with,
+or an agent that records no revision gets an `agentRevisionNotChecked` note
+instead. To fix an arm, make the corrected agent and put it in the arm's place
+with `attach-agent <name> --replace <arm> …`, which replaces that arm on a
+draft and gives it the new agent's name (it refuses when another arm already
+has that name or file). For a thinking agent beside an answer-token
+instrument, either declare instruments that read the answer after the
+reasoning, or replace the arm with the agent made with `--reasoning-effort
+off`. A study frozen
+before these rules verifies with a `refusedWhenRun` note and is refused when
+its run is submitted or started; duplicate it, then repair the duplicate the
+same way. Each refusal's repair names the commands.
+
 **`set-system-prompt <name> "<text>"`** — declares the study's system prompt
 on a draft: the deployment frame every arm is read under. `""` clears it. The
 text is stored inline (there is no file and no hash beside it), and what the

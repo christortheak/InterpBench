@@ -26,10 +26,17 @@ public struct AgentArtifactSnapshot: Sendable {
         }
         let snapshot = try ManifestFileTransaction.snapshot(at: url)
         let artifact: ModelVariantArtifact
-        do { artifact = try JSONDecoder().decode(ModelVariantArtifact.self, from: snapshot.data) }
-        catch {
+        do {
+            artifact = try JSONDecoder().decode(ModelVariantArtifact.self, from: snapshot.data)
+        } catch {
             throw ExperimentError.refusing(.artifactPin, "The selected file is not a readable agent artifact.",
                 repair: "Inspect the named file and restore its verified source before attaching it.")
+        }
+        // A file whose fields contradict each other says which ones.
+        if let problem = artifact.fileProblem {
+            throw ExperimentError.refusing(.artifactPin, problem,
+                repair: "Make the agent again with agent create or in the app's agent editor, "
+                    + "then attach the new one.")
         }
         self.workspaceRoot = workspaceRoot.standardizedFileURL
         self.path = path
@@ -58,12 +65,17 @@ public struct AgentArtifactDocument: Encodable, Sendable {
     public let artifactFileSHA256: String
     public let artifact: ModelVariantArtifact
     public let document: JSONValue
+    /// How the agent was made (`kind` swept or handmade, and the sentence a
+    /// reader is shown) and how hard it thinks. Same keys as the Python
+    /// client's `study_agents.described`.
+    public let agent: ModelVariantArtifact.Origin
 
     public init(_ snapshot: AgentArtifactSnapshot) throws {
         path = snapshot.path
         artifactFileSHA256 = snapshot.file.sha256
         artifact = snapshot.record.artifact
         document = try JSONDecoder().decode(JSONValue.self, from: snapshot.file.data)
+        agent = snapshot.record.artifact.origin
     }
 }
 
@@ -107,8 +119,12 @@ public enum StudyAgentAuthoring {
     }
 
     @discardableResult
+    /// Attaches the reviewed agent to the reviewed draft. `replacing` names
+    /// an attached arm the agent takes the place of, at the same position
+    /// (`attach-agent --replace`). Server twin: `study_agents.attach`.
     public static func attach(_ agent: AgentArtifactSnapshot, reviewed: DraftAuthoringSnapshot,
-                              baseModelChoice: String? = nil) throws -> DraftAuthoringSnapshot {
+                              baseModelChoice: String? = nil,
+                              replacing arm: String? = nil) throws -> DraftAuthoringSnapshot {
         guard try ManifestFileTransaction.canonicalPath(agent.workspaceRoot)
             == ManifestFileTransaction.canonicalPath(reviewed.workspaceRoot) else {
             throw ExperimentError.refusing(.artifactPin, "The selected agent belongs to another workspace.",
@@ -121,7 +137,7 @@ public enum StudyAgentAuthoring {
             var manifest = reviewed.manifest
             if let choice = baseModelChoice { StudyProtocolAuthoring.applyBaseModelChoice(choice, to: &manifest) }
             try ExperimentStore.attachAgent(agent.record, into: &manifest, workspaceRoot: reviewed.workspaceRoot,
-                expectedArtifactFileSHA256: agent.file.sha256)
+                expectedArtifactFileSHA256: agent.file.sha256, replacing: arm)
             return try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
         }
     }

@@ -12,7 +12,7 @@ from .. import memory_diagnostic
 from ..steering import vector_math as vm
 from ..steering import residual_norm_convention as norm_convention
 from . import command_vocabulary as vocabulary
-from . import judicial, lifecycle_gates, paths, prompt_reading, prompt_render
+from . import agent_identity, judicial, lifecycle_gates, paths, prompt_reading, prompt_render
 from . import response_format
 from . import resume as resume_mod
 from . import system_prompt as system_prompt_mod
@@ -310,6 +310,15 @@ def materialize_sae_latent_conditions(manifest: manifest_module.Manifest, log):
     return resolved
 
 
+def study_arm_budget(manifest) -> int | None:
+    """The reasoning budget a study's own arms (baseline, concept, and SAE
+    latent arms) generate under: the declared budget when the study itself
+    thinks, else none. A study whose effort is off may declare a budget for
+    its agent arms that think (ruling 2026-11-08); it never reaches an arm
+    that does not think. Swift twin: the condition loops' budget rule."""
+    return manifest.reasoning_max_tokens if manifest.qwen_thinking_enabled else None
+
+
 def effective_sae_latent_condition(spec, edit, provenance,
                                     manifest) -> EffectiveCondition:
     """A latent condition's resolved execution configuration.
@@ -335,7 +344,7 @@ def effective_sae_latent_condition(spec, edit, provenance,
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         temperature=manifest.temperature,
         reasoning_effort=manifest.reasoning_effort,
-        reasoning_max_tokens=manifest.reasoning_max_tokens,
+        reasoning_max_tokens=study_arm_budget(manifest),
         agent_system_prompt=None,
         study_system_prompt=manifest.system_prompt)
 
@@ -527,7 +536,7 @@ def effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCondi
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         temperature=manifest.temperature,
         reasoning_effort=manifest.reasoning_effort,
-        reasoning_max_tokens=manifest.reasoning_max_tokens,
+        reasoning_max_tokens=study_arm_budget(manifest),
         agent_system_prompt=None,
         study_system_prompt=manifest.system_prompt)
 
@@ -584,7 +593,12 @@ def effective_variant_condition(vc, manifest, model, root, *,
         raise ValueError(
             f"variant '{vc.name}' needs {variant.base_model_id} but {model.model_id} "
             f"is loaded")
-    if wants_choice and variant.qwen_thinking_enabled:
+    # How hard the agent thinks is the agent's (public issue #16): its own
+    # declared level, else the legacy boolean's meaning. The one reading both
+    # ordinary studies and panel seats use.
+    effort = agent_identity.variant_reasoning_effort(variant)
+    thinking = effort != prompt_render.REASONING_OFF
+    if wants_choice and thinking:
         # Same rule the manifest enforces for its own arms: thinking-mode
         # answers are marginals over sampled reasoning paths, so the
         # answer-token instrument (conditional on NO reasoning prefix) is
@@ -609,15 +623,14 @@ def effective_variant_condition(vc, manifest, model, root, *,
         prompt_mode=variant.prompt_mode,
         system_prompt=system_prompt_mod.compose(
             variant.system_prompt, manifest.system_prompt),
-        qwen_thinking_enabled=variant.qwen_thinking_enabled,
-        # An agent artifact carries the boolean (its own schema), so its
-        # effort is that boolean's meaning: off, or the template default. The
-        # reasoning BUDGET is study-owned like the temperature below — the
-        # manifest's, applied only when the arm actually reasons.
-        reasoning_effort=prompt_render.resolve_reasoning_effort(
-            None, variant.qwen_thinking_enabled),
+        qwen_thinking_enabled=thinking,
+        # The agent owns its effort (its declared level, else the legacy
+        # boolean's meaning: off, or the template default). The reasoning
+        # BUDGET is study-owned like the temperature below — the manifest's,
+        # applied only when the arm actually reasons.
+        reasoning_effort=effort,
         reasoning_max_tokens=(manifest.reasoning_max_tokens
-                              if variant.qwen_thinking_enabled else None),
+                              if thinking else None),
         # Study-owned sampling (2026-07-21): the MANIFEST owns the measured-
         # run sampling policy for EVERY condition; an agent artifact's stored
         # temperature is a Playground convenience, never a measured-run
@@ -634,9 +647,23 @@ def effective_variant_condition(vc, manifest, model, root, *,
         temperature=manifest.temperature,
         agent_system_prompt=variant.system_prompt,
         study_system_prompt=manifest.system_prompt,
+        # `agentReasoningEffort` (additive, 2026-11-08): the effort this
+        # agent ran at, stamped on every record of the arm. Absent on records
+        # from an engine that predates it and on every non-agent arm, whose
+        # bytes are unchanged.
+        # The stamp is the level that REACHES the renderer, read through the
+        # record the renderer itself uses (the loaded tokenizer's template):
+        # a level the template ignores renders as plain `on`, and the record
+        # says so rather than repeating the agent's declaration.
         provenance={"variantArtifactPath": vc.artifact_path,
                     "variantArtifactHash": vc.artifact_hash,
-                    "agentPlaygroundTemperature": variant.temperature},
+                    "agentPlaygroundTemperature": variant.temperature,
+                    "agentReasoningEffort": agent_identity.rendered_effort(
+                        effort, manifest.model_id,
+                        prompt_render.capabilities_for(
+                            manifest.model_id,
+                            tokenizer=getattr(model, "tokenizer", None),
+                            revision=manifest.model_revision))},
         variant=variant)
 
 
@@ -693,12 +720,13 @@ def run_arm_render_settings(manifest, root) -> list[dict]:
     def render(prompt_mode, system_prompt, thinking, effort, budget) -> dict:
         return {"prompt_mode": prompt_mode, "system_prompt": system_prompt,
                 "qwen_thinking_enabled": thinking,
-                "reasoning_effort": effort if budget else None}
+                "reasoning_effort": (effort if agent_identity.effort_reaches_renderer(
+                    effort, budget) else None)}
 
     frame = manifest.system_prompt
     settings = [render(manifest.prompt_mode, system_prompt_mod.compose(None, frame),
                        manifest.qwen_thinking_enabled, manifest.reasoning_effort,
-                       manifest.reasoning_max_tokens)]
+                       study_arm_budget(manifest))]
     for vc in manifest.variant_conditions:
         try:
             variant = (model_variant.ModelVariant.from_dict(vc.artifact)
@@ -707,12 +735,13 @@ def run_arm_render_settings(manifest, root) -> list[dict]:
                            paths.resolve_artifact(vc.artifact_path, root)))
         except (OSError, KeyError, ValueError, RuntimeError):
             continue  # surfaces as the loop's per-condition error record
+        effort = agent_identity.variant_reasoning_effort(variant)
+        thinking = effort != prompt_render.REASONING_OFF
         setting = render(
             variant.prompt_mode,
             system_prompt_mod.compose(variant.system_prompt, frame),
-            variant.qwen_thinking_enabled,
-            prompt_render.resolve_reasoning_effort(None, variant.qwen_thinking_enabled),
-            manifest.reasoning_max_tokens if variant.qwen_thinking_enabled else None)
+            thinking, effort,
+            manifest.reasoning_max_tokens if thinking else None)
         if setting not in settings:
             settings.append(setting)
     return settings
@@ -862,6 +891,14 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                             "reasoning_max_tokens": eff.reasoning_max_tokens}
         think_close_id = truncation_gate.think_close_token_id(
             getattr(model, "tokenizer", None))
+    elif eff.variant is not None and agent_identity.effort_reaches_renderer(
+            eff.reasoning_effort, None):
+        # An agent that declares a level the legacy boolean cannot express
+        # (`medium`, `on`) in a study with no reasoning budget: the level
+        # reaches the template, so the agent thinks at its own level rather
+        # than at the boolean's xhigh. Off and xhigh arms keep their exact
+        # historical call.
+        reasoning_kwargs = {"reasoning_effort": eff.reasoning_effort}
     # Threaded as kwargs ONLY for a latent condition, exactly as
     # transcript_kwargs and readout_kwargs are: every other condition's
     # generate/score_options call signature stays byte-for-byte unchanged, so

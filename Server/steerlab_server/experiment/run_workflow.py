@@ -60,7 +60,7 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
     # changed. The engine's submission preflight asks the same function
     # (public issue #9: a temperature-0 study with several seeds waited in
     # the queue, loaded a 27B model, and only then refused).
-    study_admission.refuse_settings(manifest)
+    study_admission.refuse_settings(manifest, root)
     study_admission.verify_or_warn(manifest, root)
     # SAE latent conditions (proposal r2 §8 P2-9): validate the declaration and
     # refuse the study kinds whose loop cannot arm one, BEFORE the model loads.
@@ -218,7 +218,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # and the submission preflight before anything is queued. Temperature 0
     # with several seeds is one of them (Swift twin: runImpl's
     # `refuseGreedySeedList`).
-    study_admission.refuse_settings(manifest)
+    study_admission.refuse_settings(manifest, root)
 
     # Resume gate BEFORE any model work: a complete directory refuses loudly
     # (immutable runs), and the checkpointed manifest must be the SAME frozen

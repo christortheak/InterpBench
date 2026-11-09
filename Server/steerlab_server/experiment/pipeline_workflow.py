@@ -155,7 +155,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
     # adds arms, never a temperature or a seed.
     if "run" in stages_to_run(spec.stages, ledger):
         from . import study_admission
-        study_admission.refuse_settings(manifest)
+        study_admission.refuse_settings(manifest, root)
     if pipeline_run_directory is not None:
         # Epoch guard, PRE-model. The commonest "drift" here is SELF-INFLICTED
         # (a 2026-08-05 replication run): the run stage pins the resolved

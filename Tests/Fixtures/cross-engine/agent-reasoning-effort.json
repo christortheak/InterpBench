@@ -1,0 +1,321 @@
+[
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": false,
+    "reasoningEffort": "off"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "xhigh"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false
+    },
+    "problem": null,
+    "qwenThinkingEnabled": false,
+    "reasoningEffort": "off"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": null
+    },
+    "problem": null,
+    "qwenThinkingEnabled": false,
+    "reasoningEffort": "off"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": null
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "xhigh"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": null
+    },
+    "problem": null,
+    "qwenThinkingEnabled": false,
+    "reasoningEffort": "off"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": "off"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": false,
+    "reasoningEffort": "off"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": "off"
+    },
+    "problem": "This agent file says reasoningEffort \"off\" but qwenThinkingEnabled true: one says the agent thinks and the other says it does not. Make the agent again with agent create --reasoning-effort, or in the app's agent editor, so both fields say the same thing."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": "off"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": false,
+    "reasoningEffort": "off"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": "on"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "on"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": "on"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "on"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": "on"
+    },
+    "problem": "This agent file says reasoningEffort \"on\" but qwenThinkingEnabled false: one says the agent thinks and the other says it does not. Make the agent again with agent create --reasoning-effort, or in the app's agent editor, so both fields say the same thing."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": "low"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "low"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": "low"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "low"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": "low"
+    },
+    "problem": "This agent file says reasoningEffort \"low\" but qwenThinkingEnabled false: one says the agent thinks and the other says it does not. Make the agent again with agent create --reasoning-effort, or in the app's agent editor, so both fields say the same thing."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": "medium"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "medium"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": "medium"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "medium"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": "medium"
+    },
+    "problem": "This agent file says reasoningEffort \"medium\" but qwenThinkingEnabled false: one says the agent thinks and the other says it does not. Make the agent again with agent create --reasoning-effort, or in the app's agent editor, so both fields say the same thing."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": "high"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "high"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": "high"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "high"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": "high"
+    },
+    "problem": "This agent file says reasoningEffort \"high\" but qwenThinkingEnabled false: one says the agent thinks and the other says it does not. Make the agent again with agent create --reasoning-effort, or in the app's agent editor, so both fields say the same thing."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": "xhigh"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "xhigh"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": "xhigh"
+    },
+    "problem": null,
+    "qwenThinkingEnabled": true,
+    "reasoningEffort": "xhigh"
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": "xhigh"
+    },
+    "problem": "This agent file says reasoningEffort \"xhigh\" but qwenThinkingEnabled false: one says the agent thinks and the other says it does not. Make the agent again with agent create --reasoning-effort, or in the app's agent editor, so both fields say the same thing."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": "hgih"
+    },
+    "problem": "This agent file's reasoningEffort \"hgih\" is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": "hgih"
+    },
+    "problem": "This agent file's reasoningEffort \"hgih\" is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": "hgih"
+    },
+    "problem": "This agent file's reasoningEffort \"hgih\" is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": 5
+    },
+    "problem": "This agent file's reasoningEffort 5 is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": 5
+    },
+    "problem": "This agent file's reasoningEffort 5 is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": 5
+    },
+    "problem": "This agent file's reasoningEffort 5 is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "reasoningEffort": true
+    },
+    "problem": "This agent file's reasoningEffort true is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": true,
+      "reasoningEffort": true
+    },
+    "problem": "This agent file's reasoningEffort true is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "name": "agent",
+      "qwenThinkingEnabled": false,
+      "reasoningEffort": true
+    },
+    "problem": "This agent file's reasoningEffort true is not a level SteerLab knows (off, on, low, medium, high, xhigh). Make the agent again with agent create --reasoning-effort, or in the app's agent editor."
+  }
+]

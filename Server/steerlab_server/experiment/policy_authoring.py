@@ -290,6 +290,7 @@ def attachment_review(settings, root):
     artifacts.load_attached(attachments)
     document = copy.deepcopy(document); document['name'] = settings['name']
     document.pop('promotion', None)  # A modified agent is not the selected sweep winner.
+    document.pop('handmade', None)  # Nor is it the agent its agent create record describes.
     if attachments: document['interventionPolicies'] = attachments
     else: document.pop('interventionPolicies', None)
     if static == 'remove':

@@ -1677,7 +1677,8 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
     capabilities = (model_capabilities.resolve(
         str(d.get("modelID") or ""), d.get("modelRevision"), root)
         if needs_capabilities else None)
-    draft_protocol_policy.apply_protocol(name, d, fields, capabilities=capabilities)
+    draft_protocol_policy.apply_protocol(name, d, fields, capabilities=capabilities,
+                                         root=root)
     save_raw(d, root)
     return d
 

@@ -438,6 +438,72 @@ def ablation_layers() -> None:
             "cases": cases})
 
 
+def agent_reasoning_effort() -> None:
+    """How an agent file's thinking fields read (FR6-B): for every spelling
+    of ``reasoningEffort`` (absent, null, each level, an unknown string, and
+    non-strings) beside every spelling of ``qwenThinkingEnabled`` (absent,
+    true, false), the refusal sentence, or the level
+    ``agent_identity.variant_reasoning_effort`` reads and the boolean it
+    implies. Swift's ``ModelVariantArtifact`` decoding must agree on each."""
+    from steerlab_server.experiment import agent_identity, model_variant
+
+    absent = object()
+    efforts = [absent, None, "off", "on", "low", "medium", "high", "xhigh", "hgih",
+               5, True]
+    switches = [absent, True, False]
+    cases = []
+    for effort in efforts:
+        for switch in switches:
+            artifact = {"name": "agent", "baseModelID": "test/model"}
+            if effort is not absent:
+                artifact["reasoningEffort"] = effort
+            if switch is not absent:
+                artifact["qwenThinkingEnabled"] = switch
+            problem = agent_identity.agent_file_problem(artifact)
+            case = {"artifact": artifact, "problem": problem}
+            if problem is None:
+                variant = model_variant.ModelVariant.from_dict(artifact)
+                case["reasoningEffort"] = agent_identity.variant_reasoning_effort(variant)
+                case["qwenThinkingEnabled"] = variant.qwen_thinking_enabled
+            cases.append(case)
+    _write(os.path.join(FIXTURES, "agent-reasoning-effort.json"), cases)
+
+
+def agent_origin_summaries() -> None:
+    """What every surface says of how a handmade agent was made (FR6-B round
+    3): an ``agent create`` record, an editor record with no source, and editor
+    records edited from a promoted, a handmade, and an unrecorded agent, with
+    and without changed fields. Swift's ``ModelVariantArtifact.origin`` must
+    word each one alike."""
+    from steerlab_server.experiment import agent_identity
+    steering = [{"concept": "c", "vectorArtifactID": "runs/x/c", "layer": 2, "alpha": 0.1}]
+    editor = {"schemaVersion": 1, "madeWith": "agent editor", "client": "SteerLab app",
+              "createdAt": "2026-11-08T00:00:00Z", "reason": None}
+    records = [
+        {"schemaVersion": 1, "madeWith": "agent create", "reason": "a prior setting"},
+        dict(editor),
+        {**editor, "editedFrom": {"kind": "swept", "artifactFileSHA256": "c" * 64,
+                                  "experiment": "tone", "sweepRun": "sweep-1"},
+         "changed": ["systemPrompt"]},
+        {**editor, "editedFrom": {"kind": "swept", "artifactFileSHA256": "c" * 64,
+                                  "experiment": "tone"},
+         "changed": ["reasoningEffort", "injections", "temperature"]},
+        {**editor, "editedFrom": {"kind": "handmade", "artifactFileSHA256": "d" * 64,
+                                  "handmade": {"madeWith": "agent create"}},
+         "changed": []},
+        {**editor, "editedFrom": {"kind": "handmade", "artifactFileSHA256": "e" * 64},
+         "changed": ["adapters", "promptMode"]},
+    ]
+    cases = []
+    for record in records:
+        for injections in ([], steering):
+            artifact = {"name": "agent", "baseModelID": "test/model",
+                        "injections": injections, "handmade": record}
+            cases.append({"artifact": artifact,
+                          "summary": agent_identity.agent_origin(artifact)["summary"]})
+    _write(os.path.join(FIXTURES, "agent-origin-summaries.json"), cases)
+
+
 def choice_margins() -> None:
     """The D3 margin arithmetic. Quantile interpolation and clamp detection
     are the parts two implementations silently disagree on."""
@@ -3311,6 +3377,8 @@ def main() -> int:
     validation_layers()
     ablation_layers()
     choice_margins()
+    agent_reasoning_effort()
+    agent_origin_summaries()
     auto_prompt_ids()
     row_hashes()
     evidence_bundle()

@@ -1739,9 +1739,11 @@ public enum MultiAgentRunner {
             studyTemperature: manifest.temperature, studyRevision: manifest.modelRevision)
     }
 
-    /// Whether a panel study casts an agent that thinks: the case in which
-    /// it may declare `reasoningMaxTokens` with its own effort off (FR6
-    /// round 2). Server twin: `multi_agent.panel_seat_thinks`.
+    /// Whether a panel study casts an agent that thinks: the panel's clause
+    /// of the one budget predicate
+    /// (`ModelVariantArtifact.budgetPermittedWithoutEffort`), under which it
+    /// may declare `reasoningMaxTokens` with its own effort off (FR6). Server
+    /// twin: `multi_agent.panel_seat_thinks`.
     public static func panelSeatThinks(_ manifest: ExperimentManifest) -> Bool {
         guard let scenario = pinnedPanel(manifest),
             let changes = try? panelRuleChanges(
@@ -1749,17 +1751,6 @@ public enum MultiAgentRunner {
                 studyRevision: manifest.modelRevision)
         else { return false }
         return changes.contains { $0.kind == RuleChange.reasoningPassedOn }
-    }
-
-    /// `problems` without the budget-without-effort refusal when the panel
-    /// casts a thinking agent. Server twin: `multi_agent.permit_panel_budget`.
-    public static func permitPanelBudget(
-        _ problems: [String], manifest: ExperimentManifest
-    ) -> [String] {
-        guard problems.contains(ReasoningEffort.budgetWithoutEffortReason),
-            panelSeatThinks(manifest)
-        else { return problems }
-        return problems.filter { $0 != ReasoningEffort.budgetWithoutEffortReason }
     }
 
     /// Each seat's effective temperature in the panel a study pins: its own

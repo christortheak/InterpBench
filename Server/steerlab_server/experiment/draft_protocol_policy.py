@@ -109,8 +109,12 @@ def unknown_outcome_instrument_repair(name: str) -> str:
         f"outcomeInstruments='[\"<{known}>\", …]'"))
 
 
-def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None) -> None:
-    """Validate the proposed fields, then update this in-memory draft in place."""
+def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None,
+                   root: str | None = None) -> None:
+    """Validate the proposed fields, then update this in-memory draft in place.
+
+    ``root`` is the workspace the draft lives in: the budget rule reads the
+    panel a panel study pins, and its seats' agent files, from there."""
     unknown = sorted(key for key in fields if key not in PROTOCOL_FIELDS)
     if unknown:
         # Refuse, never drop: a key outside the vocabulary used to write
@@ -257,10 +261,14 @@ def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None) -> No
             effort=merged_effort, reasoning_max_tokens=merged_budget,
             model_id=str(d.get("modelID") or ""),
             capabilities=capabilities)
-        # A panel study whose cast agents think may declare the budget they
-        # think under although its own effort is off (FR6 round 2).
-        from . import multi_agent
-        problems = multi_agent.permit_panel_budget(problems, d)
+        # An off study may declare a budget when the ONE predicate permits
+        # it: an attached agent arm thinks, or a panel seat is cast with an
+        # agent that thinks (ruling 2026-11-08). Swift twin:
+        # ManifestDraftEdits.setSamplingProtocol.
+        from . import agent_identity
+        if agent_identity.budget_permitted_without_effort(d, root):
+            problems = [p for p in problems
+                        if p != prompt_render.BUDGET_WITHOUT_EFFORT_REASON]
         if problems:
             raise ExperimentStoreError(
                 "; ".join(problems),

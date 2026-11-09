@@ -138,14 +138,16 @@ enum ManifestDraftEdits {
             // rejects is refused here, at the declaration, never
             // rendered at the template's default under a manifest that
             // asserts the level. Server twin: `set_protocol`.
-            // A panel whose cast agents think may declare the budget they
-            // think under with the study's own effort off (FR6 round 2).
-            let problems = MultiAgentRunner.permitPanelBudget(
-                ReasoningEffort.protocolViolations(
-                    effort: mergedEffort, reasoningMaxTokens: mergedBudget,
-                    modelID: manifest.modelID,
-                    capabilities: capabilities),
-                manifest: manifest)
+            // An off study may declare a budget for its agent arms, or its
+            // panel's cast seats, that think; it reaches only those (ruling
+            // 2026-11-08). Server twin: draft_protocol_policy.apply_protocol.
+            let budgetForAgents = mergedBudget != nil
+                && ModelVariantArtifact.budgetPermittedWithoutEffort(manifest)
+            let problems = ReasoningEffort.protocolViolations(
+                effort: mergedEffort, reasoningMaxTokens: mergedBudget,
+                modelID: manifest.modelID,
+                capabilities: capabilities
+            ).filter { !(budgetForAgents && $0 == ReasoningEffort.budgetWithoutEffortReason) }
             guard problems.isEmpty else {
                 throw ExperimentError.malformed(
                     problems.joined(separator: "; "),

@@ -1885,6 +1885,10 @@ def test_promote_from_named_sweep_run_ignores_stale_recommendation(
         "fear": {"sweepRun": sweep_run,
                  "winningCell": {"layer": 2, "alpha": 4.0},
                  "criterion": {"metric": "markerDensity"}}}))
+    # The manifest snapshot every sweep run writes (run_artifacts), which an
+    # unpinned promotion reads the sweep's thinking level from.
+    _write(os.path.join(sweep_dir, "experiment.json"),
+           json.dumps(es.load_raw(name, root)))
 
     outcome = promote_mod.promote(name, "fear", root=root,
                                   log=lambda *_: None, sweep_run=sweep_run)

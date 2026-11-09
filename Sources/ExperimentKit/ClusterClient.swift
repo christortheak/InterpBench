@@ -3291,6 +3291,15 @@ public struct ClusterClient: Sendable {
                 repair: StudySampling.greedySeedListRepair(
                     name: manifest.name, frozen: manifest.status != .draft))
         }
+        // …and one whose attached agent arms break a settings-only rule
+        // (FR6-B round 2), from the server's own manifest.
+        if SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            let body = try? await experimentManifestBody(name: experiment),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
+            let refusal = SubstrateRouting.agentArmSubmissionRefusal(manifest: manifest, verb: verb)
+        {
+            throw refusal
+        }
         // A readout-only study at temperature 0 with several seeds or
         // samples per item, which an engine from before round 3 of issue #9
         // would refuse after its model load, is refused here.

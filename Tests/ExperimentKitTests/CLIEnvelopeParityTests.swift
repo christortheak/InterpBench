@@ -130,6 +130,7 @@ import Testing
             "storedChoicesReadDifferently", "validationOverlapsExtraction",
             "unfinishedSourceAnalyzed", "seedSettingNotUsed", "clientUpdateAvailable",
             "baselineOnlyStudy", "refusedWhenRun", "seatTemperatureChangesNothing",
+            "agentRevisionNotChecked",
         ]
         #expect(CLIAdvisory.vocabulary == serverLiteral)
     }

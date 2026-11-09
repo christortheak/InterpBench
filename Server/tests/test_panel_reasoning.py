@@ -664,18 +664,17 @@ def test_verify_allows_a_budget_only_where_a_cast_seat_thinks(tmp_path):
     """S1: a study whose effort is off may declare reasoningMaxTokens when
     its panel casts an agent that thinks; with nothing thinking it is still
     refused."""
-    from steerlab_server.experiment import prompt_render
     scenario = _panel(tmp_path, endpoint=False)
     root = _workspace_with_panel(tmp_path, scenario)
     document = {"studyKind": "multiAgent", "temperature": 0.0,
                 "multiAgentScenarioPath": "prompts/panels/p.json"}
-    refusal = [prompt_render.BUDGET_WITHOUT_EFFORT_REASON]
-    assert multi_agent.permit_panel_budget(refusal, document, root) == []
+    from steerlab_server.experiment import agent_identity
+    permitted = agent_identity.budget_permitted_without_effort
+    assert permitted(document, root) is True
     scenario.agents[0].variant_artifact_path = None
     plain = _workspace_with_panel(tmp_path / "plain", scenario)
-    assert multi_agent.permit_panel_budget(refusal, document, plain) == refusal
-    assert multi_agent.permit_panel_budget(
-        refusal, {**document, "studyKind": "modelOutput"}, root) == refusal
+    assert permitted(document, plain) is False
+    assert permitted({**document, "studyKind": "modelOutput"}, root) is False
 
 
 def test_the_seats_temperatures_decide_a_panels_seed_rule(tmp_path):

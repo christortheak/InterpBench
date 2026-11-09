@@ -439,6 +439,7 @@ struct SystemPromptCompositionTests {
         ]
         try JSONSerialization.data(withJSONObject: ["fear": entry])
             .write(to: runDir.appending(component: "recommendations.json"))
+        try ExperimentStoreTests.plantLevelSnapshot(in: runDir)
         try Data(
             ExperimentStore.manifestHash(try ExperimentStore.load(name: name))
                 .utf8

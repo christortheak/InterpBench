@@ -3232,6 +3232,7 @@ public enum ExperimentTasks {
         variantArtifactPath: String? = nil,
         variantArtifactHash: String? = nil,
         agentPlaygroundTemperature: Double? = nil,
+        agentReasoningEffort: String? = nil,
         readerScores: [String: Float]? = nil,
         randomVectorAlgorithm: String? = nil,
         numericParser: ParserRegistry.ResolvedNumericParser? = nil,
@@ -3274,6 +3275,7 @@ public enum ExperimentTasks {
             variantArtifactPath: variantArtifactPath,
             variantArtifactHash: variantArtifactHash,
             agentPlaygroundTemperature: agentPlaygroundTemperature,
+            agentReasoningEffort: agentReasoningEffort,
             target: prompt.target,
             anchorMonths: prompt.anchorMonths,
             severity: prompt.severity,
@@ -3305,7 +3307,8 @@ public enum ExperimentTasks {
         promptIndex: Int,
         prompt: StudyPrompt,
         choice: ChoiceResult,
-        randomVectorAlgorithm: String? = nil
+        randomVectorAlgorithm: String? = nil,
+        agentReasoningEffort: String? = nil
     ) -> ChoiceRecord {
         // DECLARED target only (open-issues #6, server twin `tasks.py`'s
         // choice-record envelope). Defaulting to `options[0]` stamped every
@@ -3370,7 +3373,8 @@ public enum ExperimentTasks {
             randomVectorAlgorithm: randomVectorAlgorithm,
             scriptedTranscript: prompt.transcript != nil ? true : nil,
             transcript: prompt.transcript,
-            factors: prompt.factors)
+            factors: prompt.factors,
+            agentReasoningEffort: agentReasoningEffort)
     }
 
     // MARK: - run
@@ -3538,6 +3542,14 @@ public enum ExperimentTasks {
         // Temperature 0 with several seeds would write identical records
         // (public issue #9): refused before anything is read or loaded.
         try refuseGreedySeedList(manifest)
+        // …and so is one whose attached agent arms break a settings-only
+        // rule (FR6-B round 2), draft or frozen. Server twin:
+        // `study_admission.agent_arm_refusal`.
+        if let refusal = ModelVariantArtifact.armRefusal(
+            manifest, workspaceRoot: ExperimentStore.workspaceRoot)
+        {
+            throw refusal
+        }
         // Set only once the run is going ahead: the refusals above are
         // about measurements this engine does not take, and a refused run
         // has no business touching the GPU runtime at all.
@@ -3955,7 +3967,8 @@ public enum ExperimentTasks {
                         qwenThinkingEnabled: manifest.thinkingEnabled,
                         transcript: prompt.transcript,
                         reasoningEffort: manifest.resolvedReasoningEffort,
-                        reasoningMaxTokens: manifest.reasoningMaxTokens
+                        reasoningMaxTokens: manifest.resolvedReasoningEffort.isOn
+                            ? manifest.reasoningMaxTokens : nil
                     ) { output in
                         await progress?(
                             .generationChunk(
@@ -4059,20 +4072,25 @@ public enum ExperimentTasks {
                         let cell = truncationCell(
                             rows: rows, condition: condition.name,
                             promptID: prompt.id)
+                        // The budget THIS arm ran under: the study's own arms
+                        // think only when the study does, so a budget declared
+                        // for thinking agents is not theirs to name. Server
+                        // twin: `condition_execution.study_arm_budget`.
+                        let armBudget = StudySampling.studyArmBudget(manifest)
                         if let problem = lengthStoppedRefusal(
                             classified: cell.classified,
                             lengthStopped: cell.lengthStopped,
                             threshold: ceiling, condition: condition.name,
                             promptID: prompt.id, maxTokens: manifest.maxTokens,
                             lengthStoppedInReasoning: cell.inReasoning,
-                            reasoningMaxTokens: manifest.reasoningMaxTokens)
+                            reasoningMaxTokens: armBudget)
                         {
                             throw ExperimentError.refusing(
                                 .lengthStopped, problem,
                                 repair: lengthStoppedRepair(
                                     experiment: manifest.name,
                                     maxTokens: manifest.maxTokens,
-                                    reasoningMaxTokens: manifest.reasoningMaxTokens))
+                                    reasoningMaxTokens: armBudget))
                         }
                     }
                 }
@@ -4856,7 +4874,11 @@ public enum ExperimentTasks {
                             condition: condition.name,
                             promptIndex: index + 1,
                             prompt: prompt,
-                            choice: choice)
+                            choice: choice,
+                            agentReasoningEffort: condition.variant.map {
+                                ModelVariantArtifact.renderedReasoningEffort(
+                                    $0.resolvedReasoningEffort,
+                                    modelID: pinnedManifest.modelID).rawValue })
                         reportChoiceReadouts.append(
                             ReportChoiceReadout(
                                 condition: condition.name,
@@ -4928,9 +4950,10 @@ public enum ExperimentTasks {
                                 systemPrompt: systemPrompt,
                                 qwenThinkingEnabled: qwenThinking,
                                 transcript: prompt.transcript,
-                                reasoningEffort: StudySampling.reasoningEffort(pinnedManifest,
-                                    variantThinking: condition.variant == nil ? nil : qwenThinking),
-                                reasoningMaxTokens: pinnedManifest.reasoningMaxTokens
+                                reasoningEffort: StudySampling.reasoningEffort(
+                                    pinnedManifest, variant: condition.variant),
+                                reasoningMaxTokens: StudySampling.reasoningBudget(
+                                    pinnedManifest, variant: condition.variant)
                             ) { output in
                                 await progress?(
                                     .generationChunk(
@@ -4994,6 +5017,10 @@ public enum ExperimentTasks {
                                 variantArtifactPath: condition.artifactPath,
                                 variantArtifactHash: condition.artifactHash,
                                 agentPlaygroundTemperature: condition.variant?.temperature,
+                                agentReasoningEffort:
+                                    condition.variant.map { ModelVariantArtifact.renderedReasoningEffort(
+                                        $0.resolvedReasoningEffort,
+                                        modelID: pinnedManifest.modelID).rawValue },
                                 readerScores: readerScores,
                                 numericParser: numericParser,
                                 finishReason: generation.finishReason)
@@ -5029,19 +5056,26 @@ public enum ExperimentTasks {
                                 let cell = truncationCell(
                                     rows: rows, condition: condition.name,
                                     promptID: prompt.id)
+                                // The budget THIS agent arm ran under, as its
+                                // generation was given it.
+                                let armBudget = StudySampling.reasoningBudget(
+                                    pinnedManifest, variant: condition.variant)
                                 if let problem = lengthStoppedRefusal(
                                     classified: cell.classified,
                                     lengthStopped: cell.lengthStopped,
                                     threshold: ceiling,
                                     condition: condition.name,
                                     promptID: prompt.id,
-                                    maxTokens: pinnedManifest.maxTokens)
+                                    maxTokens: pinnedManifest.maxTokens,
+                                    lengthStoppedInReasoning: cell.inReasoning,
+                                    reasoningMaxTokens: armBudget)
                                 {
                                     throw ExperimentError.refusing(
                                         .lengthStopped, problem,
                                         repair: lengthStoppedRepair(
                                             experiment: pinnedManifest.name,
-                                            maxTokens: pinnedManifest.maxTokens))
+                                            maxTokens: pinnedManifest.maxTokens,
+                                            reasoningMaxTokens: armBudget))
                                 }
                             }
                         }

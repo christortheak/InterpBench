@@ -116,6 +116,17 @@ public final class UnifiedStudyRunner {
             note(line, .error)
             return
         }
+        // An attached agent arm that breaks a settings-only rule (FR6-B
+        // round 2): refused before packaging, on every server.
+        if let refusal = SubstrateRouting.agentArmSubmissionRefusal(
+            manifest: manifest, verb: verb)
+        {
+            let line = "\(refusal.reason). To run it: "
+                + (refusal.lifecycleRefusal?.repairAction ?? "")
+            statusLine = line
+            note(line, .error)
+            return
+        }
         // Old-server guard (round 3 of issue #9): a readout-only study at
         // temperature 0 with several seeds or samples per item would be
         // refused after the model load by a server without the fix.

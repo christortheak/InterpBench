@@ -131,6 +131,7 @@ from . import cli_envelope as envelope
 from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands, setup_commands
 from .client import results_commands, housekeeping_commands
 from .client import custom_code_commands
+from .client import agent_creation
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -306,6 +307,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *authoring_commands.VERB_SPECS,
     *custom_code_commands.VERB_SPECS,
     *housekeeping_commands.VERB_SPECS,
+    *agent_creation.VERB_SPECS,
     *model_commands.specs(_RUNNER_FLAGS),
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
@@ -2308,6 +2310,16 @@ def _experiment(invocation: Invocation) -> CLIResult:
             if frozen_note:
                 sys.stderr.write(f"ADVISORY: {frozen_note}\n")
                 advisories.append(_advisory("refusedWhenRun", frozen_note))
+            # …and the agent-arm rules (public issues #16, #17), the same way.
+            from .experiment import agent_identity as _agent_identity
+            arm_note = _agent_identity.frozen_arm_problems_advisory(manifest, None)
+            if arm_note:
+                sys.stderr.write(f"ADVISORY: {arm_note}\n")
+                advisories.append(_advisory("refusedWhenRun", arm_note))
+            # An agent revision the spelling cannot check is said, not refused.
+            for note in _agent_identity.manifest_arm_notes(manifest):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("agentRevisionNotChecked", note))
             # A study that measures the baseline agent alone verifies, and
             # says what it is. Swift twin: the Mac `experiment verify`.
             from .experiment import manifest as _manifest_module
@@ -4603,6 +4615,17 @@ def _run(invocation: Invocation) -> CLIResult:
             repair=_seed_rule.greedy_seed_list_repair(
                 name, frozen=status != "draft"),
             common=common, stage_facts={"status": status})
+    # …and so is one whose attached agent arms break a settings-only rule
+    # (public issues #16, #17): refused here, before anything is uploaded.
+    if _seed_rule._submission_runs_the_study(manifest, study_verb):
+        from .experiment import study_admission as _admission
+        arm_refusal = _admission.agent_arm_refusal(manifest, None)
+        if arm_refusal is not None:
+            raise _die(
+                stages, "load", code=lifecycle_gates.STUDY_DECLARATION,
+                gate=lifecycle_gates.STUDY_DECLARATION, reason=str(arm_refusal),
+                repair=arm_refusal.repair_action, common=common,
+                stage_facts={"status": status})
 
     # The measured run reads its items from the pinned task prompts, and this
     # client's submission carries no other prompt file. Freeze does not ask
@@ -5321,6 +5344,7 @@ HANDLERS = {"setup": setup_commands.run, "workspace": bootstrap_commands.run, "s
             "pack": study_assembly.run,
             "design": lambda i: housekeeping_commands.run(i) if housekeeping_commands.handles(i) else design_commands.run(i),
             "agent": lambda i: (authoring_commands.run(i) if i.spec.verb == "list"
+                                else agent_creation.run(i) if i.spec.verb == "create"
                                 else housekeeping_commands.run(i) if housekeeping_commands.handles(i)
                                 else design_commands.run(i)),
             "panel": authoring_commands.run,

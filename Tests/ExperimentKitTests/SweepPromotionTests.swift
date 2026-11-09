@@ -698,6 +698,14 @@ extension ExperimentStoreTests {
         let payload = try JSONEncoder().encode(["fear": entry])
         try payload.write(
             to: directory.appending(component: "recommendations.json"))
+        try Self.plantLevelSnapshot(in: directory)
+    }
+
+    /// The manifest snapshot every sweep run writes at its start, as far as
+    /// promotion reads it: the level the sweep's cells ran at.
+    static func plantLevelSnapshot(in directory: URL, effort: String = "off") throws {
+        try JSONSerialization.data(withJSONObject: ["reasoningEffort": effort])
+            .write(to: directory.appending(component: "experiment.json"))
     }
 
     @Test func promoteMintsAgentWithBirthCertificate() throws {
@@ -743,6 +751,74 @@ extension ExperimentStoreTests {
             // The minted artifact is discoverable in the variant library.
             #expect(
                 ModelVariantStore.scan().contains { $0.artifact.name == "pr-fear-agent" })
+        }
+    }
+
+    /// FR6-B round 2: the agent carries the level the sweep's cells ran at,
+    /// and a retry never hands back an agent minted at another level.
+    @Test func promoteMintsAtTheSweepsLevelAndRefusesAStaleReuse() throws {
+        try withTempWorkspace { root in
+            let provenance = try promotableExperiment(name: "pr")
+            // The sweep ran at medium (its run's snapshot says so)…
+            try Self.plantLevelSnapshot(
+                in: ExperimentStore.runsDirectory.appending(component: provenance.sweepRun),
+                effort: "medium")
+            // …and the study's level moved after it (set-sampling): the
+            // default path, through the recommended condition, still mints
+            // at the level the sweep's cells ran at (FR6-B round 3).
+            var manifest = try ExperimentStore.load(name: "pr")
+            manifest.reasoningEffort = "high"
+            manifest.reasoningMaxTokens = 64
+            manifest.qwenThinkingEnabled = nil
+            try ExperimentStore.save(manifest)
+            _ = try plantVectorArtifact(in: root)
+            let record = try AgentPromotion.promote(
+                experimentName: "pr", concept: "fear", log: { _ in })
+            #expect(record.artifact.reasoningEffort == "medium")
+            #expect(record.artifact.qwenThinkingEnabled)
+            // The same promotion again returns that agent…
+            let again = try AgentPromotion.promote(
+                experimentName: "pr", concept: "fear", log: { _ in })
+            #expect(again.url.resolvingSymlinksInPath().path
+                == record.url.resolvingSymlinksInPath().path)
+            #expect(again.artifact == record.artifact)
+            // …but not one minted before promotion carried the level (this
+            // engine used to mint such a study's agent with thinking off).
+            var stale = record.artifact
+            stale.reasoningEffort = nil
+            stale.qwenThinkingEnabled = false
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(stale).write(to: record.url)
+            do {
+                _ = try AgentPromotion.promote(
+                    experimentName: "pr", concept: "fear", log: { _ in })
+                Issue.record("a stale reuse must refuse")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains("thinks at reasoning effort off"))
+                #expect(error.lifecycleRefusal?.repairAction.hasSuffix(
+                    "steerlab-cli experiment promote pr fear --agent-name pr-fear-agent-medium")
+                    == true)
+            }
+            // A manual override's repair repeats its cell and its reason.
+            let override = try AgentPromotion.promote(
+                experimentName: "pr", concept: "fear", cell: (layer: 2, alpha: 0.25),
+                overrideReason: "the prior study's setting", log: { _ in })
+            var staleOverride = override.artifact
+            staleOverride.reasoningEffort = nil
+            staleOverride.qwenThinkingEnabled = false
+            try encoder.encode(staleOverride).write(to: override.url)
+            do {
+                _ = try AgentPromotion.promote(
+                    experimentName: "pr", concept: "fear", cell: (layer: 2, alpha: 0.25),
+                    overrideReason: "the prior study's setting", log: { _ in })
+                Issue.record("a stale reuse must refuse")
+            } catch let error as ExperimentError {
+                #expect(error.lifecycleRefusal?.repairAction.hasSuffix(
+                    "--agent-name pr-fear-agent-medium --cell 2:0.25 --reason "
+                        + #"'the prior study'"'"'s setting'"#) == true,
+                    "\(error.lifecycleRefusal?.repairAction ?? "")")
+            }
         }
     }
 
@@ -897,6 +973,7 @@ extension ExperimentStoreTests {
         try recommendations.write(
             to: directory.appending(component: "recommendations.json"),
             atomically: true, encoding: .utf8)
+        try Self.plantLevelSnapshot(in: directory)
     }
 
     @Test func promoteCellOverrideIsLoudAndStamped() throws {

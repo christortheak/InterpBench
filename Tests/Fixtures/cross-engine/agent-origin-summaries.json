@@ -1,0 +1,290 @@
+[
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "madeWith": "agent create",
+        "reason": "a prior setting",
+        "schemaVersion": 1
+      },
+      "injections": [],
+      "name": "agent"
+    },
+    "summary": "Made by hand with agent create. The researcher chose its settings. Stated reason: \"a prior setting\"."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "madeWith": "agent create",
+        "reason": "a prior setting",
+        "schemaVersion": 1
+      },
+      "injections": [
+        {
+          "alpha": 0.1,
+          "concept": "c",
+          "layer": 2,
+          "vectorArtifactID": "runs/x/c"
+        }
+      ],
+      "name": "agent"
+    },
+    "summary": "Made by hand with agent create. The researcher chose its steering settings; no sweep selected them. Stated reason: \"a prior setting\"."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher chose its settings. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [
+        {
+          "alpha": 0.1,
+          "concept": "c",
+          "layer": 2,
+          "vectorArtifactID": "runs/x/c"
+        }
+      ],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher chose its steering settings; no sweep selected them. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [
+          "systemPrompt"
+        ],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "experiment": "tone",
+          "kind": "swept",
+          "sweepRun": "sweep-1"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone (sweep run sweep-1) and changed its persona. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [
+          "systemPrompt"
+        ],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "experiment": "tone",
+          "kind": "swept",
+          "sweepRun": "sweep-1"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [
+        {
+          "alpha": 0.1,
+          "concept": "c",
+          "layer": 2,
+          "vectorArtifactID": "runs/x/c"
+        }
+      ],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone (sweep run sweep-1) and changed its persona. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [
+          "reasoningEffort",
+          "injections",
+          "temperature"
+        ],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "experiment": "tone",
+          "kind": "swept"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone and changed its steering, thinking level, and Playground temperature. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [
+          "reasoningEffort",
+          "injections",
+          "temperature"
+        ],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "experiment": "tone",
+          "kind": "swept"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [
+        {
+          "alpha": 0.1,
+          "concept": "c",
+          "layer": 2,
+          "vectorArtifactID": "runs/x/c"
+        }
+      ],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent experiment promote made from study tone and changed its steering, thinking level, and Playground temperature. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "handmade": {
+            "madeWith": "agent create"
+          },
+          "kind": "handmade"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher saved it as an unchanged copy of an agent made by hand. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "handmade": {
+            "madeWith": "agent create"
+          },
+          "kind": "handmade"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [
+        {
+          "alpha": 0.1,
+          "concept": "c",
+          "layer": 2,
+          "vectorArtifactID": "runs/x/c"
+        }
+      ],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher saved it as an unchanged copy of an agent made by hand. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [
+          "adapters",
+          "promptMode"
+        ],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "kind": "handmade"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent with no record of how it was made and changed its adapter and prompt mode. No reason was stated."
+  },
+  {
+    "artifact": {
+      "baseModelID": "test/model",
+      "handmade": {
+        "changed": [
+          "adapters",
+          "promptMode"
+        ],
+        "client": "SteerLab app",
+        "createdAt": "2026-11-08T00:00:00Z",
+        "editedFrom": {
+          "artifactFileSHA256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "kind": "handmade"
+        },
+        "madeWith": "agent editor",
+        "reason": null,
+        "schemaVersion": 1
+      },
+      "injections": [
+        {
+          "alpha": 0.1,
+          "concept": "c",
+          "layer": 2,
+          "vectorArtifactID": "runs/x/c"
+        }
+      ],
+      "name": "agent"
+    },
+    "summary": "Made by hand in the app's agent editor. The researcher edited it from an agent with no record of how it was made and changed its adapter and prompt mode. No reason was stated."
+  }
+]

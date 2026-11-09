@@ -334,6 +334,12 @@ public enum AgentPromotion {
         // the cluster then resolved it literally and died on a path that
         // exists nowhere but here.
         let artifactReference = ArtifactIdentity.workspaceRelative(artifact.id)
+        // The level the sweep's cells ran at (public issue #16), from the
+        // run's own snapshot: a `set-sampling` after the sweep changes the
+        // study, not what the sweep measured. Server twin: `promote._mint`.
+        let swept = try Self.sweepRunLevel(
+            sweepRun: selection?.sweepRun ?? failureSweepRun,
+            experimentName: experimentName, concept: concept)
         let key = promotionKey(
             experiment: experimentName, experimentHash: experimentHash,
             concept: concept,
@@ -349,6 +355,27 @@ public enum AgentPromotion {
         if let existing = ModelVariantStore.scan().first(
             where: { $0.artifact.promotion?.promotionKey == key })
         {
+            // The key leaves the thinking level out, so an agent minted
+            // before promotion carried the sweep's level can match it while
+            // thinking at another. Never hand that back silently (FR6-B round
+            // 2). Server twin: `promote._mint`'s reuse check.
+            let want = swept.effort
+                ?? ReasoningEffort.legacy(qwenThinkingEnabled: swept.thinking)
+            let have = existing.artifact.resolvedReasoningEffort
+            guard have == want else {
+                throw ExperimentError.refusing(
+                    .promotionEvidence,
+                    "promote '\(concept)': the agent already minted for this promotion "
+                        + "(\(existing.url.lastPathComponent)) thinks at reasoning effort "
+                        + "\(have.rawValue), but the sweep's cells ran at \(want.rawValue); "
+                        + "returning it would hand back an agent at a level the sweep never "
+                        + "measured",
+                    repair: "promote again under a new name, which mints an agent at "
+                        + "\(want.rawValue): " + Self.promoteCommand(
+                            experimentName, concept,
+                            agentName: "\(variantName)-\(want.rawValue)", cell: cell,
+                            overrideReason: overrideReason, pins: pins))
+            }
             log(
                 "promote '\(concept)': an agent for this exact promotion "
                     + "already exists (\(existing.url.path)) — returning it "
@@ -405,7 +432,7 @@ public enum AgentPromotion {
             bandWidth: bandWidth,
             alphaInNormUnits: alphaInNormUnits,
             promptMode: manifest.promptMode?.rawValue ?? "chatAssistant",
-            qwenThinkingEnabled: manifest.qwenThinkingEnabled ?? false,
+            qwenThinkingEnabled: swept.thinking,
             temperature: manifest.temperature,
             // A newborn agent's identity is BARE (2026-08-24 ruling). This
             // used to copy `manifest.systemPrompt`, which made the study's
@@ -419,12 +446,112 @@ public enum AgentPromotion {
             // nor `systemPromptHash` (ModelVariantArtifact's initializer).
             // Server twin: `promote.py`'s `system_prompt=None`.
             systemPrompt: "",
-            promotion: promotion)
+            promotion: promotion,
+            // The level the sweep's cells ran at travels with the agent
+            // (public issue #16). Server twin: `promote._sweep_run_level`.
+            reasoningEffort: swept.effort)
         let record = try ModelVariantStore.save(variant)
         log(
             "promoted '\(concept)' → agent '\(variant.name)' "
                 + "(L\(layer), α\(alpha), \(promotedBy)) → \(record.url.path)")
         return record
+    }
+
+    /// The level a sweep run's cells ran at, as a promoted agent spells it:
+    /// its `reasoningEffort` and thinking switch, read from the run's own
+    /// `experiment.json` snapshot by the manifest's reading rule (a non-off
+    /// level wins; else the legacy boolean; else off). A declared non-off
+    /// level is the agent's `reasoningEffort`; a sweep that spelled only the
+    /// legacy boolean gives the switch alone, so such an agent keeps the bytes
+    /// it always had. Refused when the run holds no readable snapshot, or a
+    /// level outside the vocabulary. Server twin: `promote._sweep_run_level`.
+    static func sweepRunLevel(
+        sweepRun: String?, experimentName: String, concept: String
+    ) throws -> (effort: ReasoningEffort?, thinking: Bool) {
+        guard let sweepRun, !sweepRun.isEmpty else {
+            // A hand-written or legacy selection that names no sweep run.
+            throw ExperimentError.refusing(
+                .promotionEvidence,
+                "the sweep evidence this promotion uses names no sweep run, so the thinking "
+                    + "level the sweep's cells ran at cannot be read, and the agent would carry "
+                    + "a level no cell was measured at",
+                repair: sweepThenPromoteRepair(experimentName, concept))
+        }
+        try requirePlainRunName(sweepRun, source: "the promotion's sweep run")
+        let runDirectory = ExperimentStore.runsDirectory.appending(component: sweepRun)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: runDirectory.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else {
+            throw ExperimentError.refusing(
+                .promotionEvidence,
+                "sweep run '\(sweepRun)' is not in this workspace's runs/ folder, so its "
+                    + "experiment.json, which records the thinking level the sweep's cells ran "
+                    + "at, cannot be read",
+                repair: "fetch the sweep's results into runs/ (a bundle-submitted sweep returns "
+                    + "them in its results tarball) and promote again; or "
+                    + sweepThenPromoteRepair(experimentName, concept))
+        }
+        guard let data = try? Data(contentsOf: runDirectory.appending(component: "experiment.json")),
+            let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw ExperimentError.refusing(
+                .promotionEvidence,
+                "sweep run '\(sweepRun)' holds no readable experiment.json, so the thinking "
+                    + "level its cells ran at is unknown, and the agent would carry a level no "
+                    + "cell was measured at",
+                repair: sweepThenPromoteRepair(experimentName, concept))
+        }
+        let declared = snapshot["reasoningEffort"].flatMap { $0 is NSNull ? nil : $0 }
+        let spelled = declared.map { ($0 as? String) ?? "\($0)" }
+        let ranAt: String
+        if let spelled, spelled != ReasoningEffort.off.rawValue {
+            ranAt = spelled
+        } else if (snapshot["qwenThinkingEnabled"] as? Bool) == true {
+            ranAt = ReasoningEffort.legacy(qwenThinkingEnabled: true).rawValue
+        } else {
+            ranAt = spelled ?? ReasoningEffort.off.rawValue
+        }
+        guard let level = ReasoningEffort(rawValue: ranAt) else {
+            throw ExperimentError.refusing(
+                .promotionEvidence,
+                "sweep run '\(sweepRun)' records reasoning effort '\(ranAt)', which "
+                    + "is not a level SteerLab knows, so the agent's level cannot be read from it",
+                repair: sweepThenPromoteRepair(experimentName, concept))
+        }
+        if spelled == ranAt, level.isOn { return (level, true) }
+        return (nil, level.isOn)
+    }
+
+    /// `experiment promote` as the request was made, with `agentName`: the
+    /// cell and its reason on this command line. This command line cannot
+    /// pin a promotion to a sweep run (the app and pipeline pin it), so a
+    /// pinned request is spelled for the Python engine's command line, which
+    /// takes the pins as `--sweep-run` and `--expect-*` flags. Server twin:
+    /// `promote._promote_command`.
+    static func promoteCommand(
+        _ experiment: String, _ concept: String, agentName: String,
+        cell: (layer: Int, alpha: Double)?, overrideReason: String?, pins: Pins?
+    ) -> String {
+        var words = ["experiment", "promote", experiment, concept, "--agent-name", agentName]
+        if let cell {
+            words += ["--cell", "\(cell.layer):\(cell.alpha)"]
+            if let overrideReason, !overrideReason.isEmpty { words += ["--reason", overrideReason] }
+        }
+        func spelled(_ words: [String]) -> String {
+            words.map(WorkspaceHousekeepingCLI.shellQuoted).joined(separator: " ")
+        }
+        guard let pins else { return spelled([ExperimentCLIHelp.program] + words) }
+        words += ["--sweep-run", pins.sweepRun]
+        if let wanted = pins.winningCell {
+            words += ["--expect-cell", "\(wanted.layer):\(wanted.alpha)"]
+        }
+        if let artifact = pins.vectorArtifactID { words += ["--expect-artifact", artifact] }
+        if let bytes = pins.vectorArtifactHash { words += ["--expect-artifact-hash", bytes] }
+        if let epoch = pins.experimentHash { words += ["--expect-epoch", epoch] }
+        return "this command line cannot pin a promotion to a sweep run; the Python "
+            + "engine's command line can, in this workspace: "
+            + spelled(["steerlab-server"] + words) + " --root <workspace>"
     }
 
     /// Deterministic identity of a promotion REQUEST — the idempotency key.
