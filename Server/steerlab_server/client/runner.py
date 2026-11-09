@@ -297,12 +297,19 @@ def require_greedy_seed_list(staged, verb, workspace_root) -> None:
     if manifest.content_hash() != staged.get("experimentContentHash"):
         return
     problem = sampling.submission_greedy_seed_list_problem(manifest, verb)
-    if problem is None:
-        return
-    raise RunnerRefusal(
-        problem, code=lifecycle_gates.STUDY_DECLARATION,
-        repair_action=sampling.greedy_seed_list_repair(
-            name, frozen=manifest.status != "draft"))
+    if problem is not None:
+        raise RunnerRefusal(
+            problem, code=lifecycle_gates.STUDY_DECLARATION,
+            repair_action=sampling.greedy_seed_list_repair(
+                name, frozen=manifest.status != "draft"))
+    # The agent-arm rules (FR6-B round 2) ride the same evidence rule. Swift
+    # twin: InstrumentationSupport.requireGreedySeedList.
+    if sampling._submission_runs_the_study(manifest, verb):
+        from ..experiment import study_admission
+        arm_refusal = study_admission.agent_arm_refusal(manifest, workspace_root)
+        if arm_refusal is not None:
+            raise RunnerRefusal(str(arm_refusal), code=lifecycle_gates.STUDY_DECLARATION,
+                                repair_action=arm_refusal.repair_action)
 
 
 def require_greedy_rules(staged, verb, capabilities, where: str,

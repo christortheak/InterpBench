@@ -22,6 +22,7 @@ from steerlab_server.experiment import (agent_identity, condition_execution,
 from steerlab_server.experiment.manifest import Manifest
 
 import test_agent_create as base
+from test_run_orchestration import evidence_archive, script  # noqa: F401 - fixtures
 
 MODEL = base.MODEL
 QWEN = "Qwen/Qwen3.8-27B"
@@ -251,6 +252,57 @@ def test_the_client_verify_reports_the_frozen_note(tmp_path, capsys, monkeypatch
     code, document = base.cli(tmp_path, capsys, "experiment", "verify", "study")
     notes = [a for a in document.get("advisories", []) if a["code"] == "refusedWhenRun"]
     assert any("answer-token instrument" in a["detail"] for a in notes), document
+
+
+def test_the_client_refuses_before_any_runner_is_addressed(tmp_path, monkeypatch, capsys,
+                                                           script):
+    """`steerlab run` and `runner submit` refuse a frozen study whose agent arm
+    breaks a rule, before anything is packaged or uploaded."""
+    from steerlab_server.client import runner as runner_api
+    from test_run_orchestration import RUNNER_URL, _quiet_client, _run, _stages
+    root = str(tmp_path / "workspace")
+    directory = os.path.join(root, "prompts", "concepts", "signal")
+    os.makedirs(directory)
+    for filename, text in (("positive.jsonl", '{"text": "on"}\n'),
+                           ("negative.jsonl", '{"text": "off"}\n')):
+        Path(directory, filename).write_text(text)
+    monkeypatch.setenv(client_cli.WORKSPACE_ENV, root)
+    monkeypatch.delenv(client_cli.RUNNER_TOKEN_ENV, raising=False)
+    for argv in (["experiment", "create", "armed", "--model", "org/tiny",
+                  "--revision", "0" * 40],
+                 ["experiment", "attach", "armed", "signal"]):
+        _quiet_client(["--root", root, *argv])
+    items = tmp_path / "items.jsonl"
+    items.write_text('{"id": "item-1", "prompt": "Describe the room."}\n')
+    digest = hashlib.sha256(Path(root, "experiments/armed/experiment.json").read_bytes()).hexdigest()
+    _quiet_client(["--root", root, "experiment", "import-prompts", "armed", "--file",
+                   str(items), "--manifest-sha256", digest])
+    artifact = {"name": "arm", "baseModelID": "org/tiny", "reasoningEffort": "medium"}
+    agent_file = Path(root, "runs/model-variants/arm/model-variant.json")
+    agent_file.parent.mkdir(parents=True)
+    agent_file.write_text(json.dumps(artifact))
+    raw = store.load_raw("armed", root)
+    raw["variantConditions"] = [{"name": "arm",
+                                 "artifactPath": "runs/model-variants/arm/model-variant.json",
+                                 "artifactHash": hashlib.sha256(agent_file.read_bytes()).hexdigest(),
+                                 "artifact": artifact}]
+    store.save_raw(raw, root)
+    # Frozen by a release without the agent-arm rules.
+    with monkeypatch.context() as older:
+        older.setattr(agent_identity, "manifest_arm_problems", lambda *args, **kwargs: [])
+        _quiet_client(["--root", root, "experiment", "freeze", "armed", "--force"])
+    assert store.load_raw("armed", root)["status"] == "frozen"
+    code, document, _ = _run(["armed", "--runner", RUNNER_URL], capsys, root=root)
+    assert code == 65, document
+    assert document["error"]["code"] == "studyDeclaration"
+    assert "has no thinking switch" in document["error"]["reason"]
+    assert document["result"]["failedStage"] == "load"
+    assert script.uploads == [] and script.submits == []
+    staged = {"experiment": "armed",
+              "experimentContentHash": Manifest.load("armed", root).content_hash()}
+    with pytest.raises(runner_api.RunnerRefusal, match="has no thinking switch"):
+        runner_api.require_greedy_seed_list(staged, "run", root)
+    runner_api.require_greedy_seed_list(staged, "analyze", root)
 
 
 # --- S4: a budget for the agent arms that think -----------------------------------------
