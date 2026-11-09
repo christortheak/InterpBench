@@ -316,6 +316,14 @@ def test_one_per_turn_function_decides_routing_endpoint_and_lint():
     lint = outcome.fields["voiceLint"]
     assert lint == multi_agent.voice_lint.stamp(
         AVA_ANSWER, speaker="Ava", others=["Ben"])
+    # A reasoning line the lint would flag never reaches it.
+    raw = "Ben: I agree with Ava.\n</think>\n\nFinal answer: reverse."
+    flagged = multi_agent.play_turn(scenario, turn, 0, text=raw, thinking=True,
+                                    finish="stop", opens_in_prompt=True)
+    answer_only = multi_agent.voice_lint.stamp(
+        "Final answer: reverse.", speaker="Ava", others=["Ben"])
+    assert multi_agent.voice_lint.stamp(raw, speaker="Ava", others=["Ben"]) != answer_only
+    assert flagged.fields["voiceLint"] == answer_only
     # Replaying the record gives the same routing.
     record = {"output": outcome.fields["output"],
               "reasoning": outcome.fields["reasoning"],
