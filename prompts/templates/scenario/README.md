@@ -9,7 +9,16 @@ Key fields:
 
 - `agents[]` — `id`, `name`, `baseModelID`, `systemPrompt`; optionally
   `variantArtifactPath` + `variantArtifactHash` to run an agent as a
-  saved model variant (steered/adapted) instead of the stock model.
+  saved model variant (steered/adapted) instead of the stock model, and
+  `temperature` to give that seat its own sampling temperature (0 or
+  more). A seat without one runs at the study's temperature; an agent
+  file's temperature is never used.
+- `includeOwnReasoning` — OPTIONAL, default `false`. A seat that thinks
+  passes on its answer and never its reasoning: other seats, and
+  `{{outputs.<label>}}`, get the answer alone. With this `true`, a seat's
+  own earlier turns (its routed transcript entries and its own contract
+  inputs) come back to it with the reasoning it wrote. A turn whose
+  reasoning was cut off before it finished passes nothing on.
 - `turns[]` — `speakerAgentID` names who generates;
   `promptTemplate` is the turn's instruction; `routing` is one of
   `all` | `speakerOnly` | `selected` | `none` (with `routedAgentIDs`
@@ -36,8 +45,18 @@ Key fields:
   INSTRUCT the format — the declaration and the instruction travel
   together in this one reviewed file, as they do on the Review turn here.
   A malformed declaration (unknown kind, empty marker, a choice with no
-  vocabulary) refuses the whole scenario at load.
-- `temperature` / `maxTokens` — scenario-wide generation settings.
+  vocabulary) refuses the whole scenario at load. A thinking seat's
+  endpoint is read from its answer, never its reasoning; the stamp says
+  `markerInReasoning: true` when the reasoning also wrote the marker.
+- `temperature` / `maxTokens` — scenario-wide generation settings for a
+  panel run on its own. A study that runs the panel sets the temperature of
+  every seat that declares none. Whether a seat thinks is its occupant's: a
+  cast agent's own level (its file's `reasoningEffort`, else its older
+  thinking switch), or the study's `reasoningEffort` for a seat cast as
+  baseline. A thinking seat gets the study's `reasoningMaxTokens` when the
+  study declares one. A cast agent meets the agent rules (`panel check`
+  names a seat whose agent breaks one), less an agent arm's answer-token and
+  revision rules.
 
 ## Where the file lives in a workspace
 
