@@ -62,8 +62,8 @@ def admit_panel_identity(tree):
 
 
 #: Top-level names the panel answer-routing change adds to multi_agent (public
-#: issue #15, FR6 stream A as integrated with stream B; NEEDS MAINTAINER
-#: APPROVAL). Each is exercised by Server/tests/test_panel_reasoning.py,
+#: issue #15, FR6 stream A as integrated with stream B; approved by the
+#: maintainer 2026-11-09). Each is exercised by Server/tests/test_panel_reasoning.py,
 #: Server/tests/test_panel_agent_wiring.py, and the reasoning-split fixture.
 #: After the integration, seat_reasoning reads an agent's level through
 #: agent_identity.variant_reasoning_effort, and panel_seat_thinks is the panel
@@ -112,7 +112,7 @@ def _drop_last_arg(function, name, annotation):
 
 def admit_panel_answer_routing(tree):
     """Remove exactly the reviewed panel answer-routing change (public issue
-    #15; FR6 stream A; NEEDS MAINTAINER APPROVAL) from the current
+    #15; FR6 stream A; approved by the maintainer 2026-11-09) from the current
     multi_agent tree, asserting each added or changed statement's form, so
     every other body is still compared."""
     top = {getattr(n, 'name', None) or getattr(getattr(n, 'targets', [None])[0], 'id', None): n
