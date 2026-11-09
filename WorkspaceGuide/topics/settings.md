@@ -167,8 +167,11 @@ does not begin with); a branch, a tag, a shortened hash the other begins with,
 or an agent that records no revision gets an `agentRevisionNotChecked` note
 instead. To fix an arm, make the corrected agent and put it in the arm's place
 with `attach-agent <name> --replace <arm> …`, which replaces that arm on a
-draft; for a thinking agent beside an answer-token instrument, declare
-instruments that read the answer after the reasoning instead. A study frozen
+draft and gives it the new agent's name (it refuses when another arm already
+has that name or file). For a thinking agent beside an answer-token
+instrument, either declare instruments that read the answer after the
+reasoning, or replace the arm with the agent made with `--reasoning-effort
+off`. A study frozen
 before these rules verifies with a `refusedWhenRun` note and is refused when
 its run is submitted or started; duplicate it, then repair the duplicate the
 same way. Each refusal's repair names the commands.

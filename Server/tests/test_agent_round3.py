@@ -72,6 +72,9 @@ def test_verify_refuses_differing_commits_and_notes_the_rest(tmp_path, revision,
         assert violations == []
         assert len(notes) == 1 and phrase in notes[0]
         assert "did not check" in notes[0] and REVISION in notes[0]
+        # Agents saved today can carry none too (an editor field left empty,
+        # a promotion from an unpinned draft), so no note blames their age.
+        assert "saved before" not in notes[0]
 
 
 def test_the_client_verify_carries_the_revision_note(tmp_path, capsys, monkeypatch):
@@ -139,18 +142,25 @@ def test_replace_puts_the_agent_in_the_arms_place(tmp_path, capsys):
     assert code != 0 and document["error"]["code"] == "statusImmutable"
 
 
-def _commands(repair: str) -> list[str]:
-    """Each client command a repair names, as written."""
-    return re.findall(r"steerlab (.+?)(?= \(or the app's agent editor\)|, then |; then |$)",
-                      repair)
+def _commands(repair: str, choice: int = 0) -> list[str]:
+    """Each client command a repair names, as written: its steps in order
+    (``; then``), taking alternative ``choice`` where a step offers several
+    (``; or``)."""
+    commands = []
+    for step in repair.split("; then "):
+        alternatives = step.split("; or ")
+        chosen = alternatives[min(choice, len(alternatives) - 1)]
+        commands += re.findall(
+            r"steerlab (.+?)(?= \(or the app's agent editor\)|, then |$)", chosen)
+    return commands
 
 
-def _follow(root, capsys, repair: str, *, extra: list[str]) -> None:
+def _follow(root, capsys, repair: str, *, extra: list[str], choice: int = 0) -> None:
     """Run a repair's commands as written, filling only its placeholders: the
     new agent's name, the flags the ellipsis leaves open, and the digests the
     earlier commands return."""
     made = None
-    for command in _commands(repair):
+    for command in _commands(repair, choice):
         words = shlex.split(command.replace(" …", ""))
         if words[:2] == ["agent", "create"]:
             words = [w if w != "<new-name>" else "fixed" for w in words] + extra
@@ -193,8 +203,13 @@ def _broken_study(root, capsys, case: str) -> None:
 
 
 @pytest.mark.parametrize("frozen", [False, True])
-@pytest.mark.parametrize("case", ["level", "revision", "instrument"])
-def test_each_repair_followed_as_written_clears_the_refusal(tmp_path, capsys, case, frozen):
+@pytest.mark.parametrize("case, choice", [("level", 0), ("revision", 0), ("instrument", 0),
+                                          ("instrument", 1)])
+def test_each_repair_followed_as_written_clears_the_refusal(tmp_path, capsys, case, choice,
+                                                            frozen):
+    """Each alternative a repair offers clears it alone: for a thinking agent
+    beside an answer-token instrument, either new instruments (0) or an agent
+    remade with thinking off (1)."""
     _broken_study(tmp_path, capsys, case)
     if frozen:
         raw = store.load_raw("study", str(tmp_path))
@@ -206,11 +221,10 @@ def test_each_repair_followed_as_written_clears_the_refusal(tmp_path, capsys, ca
     assert refusal is not None
     repair = refusal.repair_action
     assert ("experiment duplicate study study-v2" in repair) is frozen
+    assert "--replace" in repair
     if case == "instrument":
-        assert "set-protocol" in repair and "attach-agent" not in repair
-    else:
-        assert "--replace" in repair
-    _follow(tmp_path, capsys, repair, extra=[])
+        assert "set-protocol" in repair and "--reasoning-effort off" in repair
+    _follow(tmp_path, capsys, repair, extra=[], choice=choice)
     repaired = Manifest.load("study-v2" if frozen else "study", str(tmp_path))
     assert study_admission.agent_arm_refusal(repaired, str(tmp_path)) is None
     assert agent_identity.manifest_arm_problems(repaired, str(tmp_path)) == []
@@ -295,6 +309,11 @@ def test_an_edited_agent_names_what_it_was_edited_from():
                        "sweep-1) and changed its thinking level and persona. No reason "
                        "was stated.")
     assert "no sweep selected" not in summary
+    # Saved as a new agent with nothing changed: a copy, not an edit.
+    record["changed"] = []
+    copied = agent_identity.agent_origin(artifact)["summary"]
+    assert "saved it as an unchanged copy of an agent experiment promote made" in copied
+    assert "edited" not in copied
     record["editedFrom"] = {"kind": "handmade", "handmade": {"madeWith": "agent create"}}
     record["changed"] = ["injections", "bandWidth", "temperature"]
     assert ("edited it from an agent made by hand and changed its steering, layer band, "
@@ -381,17 +400,52 @@ def test_a_reason_naming_a_home_folder_is_kept_and_warned(tmp_path, capsys):
 # --- R3 and the one budget predicate --------------------------------------------------
 
 
-def test_a_cast_agent_meets_the_rules_but_the_answer_token_one():
+def test_a_cast_agent_meets_the_rules_but_the_answer_token_and_revision_ones():
+    """A panel loads each seat at its own revision, so a seat agent made for
+    another commit is legitimate; the level rule still applies."""
     capabilities = prompt_render.capabilities_for(MODEL)
-    thinking = {"name": "s", "baseModelID": MODEL, "reasoningEffort": "medium"}
+    thinking = {"name": "s", "baseModelID": MODEL, "reasoningEffort": "medium",
+                "baseRevision": OTHER}
     problems = agent_identity.cast_agent_problems(
-        "seat 'judge'", thinking, model_id=MODEL, model_revision=REVISION,
-        capabilities=capabilities, root=None)
+        "seat 'judge'", thinking, model_id=MODEL, capabilities=capabilities, root=None)
     assert problems and problems[0].startswith("seat 'judge': ")
-    legacy = {"name": "s", "baseModelID": QWEN, "qwenThinkingEnabled": True}
+    assert not any("made for revision" in p for p in problems)
+    legacy = {"name": "s", "baseModelID": QWEN, "qwenThinkingEnabled": True,
+              "baseRevision": OTHER}
     assert agent_identity.cast_agent_problems(
-        "seat 'judge'", legacy, model_id=QWEN, model_revision=REVISION,
+        "seat 'judge'", legacy, model_id=QWEN,
         capabilities=prompt_render.capabilities_for(QWEN), root=None) == []
+
+
+def test_replace_refuses_to_drop_another_arm_and_names_the_rename(tmp_path, capsys):
+    store.create("study", model_id=MODEL, revision=REVISION, root=str(tmp_path))
+    for name in ("first", "second"):
+        assert _attach(tmp_path, capsys, *_agent_file(tmp_path, name))[0] == 0
+    # The agent "first" is attached already: putting it in second's place
+    # would drop arm first as well.
+    first_path = "runs/model-variants/first/model-variant.json"
+    code, document = _attach(tmp_path, capsys, first_path,
+                             base.sha(tmp_path / first_path), "--replace", "second")
+    assert code == 65 and "would drop that arm too" in document["error"]["reason"]
+    assert "--replace first" in document["error"]["repairAction"]
+    arms = [a["name"] for a in store.load_raw("study", str(tmp_path))["variantConditions"]]
+    assert arms == ["first", "second"]
+    code, document = _attach(tmp_path, capsys, *_agent_file(tmp_path, "fixed"),
+                             "--replace", "second")
+    assert code == 0, document
+    assert document["result"]["replaced"]["renamed"] is True
+    assert "Arm second is now arm fixed" in document["message"]
+
+
+def test_a_promotion_whose_sweep_run_cannot_be_read_says_why(tmp_path):
+    from steerlab_server.experiment import promote
+    with pytest.raises(promote.PromoteError, match="names no sweep run") as unnamed:
+        promote._sweep_run_level(None, "s", "c", str(tmp_path))
+    assert "None" not in str(unnamed.value)
+    with pytest.raises(promote.PromoteError,
+                       match="is not in this workspace's runs/ folder") as absent:
+        promote._sweep_run_level("20260707-exp-s-sweep", "s", "c", str(tmp_path))
+    assert "fetch the sweep's results into runs/" in absent.value.repair_action
 
 
 def test_both_budget_gates_ask_the_one_predicate(tmp_path, monkeypatch):

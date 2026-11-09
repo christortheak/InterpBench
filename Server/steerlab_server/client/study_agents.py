@@ -100,11 +100,29 @@ def attach(name: str, artifact: str, *, root: Path, expected: str, artifact_sha2
             if index == position:
                 continue
             if existing['name'] == arm['name'] or existing['artifactPath'] == arm['artifactPath']:
+                if replace is not None:
+                    # Replacing one arm never drops another one silently.
+                    raise ExperimentStoreError(
+                        f"Study {name} already has an agent arm, {existing['name']}, with "
+                        f"the name or the file of agent {arm['name']}, besides arm "
+                        f"{replace}; replacing {replace} with it would drop that arm too.",
+                        gate="studyDeclaration",
+                        repair=(f"Replace arm {existing['name']} instead (--replace "
+                                f"{existing['name']}), or make the corrected agent under a "
+                                "name no attached arm has."))
                 position -= index < position
                 continue
             kept.append(existing)
         document['variantConditions'] = kept[:position] + [arm] + kept[position:]
         store.save_raw(document, str(root))
         from ..experiment.agent_identity import agent_origin
-        return {**files.snapshot(name, root), "changed": document.source_digest != expected,
-                "agent": agent_origin(arm["artifact"])}
+        result = {**files.snapshot(name, root), "changed": document.source_digest != expected,
+                  "agent": agent_origin(arm["artifact"])}
+        if replace is not None:
+            # The arm takes its new agent's name; say so when that renames it.
+            result["replaced"] = {"arm": replace, "now": arm["name"],
+                                  "renamed": replace != arm["name"]}
+            if replace != arm["name"]:
+                result["replaced"]["note"] = (f"Arm {replace} is now arm {arm['name']}: an "
+                                              "agent arm takes its agent's name.")
+        return result

@@ -114,6 +114,9 @@ import Testing
                     #expect(violations.isEmpty, "\(violations)")
                     #expect(notes.count == 1 && notes[0].contains(phrase), "\(notes)")
                     #expect(notes.first?.contains("did not check") == true)
+                    // Agents saved today can carry none too, so no note
+                    // blames their age.
+                    #expect(notes.first?.contains("saved before") == false)
                 }
             }
         }
@@ -173,20 +176,26 @@ import Testing
     }
 
     /// Each command-line command a repair names, as written.
-    private func commands(_ repair: String) -> [String] {
-        let pattern = #"steerlab-cli (.+?)(?= \(or the app's agent editor\)|, then |; then |$)"#
+    /// Each command a repair names, as written: its steps in order (`; then`),
+    /// taking alternative `choice` where a step offers several (`; or`).
+    private func commands(_ repair: String, choice: Int = 0) -> [String] {
+        let pattern = #"steerlab-cli (.+?)(?= \(or the app's agent editor\)|, then |$)"#
         let regex = try! NSRegularExpression(pattern: pattern)
-        let range = NSRange(repair.startIndex..., in: repair)
-        return regex.matches(in: repair, range: range).compactMap {
-            Range($0.range(at: 1), in: repair).map { String(repair[$0]) }
+        return repair.components(separatedBy: "; then ").flatMap { step -> [String] in
+            let alternatives = step.components(separatedBy: "; or ")
+            let chosen = alternatives[min(choice, alternatives.count - 1)]
+            let range = NSRange(chosen.startIndex..., in: chosen)
+            return regex.matches(in: chosen, range: range).compactMap {
+                Range($0.range(at: 1), in: chosen).map { String(chosen[$0]) }
+            }
         }
     }
 
     /// Runs a repair's commands as written, filling only its placeholders:
     /// the new agent's name and the digests the earlier commands return.
-    private func follow(_ root: URL, _ repair: String) async throws {
+    private func follow(_ root: URL, _ repair: String, choice: Int = 0) async throws {
         var made: (path: String, sha256: String)?
-        for command in commands(repair) {
+        for command in commands(repair, choice: choice) {
             var words = command.replacingOccurrences(of: " …", with: "")
                 .split(separator: " ").map(String.init)
             let namespace = words.removeFirst()
@@ -242,9 +251,15 @@ import Testing
             to: ExperimentRepository(workspaceRoot: root).manifestURL("study"))
     }
 
-    @Test(arguments: [("level", false), ("level", true), ("revision", false),
-                      ("revision", true), ("instrument", false), ("instrument", true)])
-    func eachRepairFollowedAsWrittenClearsTheRefusal(rule: String, frozen: Bool) async throws {
+    /// Each alternative a repair offers clears it alone: for a thinking agent
+    /// beside an answer-token instrument, either new instruments (choice 0)
+    /// or an agent remade with thinking off (choice 1).
+    @Test(arguments: [("level", false, 0), ("level", true, 0), ("revision", false, 0),
+                      ("revision", true, 0), ("instrument", false, 0), ("instrument", true, 0),
+                      ("instrument", false, 1), ("instrument", true, 1)])
+    func eachRepairFollowedAsWrittenClearsTheRefusal(
+        rule: String, frozen: Bool, choice: Int
+    ) async throws {
         try await withWorkspace { root in
             try brokenStudy(root, rule, frozen: frozen)
             let manifest = try ExperimentStore.load(name: "study")
@@ -252,8 +267,12 @@ import Testing
                 ModelVariantArtifact.armRefusal(manifest, workspaceRoot: root))
             let repair = try #require(refusal.lifecycleRefusal?.repairAction)
             #expect(repair.contains("experiment duplicate study study-v2") == frozen)
-            #expect(repair.contains(rule == "instrument" ? "set-instruments" : "--replace"))
-            try await follow(root, repair)
+            #expect(repair.contains("--replace"))
+            if rule == "instrument" {
+                #expect(repair.contains("set-instruments")
+                    && repair.contains("--reasoning-effort off"))
+            }
+            try await follow(root, repair, choice: choice)
             let repaired = try ExperimentStore.load(name: frozen ? "study-v2" : "study")
             #expect(ModelVariantArtifact.armRefusal(repaired, workspaceRoot: root) == nil,
                     "\(ModelVariantArtifact.manifestArmProblems(repaired, workspaceRoot: root))")
@@ -478,17 +497,123 @@ import Testing
             .medium, modelID: Self.qwen, capabilities: rejecting) == .medium)
     }
 
-    @Test func aCastAgentMeetsTheRulesButTheAnswerTokenOne() throws {
+    /// A panel loads each seat at its own revision, so a seat agent made for
+    /// another commit is legitimate; the level rule still applies.
+    @Test func aCastAgentMeetsTheRulesButTheAnswerTokenAndRevisionOnes() throws {
         let root = FileManager.default.temporaryDirectory
-        let thinking = try decode(["reasoningEffort": "medium"])
+        let thinking = try decode(["reasoningEffort": "medium", "baseRevision": Self.other])
         let problems = thinking.castAgentProblems(
-            label: "seat 'judge'", modelID: Self.model, modelRevision: Self.revision,
-            capabilities: nil, workspaceRoot: root)
+            label: "seat 'judge'", modelID: Self.model, capabilities: nil, workspaceRoot: root)
         #expect(problems.first?.hasPrefix("seat 'judge': ") == true)
-        let legacy = try decode(["baseModelID": Self.qwen, "qwenThinkingEnabled": true])
+        #expect(!problems.contains { $0.contains("made for revision") })
+        let legacy = try decode([
+            "baseModelID": Self.qwen, "qwenThinkingEnabled": true, "baseRevision": Self.other])
         #expect(legacy.castAgentProblems(
-            label: "seat 'judge'", modelID: Self.qwen, modelRevision: Self.revision,
-            capabilities: nil, workspaceRoot: root).isEmpty)
+            label: "seat 'judge'", modelID: Self.qwen, capabilities: nil,
+            workspaceRoot: root).isEmpty)
+    }
+
+    // MARK: - Round 4
+
+    @Test func replaceRefusesToDropAnotherArmAndNamesTheRename() async throws {
+        try await withWorkspace { root in
+            _ = try ExperimentStore.create(
+                name: "study", description: "", modelID: Self.model,
+                modelRevision: Self.revision)
+            var files: [String: (path: String, sha256: String)] = [:]
+            for name in ["first", "second", "fixed"] {
+                let file = try agentFile(root, name)
+                files[name] = (file.path, file.sha256)
+            }
+            func attach(_ name: String, _ extra: [String] = []) async throws -> ExperimentCLIOutcome {
+                let file = try #require(files[name])
+                return await invoke("experiment", [
+                    "attach-agent", "study", "--artifact", file.path,
+                    "--artifact-sha256", file.sha256,
+                    "--manifest-sha256", try manifestDigest(root)] + extra)
+            }
+            #expect(try await attach("first").envelope.exitCode == 0)
+            #expect(try await attach("second").envelope.exitCode == 0)
+            // The agent "first" is attached already: putting it in second's
+            // place would drop arm first as well.
+            let clash = try await attach("first", ["--replace", "second"])
+            #expect(clash.envelope.exitCode == 65)
+            #expect(clash.envelope.error?.reason.contains("would drop that arm too") == true)
+            #expect(clash.envelope.error?.repairAction.contains("--replace first") == true)
+            #expect(try ExperimentStore.load(name: "study").variantConditions.map(\.name)
+                == ["first", "second"])
+            let renamed = try await attach("fixed", ["--replace", "second"])
+            #expect(renamed.envelope.exitCode == 0, "\(renamed.envelope)")
+            guard case .object(let replaced)? = renamed.envelope.result?["replaced"] else {
+                Issue.record("no replaced block: \(renamed.envelope)"); return
+            }
+            #expect(replaced["renamed"] == .bool(true) && replaced["now"] == .string("fixed"))
+            #expect(renamed.envelope.message.contains("Arm second is now arm fixed"))
+        }
+    }
+
+    @Test func anUnchangedCopyAndAChainOfEditsKeepTheirOrigin() throws {
+        var promoted = try decode([:])
+        promoted.promotion = .init(
+            experiment: "tone", experimentHash: "h", promotedAt: "t", promotedBy: "criterion",
+            sweepRun: "sweep-1", substrate: "swift-mlx", appVersion: "0")
+        var copy = promoted
+        copy.promotion = nil
+        copy = copy.withEditorRecordIfUnrecorded(editedFrom: (promoted, "c"))
+        #expect(copy.origin.summary.contains(
+            "saved it as an unchanged copy of an agent experiment promote made from study tone"))
+        #expect(!copy.origin.summary.contains("edited"))
+        // An edit of an edit keeps the sweep origin and every recorded change.
+        var first = copy
+        first.handmade = nil
+        first.systemPrompt = "Be brief."
+        first = first.withEditorRecordIfUnrecorded(editedFrom: (copy, "d"))
+        var second = first
+        second.handmade = nil
+        second.bandWidth = 3
+        second = second.withEditorRecordIfUnrecorded(editedFrom: (first, "e"))
+        let record = try #require(second.handmade?.agentRecordObject)
+        let origin = try #require(record["editedFrom"]?.agentRecordObject)
+        #expect(origin["kind"] == .string("swept") && origin["sweepRun"] == .string("sweep-1"))
+        #expect(origin["artifactFileSHA256"] == .string("e"))
+        #expect(record["changed"] == .array([.string("bandWidth"), .string("systemPrompt")]))
+        #expect(second.origin.summary.contains("edited it from an agent experiment promote "
+            + "made from study tone (sweep run sweep-1) and changed its layer band and persona"))
+    }
+
+    @Test func aPromotionWhoseSweepRunCannotBeReadSaysWhy() async throws {
+        try await withWorkspace { _ in
+            do {
+                _ = try AgentPromotion.sweepRunLevel(
+                    sweepRun: nil, experimentName: "s", concept: "c")
+                Issue.record("expected a refusal")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains("names no sweep run"))
+                #expect(!error.reason.contains("None"))
+            }
+            do {
+                _ = try AgentPromotion.sweepRunLevel(
+                    sweepRun: "20260707-exp-s-sweep", experimentName: "s", concept: "c")
+                Issue.record("expected a refusal")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains("is not in this workspace's runs/ folder"))
+                #expect(error.lifecycleRefusal?.repairAction.contains(
+                    "fetch the sweep's results into runs/") == true)
+            }
+        }
+    }
+
+    @Test func aPinnedReuseRepairNamesWhereAPinnedPromotionRuns() {
+        let pinned = AgentPromotion.promoteCommand(
+            "pr", "fear", agentName: "pr-fear-agent-medium", cell: nil, overrideReason: nil,
+            pins: .init(sweepRun: "run-1", experimentHash: "e", winningCell: (layer: 3, alpha: 0.4)))
+        #expect(pinned.hasPrefix("this command line cannot pin a promotion to a sweep run"))
+        #expect(pinned.contains("steerlab-server experiment promote pr fear --agent-name "
+            + "pr-fear-agent-medium --sweep-run run-1 --expect-cell 3:0.4 --expect-epoch e "
+            + "--root <workspace>"))
+        #expect(AgentPromotion.promoteCommand(
+            "pr", "fear", agentName: "a", cell: nil, overrideReason: nil, pins: nil)
+            == "steerlab-cli experiment promote pr fear --agent-name a")
     }
 
     @Test func theBudgetGatesAskTheOnePredicate() throws {

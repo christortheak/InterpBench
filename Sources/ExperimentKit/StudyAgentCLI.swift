@@ -32,10 +32,24 @@ enum StudyAgentCLI {
             let studySHA = flag("--manifest-sha256") else { throw usage() }
         let reviewed = try DraftAuthoringSnapshot.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: studySHA)
         let artifact = try StudyAgentAuthoring.reviewArtifact(path: path, workspaceRoot: workspaceRoot, expectedFileSHA256: artifactSHA)
+        let replaced = flag("--replace")
         let saved = try StudyAgentAuthoring.attach(
-            artifact, reviewed: reviewed, replacing: flag("--replace"))
+            artifact, reviewed: reviewed, replacing: replaced)
         var attached = try result(StudyAuthoringHTTP.Document(saved), message: "Agent attached to reviewed draft.",
             changed: saved.file.sha256 != reviewed.file.sha256, sink: sink)
+        if let replaced {
+            // The arm takes its new agent's name; say so when that renames it.
+            // Python twin: `study_agents.attach`'s `replaced`.
+            let now = artifact.record.artifact.name
+            attached.payload["replaced"] = .object([
+                "arm": .string(replaced), "now": .string(now), "renamed": .bool(replaced != now),
+            ])
+            if replaced != now {
+                let note = "Arm \(replaced) is now arm \(now): an agent arm takes its agent's name."
+                sink.err(note + "\n")
+                attached.message += " " + note
+            }
+        }
         // Swept or handmade, and its thinking level, said on arrival.
         attached.payload["agent"] = try JSONDecoder().decode(
             JSONValue.self, from: JSONEncoder().encode(artifact.record.artifact.origin))

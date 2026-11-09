@@ -893,15 +893,30 @@ def _sweep_run_level(sweep_run, name: str, concept: str,
     snapshot, or a level outside the vocabulary: the agent would carry a level
     no cell was measured at. Swift twin: ``AgentPromotion.sweepRunLevel``."""
     from . import prompt_render
-    snapshot = None
-    if isinstance(sweep_run, str) and sweep_run:
-        _require_plain_run_name(sweep_run, "the promotion's sweep run")
-        try:
-            with open(os.path.join(paths.runs_directory(root), sweep_run,
-                                   "experiment.json"), encoding="utf-8") as handle:
-                snapshot = json.load(handle)
-        except (OSError, ValueError):
-            snapshot = None
+    if not isinstance(sweep_run, str) or not sweep_run:
+        # A hand-written or legacy selection that names no sweep run.
+        raise PromoteError(
+            "the sweep evidence this promotion uses names no sweep run, so the "
+            "thinking level the sweep's cells ran at cannot be read, and the agent "
+            "would carry a level no cell was measured at",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=_sweep_again_repair(name, concept))
+    _require_plain_run_name(sweep_run, "the promotion's sweep run")
+    run_dir = os.path.join(paths.runs_directory(root), sweep_run)
+    if not os.path.isdir(run_dir):
+        raise PromoteError(
+            f"sweep run '{sweep_run}' is not in this workspace's runs/ folder, so its "
+            "experiment.json, which records the thinking level the sweep's cells ran "
+            "at, cannot be read",
+            gate=lifecycle_gates.PROMOTION_EVIDENCE,
+            repair=("fetch the sweep's results into runs/ (a bundle-submitted sweep "
+                    "returns them in its results tarball) and promote again; or "
+                    + _sweep_again_repair(name, concept)))
+    try:
+        with open(os.path.join(run_dir, "experiment.json"), encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+    except (OSError, ValueError):
+        snapshot = None
     if not isinstance(snapshot, dict):
         raise PromoteError(
             f"sweep run '{sweep_run}' holds no readable experiment.json, so the "

@@ -414,7 +414,7 @@ def test_promotion_takes_the_level_the_sweep_ran_at(tmp_path):
     assert level("declared") == ("medium", True)
     assert level("legacy") == (None, True)       # the bytes such a sweep always promoted
     assert level("off") == (None, False)
-    with pytest.raises(promote.PromoteError, match="unknown"):
+    with pytest.raises(promote.PromoteError, match="not in this workspace's runs/ folder"):
         level("missing")
 
 

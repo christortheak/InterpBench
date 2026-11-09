@@ -1982,6 +1982,16 @@ public enum ExperimentStore {
         var kept: [ExperimentManifest.VariantCondition] = []
         for (index, existing) in manifest.variantConditions.enumerated() where index != position {
             if existing.artifactPath == condition.artifactPath || existing.name == condition.name {
+                if let arm {
+                    // Replacing one arm never drops another one silently.
+                    throw ExperimentError.refusing(.studyDeclaration,
+                        "Study \(manifest.name) already has an agent arm, \(existing.name), with "
+                            + "the name or the file of agent \(condition.name), besides arm "
+                            + "\(arm); replacing \(arm) with it would drop that arm too.",
+                        repair: "Replace arm \(existing.name) instead (--replace "
+                            + "\(existing.name)), or make the corrected agent under a name no "
+                            + "attached arm has.")
+                }
                 if index < position { position -= 1 }
                 continue
             }

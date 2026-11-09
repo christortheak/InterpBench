@@ -798,8 +798,10 @@ extension ModelVariantArtifact {
     }
 
     /// What an editor record says of the agent it was edited from
-    /// (`editedFrom`) and the fields the researcher changed. Server twin:
-    /// `agent_identity.edited_from_phrase`, the same sentence.
+    /// (`editedFrom`: the EARLIEST origin of a chain of edits) and the fields
+    /// the researcher changed along the way; none changed is a copy saved
+    /// unchanged. Server twin: `agent_identity.edited_from_phrase`, the same
+    /// sentence.
     static func editedFromPhrase(_ edited: [String: JSONValue], changed: JSONValue?) -> String {
         let source: String
         switch edited["kind"]?.agentRecordString {
@@ -819,8 +821,10 @@ extension ModelVariantArtifact {
             named = Set(items.compactMap(\.agentRecordString))
         }
         let fields = editableFieldWords.filter { named.contains($0.field) }.map(\.words)
-        return "The researcher edited it from \(source)"
-            + (fields.isEmpty ? "." : " and changed its \(listed(fields)).")
+        guard !fields.isEmpty else {
+            return "The researcher saved it as an unchanged copy of \(source)."
+        }
+        return "The researcher edited it from \(source) and changed its \(listed(fields))."
     }
 
     /// The fields of this agent that differ from `source`, by name, in the
@@ -888,36 +892,57 @@ extension ModelVariantArtifact {
     /// What an editor record keeps of the agent an edit started from: its
     /// kind, its file's SHA-256, and for a promoted agent the study and sweep
     /// run (a handmade agent's own record, which names no paths, travels
-    /// whole). Never a path. Server twin: read by
-    /// `agent_identity.edited_from_phrase`.
+    /// whole). Never a path. When `source` was itself edited in the editor,
+    /// its own `editedFrom` origin is carried forward, so a chain that began
+    /// with a promotion still reads as one; the SHA-256 is the immediate
+    /// source's file. Server twin: read by `agent_identity.edited_from_phrase`.
     public static func editedFromRecord(
         _ source: ModelVariantArtifact, fileSHA256: String?
     ) -> JSONValue {
-        var record: [String: JSONValue] = ["kind": .string(source.kind.rawValue)]
-        if let fileSHA256 { record["artifactFileSHA256"] = .string(fileSHA256) }
-        if let promotion = source.promotion {
-            if !promotion.experiment.isEmpty { record["experiment"] = .string(promotion.experiment) }
-            if let run = promotion.sweepRun, !run.isEmpty { record["sweepRun"] = .string(run) }
-        } else if let handmade = source.handmade, handmade.agentRecordObject != nil {
-            record["handmade"] = handmade
+        var record: [String: JSONValue]
+        if let earlier = source.handmade?.agentRecordObject?["editedFrom"]?.agentRecordObject {
+            record = earlier
+            record["artifactFileSHA256"] = nil
+        } else {
+            record = ["kind": .string(source.kind.rawValue)]
+            if let promotion = source.promotion {
+                if !promotion.experiment.isEmpty {
+                    record["experiment"] = .string(promotion.experiment)
+                }
+                if let run = promotion.sweepRun, !run.isEmpty { record["sweepRun"] = .string(run) }
+            } else if let handmade = source.handmade, handmade.agentRecordObject != nil {
+                record["handmade"] = handmade
+            }
         }
+        if let fileSHA256 { record["artifactFileSHA256"] = .string(fileSHA256) }
         return .object(record)
     }
 
     /// This agent with the editor's record when it carries neither record;
     /// unchanged otherwise. `source` is the agent the edit started from and
-    /// its file's SHA-256, when there was one.
+    /// its file's SHA-256, when there was one. The fields changed are this
+    /// edit's and, when `source` was itself edited, the ones its record names:
+    /// what changed since the earliest origin, as each edit recorded it.
     public func withEditorRecordIfUnrecorded(
         at date: Date = Date(), editedFrom source: (ModelVariantArtifact, String?)? = nil
     ) -> ModelVariantArtifact {
         guard promotion == nil, handmade == nil else { return self }
         var recorded = self
+        var changed: [String] = []
+        if let source {
+            var named = Set(changedFields(from: source.0))
+            if case .array(let earlier)? = source.0.handmade?.agentRecordObject?["changed"] {
+                named.formUnion(earlier.compactMap(\.agentRecordString))
+            }
+            changed = Self.editableFieldWords.map(\.field).filter(named.contains)
+        }
         recorded.handmade = Self.editorRecord(
             at: date,
             editedFrom: source.map { Self.editedFromRecord($0.0, fileSHA256: $0.1) },
-            changed: source.map { changedFields(from: $0.0) } ?? [])
+            changed: changed)
         return recorded
     }
+
 
     // MARK: - What reached the renderer
 
@@ -1020,9 +1045,9 @@ extension ModelVariantArtifact {
         guard let revision = baseRevision,
             !revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
-            return "\(label): the agent records no model revision (agents saved before agents "
-                + "recorded one carry none), so SteerLab did not check it against revision "
-                + "\(studyRevision) of \(model), which the study pins."
+            return "\(label): the agent records no model revision, so SteerLab did not check "
+                + "it against revision \(studyRevision) of \(model), which the study pins. "
+                + "Make the agent with the study's commit to have it checked."
         }
         guard Self.compareRevisions(revision, studyRevision) == .unchecked else { return nil }
         let moving = [revision, studyRevision].filter {
@@ -1113,17 +1138,18 @@ extension ModelVariantArtifact {
         ).map(\.0)
     }
 
-    /// The same rules for an agent a panel casts in a seat, minus the
-    /// answer-token rule (a panel reads its seats' generated turns). `label`
-    /// names the seat in each sentence (for example `"seat 'judge'"`). For a
-    /// panel's verify to call per cast agent. Server twin:
-    /// `agent_identity.cast_agent_problems`.
+    /// The same rules for an agent a panel casts in a seat, minus two: the
+    /// answer-token rule (a panel reads its seats' generated turns), and the
+    /// revision rule, because a panel loads each seat at the seat's own
+    /// revision (`MultiAgentRunner`), so a seat agent at another commit than
+    /// the study's is legitimate there. `label` names the seat in each
+    /// sentence (for example `"seat 'judge'"`). For a panel's verify to call
+    /// per cast agent. Server twin: `agent_identity.cast_agent_problems`.
     public func castAgentProblems(
-        label: String, modelID: String, modelRevision: String?,
-        capabilities: ModelCapabilities?, workspaceRoot: URL
+        label: String, modelID: String, capabilities: ModelCapabilities?, workspaceRoot: URL
     ) -> [String] {
         findings(
-            label: label, modelID: modelID, modelRevision: modelRevision,
+            label: label, modelID: modelID, modelRevision: nil,
             outcomeInstruments: [], capabilities: capabilities, workspaceRoot: workspaceRoot
         ).map(\.0)
     }
@@ -1239,13 +1265,24 @@ extension ModelVariantArtifact {
                 + "attach-agent \(target) --replace \(arm) --artifact <path> --artifact-sha256 "
                 + "<digest> --manifest-sha256 <digest>")
         }
-        if fixes.values.contains(where: { $0.contains(.instrument) }) {
+        let thinking = arms.filter { fixes[$0]?.contains(.instrument) == true }
+        if !thinking.isEmpty {
+            // Two ways out, either one enough: read the answer after the
+            // reasoning, or give each such arm an agent that does not think.
             let remaining = (manifest.outcomeInstruments ?? []).filter {
                 !answerTokenInstruments.contains($0)
             }
             steps.append("read the answers after the agents' reasoning: \(program) experiment "
                 + "set-instruments \(target) "
-                + (remaining.isEmpty ? "sampledText" : remaining.joined(separator: ",")))
+                + (remaining.isEmpty ? "sampledText" : remaining.joined(separator: ","))
+                + "; or attach agents that do not think instead: "
+                + thinking.map { arm in
+                    "for arm '\(arm)', \(program) agent create <new-name> --model "
+                        + "\(manifest.modelID) --revision \(revision) --reasoning-effort off … "
+                        + "(or the app's agent editor), then \(program) experiment attach-agent "
+                        + "\(target) --replace \(arm) --artifact <path> --artifact-sha256 "
+                        + "<digest> --manifest-sha256 <digest>"
+                }.joined(separator: ", then "))
         }
         return steps.joined(separator: "; then ")
     }

@@ -58,4 +58,10 @@ def run(invocation):
         else:
             result = {'document': study_panels.validate(design_files.decode(data)), 'fileSHA256': digest_bytes(data), 'valid': True}
     print(f'{spec.label}: complete; inspect the returned review before continuing')
-    return CLIResult(message='Authoring review complete.', changed=result.get('changed', False), payload=result)
+    message = 'Authoring review complete.'
+    # attach-agent --replace: an arm renamed by its new agent says so.
+    renamed = (result.get('replaced') or {}).get('note')
+    if renamed:
+        print(renamed)
+        message += ' ' + renamed
+    return CLIResult(message=message, changed=result.get('changed', False), payload=result)

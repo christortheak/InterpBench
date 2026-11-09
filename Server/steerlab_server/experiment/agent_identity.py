@@ -225,9 +225,11 @@ def _listed(words: list[str]) -> str:
 
 def edited_from_phrase(edited: dict, changed) -> str:
     """What an editor record says of the agent it was edited from
-    (``editedFrom``) and the fields the researcher changed. The record is
-    written by the app's agent editor; every reader words it here. Swift
-    twin: ``ModelVariantArtifact.editedFromPhrase``."""
+    (``editedFrom``: the EARLIEST origin of a chain of edits, so a promoted
+    agent edited twice still reads as promoted) and the fields the researcher
+    changed along the way. No changed field is a copy saved unchanged. The
+    record is written by the app's agent editor; every reader words it here.
+    Swift twin: ``ModelVariantArtifact.editedFromPhrase``."""
     kind = edited.get("kind")
     if kind == AGENT_KIND_SWEPT:
         study, run = edited.get("experiment"), edited.get("sweepRun")
@@ -241,8 +243,9 @@ def edited_from_phrase(edited: dict, changed) -> str:
     words = dict(EDITABLE_FIELD_WORDS)
     fields = [words[key] for key, _ in EDITABLE_FIELD_WORDS
               if isinstance(changed, list) and key in changed]
-    return (f"The researcher edited it from {source}"
-            + (f" and changed its {_listed(fields)}." if fields else "."))
+    if not fields:
+        return f"The researcher saved it as an unchanged copy of {source}."
+    return f"The researcher edited it from {source} and changed its {_listed(fields)}."
 
 
 #: How a handmade record's ``madeWith`` reads in a sentence.
@@ -381,9 +384,9 @@ def revision_note(label: str, artifact: dict, *, model_id: str,
     revision = artifact.get("baseRevision")
     model = str(artifact.get("baseModelID") or model_id)
     if not isinstance(revision, str) or not revision.strip():
-        return (f"{label}: the agent records no model revision (agents saved before "
-                "agents recorded one carry none), so SteerLab did not check it "
-                f"against revision {model_revision} of {model}, which the study pins.")
+        return (f"{label}: the agent records no model revision, so SteerLab did not "
+                f"check it against revision {model_revision} of {model}, which the "
+                "study pins. Make the agent with the study's commit to have it checked.")
     if compare_revisions(revision, model_revision) != REVISIONS_UNCHECKED:
         return None
     moving = [r for r in (revision, model_revision)
@@ -470,16 +473,18 @@ def arm_problems(name: str, artifact: dict, *, model_id: str, model_revision: st
         outcome_instruments=outcome_instruments, capabilities=capabilities, root=root)]
 
 
-def cast_agent_problems(label: str, artifact: dict, *, model_id: str,
-                        model_revision: str | None, capabilities,
+def cast_agent_problems(label: str, artifact: dict, *, model_id: str, capabilities,
                         root: str | None) -> list[str]:
-    """The same rules for an agent a panel casts in a seat, minus the
-    answer-token rule (a panel reads its seats' generated turns, never an
-    answer's first tokens). ``label`` names the seat in each sentence (for
-    example ``"seat 'judge'"``). For a panel's verify to call per cast
-    agent. Swift twin: ``ModelVariantArtifact.castAgentProblems``."""
+    """The same rules for an agent a panel casts in a seat, minus two:
+    the answer-token rule (a panel reads its seats' generated turns, never an
+    answer's first tokens), and the revision rule, because a panel loads each
+    seat at the seat's own revision (``multi_agent``), so a seat agent at
+    another commit than the study's is legitimate there. ``label`` names the
+    seat in each sentence (for example ``"seat 'judge'"``). For a panel's
+    verify to call per cast agent. Swift twin:
+    ``ModelVariantArtifact.castAgentProblems``."""
     return [sentence for sentence, _ in _findings(
-        label, artifact, model_id=model_id, model_revision=model_revision,
+        label, artifact, model_id=model_id, model_revision=None,
         outcome_instruments=(), capabilities=capabilities, root=root)]
 
 
@@ -612,11 +617,24 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
                 + authoring(f"experiment attach-agent {target} --replace {arm} "
                             "--artifact <path> --artifact-sha256 <digest> "
                             "--manifest-sha256 <digest>"))
-    if any(FIX_INSTRUMENT in wanted for wanted in fixes.values()):
+    thinking = [arm for arm, wanted in fixes.items() if FIX_INSTRUMENT in wanted]
+    if thinking:
+        # Two ways out, either one enough: read the answer after the
+        # reasoning, or give each such arm an agent that does not think.
         remaining = [i for i in manifest.outcome_instruments
                      if i not in ANSWER_TOKEN_INSTRUMENTS] or ["sampledText"]
-        steps.append("read the answers after the agents' reasoning: "
-                     + authoring(vocabulary.set_instruments(target, ",".join(remaining))))
+        steps.append(
+            "read the answers after the agents' reasoning: "
+            + authoring(vocabulary.set_instruments(target, ",".join(remaining)))
+            + "; or attach agents that do not think instead: " + ", then ".join(
+                f"for arm '{arm}', "
+                + authoring(f"agent create <new-name> --model {manifest.model_id} "
+                            f"--revision {revision} --reasoning-effort off …")
+                + " (or the app's agent editor), then "
+                + authoring(f"experiment attach-agent {target} --replace {arm} "
+                            "--artifact <path> --artifact-sha256 <digest> "
+                            "--manifest-sha256 <digest>")
+                for arm in thinking))
     return "; then ".join(steps)
 
 

@@ -468,21 +468,38 @@ public enum AgentPromotion {
     static func sweepRunLevel(
         sweepRun: String?, experimentName: String, concept: String
     ) throws -> (effort: ReasoningEffort?, thinking: Bool) {
-        var snapshot: [String: Any]?
-        if let sweepRun, !sweepRun.isEmpty {
-            try requirePlainRunName(sweepRun, source: "the promotion's sweep run")
-            let url = ExperimentStore.runsDirectory.appending(
-                components: sweepRun, "experiment.json")
-            if let data = try? Data(contentsOf: url) {
-                snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            }
-        }
-        guard let snapshot else {
+        guard let sweepRun, !sweepRun.isEmpty else {
+            // A hand-written or legacy selection that names no sweep run.
             throw ExperimentError.refusing(
                 .promotionEvidence,
-                "sweep run '\(sweepRun ?? "None")' holds no readable experiment.json, so the "
-                    + "thinking level its cells ran at is unknown, and the agent would carry a "
-                    + "level no cell was measured at",
+                "the sweep evidence this promotion uses names no sweep run, so the thinking "
+                    + "level the sweep's cells ran at cannot be read, and the agent would carry "
+                    + "a level no cell was measured at",
+                repair: sweepThenPromoteRepair(experimentName, concept))
+        }
+        try requirePlainRunName(sweepRun, source: "the promotion's sweep run")
+        let runDirectory = ExperimentStore.runsDirectory.appending(component: sweepRun)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: runDirectory.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else {
+            throw ExperimentError.refusing(
+                .promotionEvidence,
+                "sweep run '\(sweepRun)' is not in this workspace's runs/ folder, so its "
+                    + "experiment.json, which records the thinking level the sweep's cells ran "
+                    + "at, cannot be read",
+                repair: "fetch the sweep's results into runs/ (a bundle-submitted sweep returns "
+                    + "them in its results tarball) and promote again; or "
+                    + sweepThenPromoteRepair(experimentName, concept))
+        }
+        guard let data = try? Data(contentsOf: runDirectory.appending(component: "experiment.json")),
+            let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw ExperimentError.refusing(
+                .promotionEvidence,
+                "sweep run '\(sweepRun)' holds no readable experiment.json, so the thinking "
+                    + "level its cells ran at is unknown, and the agent would carry a level no "
+                    + "cell was measured at",
                 repair: sweepThenPromoteRepair(experimentName, concept))
         }
         let declared = snapshot["reasoningEffort"].flatMap { $0 is NSNull ? nil : $0 }
@@ -498,7 +515,7 @@ public enum AgentPromotion {
         guard let level = ReasoningEffort(rawValue: ranAt) else {
             throw ExperimentError.refusing(
                 .promotionEvidence,
-                "sweep run '\(sweepRun ?? "None")' records reasoning effort '\(ranAt)', which "
+                "sweep run '\(sweepRun)' records reasoning effort '\(ranAt)', which "
                     + "is not a level SteerLab knows, so the agent's level cannot be read from it",
                 repair: sweepThenPromoteRepair(experimentName, concept))
         }
@@ -506,26 +523,35 @@ public enum AgentPromotion {
         return (nil, level.isOn)
     }
 
-    /// `experiment promote` as the request was made, with `agentName`: every
-    /// flag this command line takes (the cell and its reason), and the pinned
-    /// sweep run, which the app and pipeline pass and this command line does
-    /// not. Server twin: `promote._promote_command`.
+    /// `experiment promote` as the request was made, with `agentName`: the
+    /// cell and its reason on this command line. This command line cannot
+    /// pin a promotion to a sweep run (the app and pipeline pin it), so a
+    /// pinned request is spelled for the Python engine's command line, which
+    /// takes the pins as `--sweep-run` and `--expect-*` flags. Server twin:
+    /// `promote._promote_command`.
     static func promoteCommand(
         _ experiment: String, _ concept: String, agentName: String,
         cell: (layer: Int, alpha: Double)?, overrideReason: String?, pins: Pins?
     ) -> String {
-        var words = [ExperimentCLIHelp.program, "experiment", "promote", experiment, concept,
-                     "--agent-name", agentName]
+        var words = ["experiment", "promote", experiment, concept, "--agent-name", agentName]
         if let cell {
             words += ["--cell", "\(cell.layer):\(cell.alpha)"]
             if let overrideReason, !overrideReason.isEmpty { words += ["--reason", overrideReason] }
         }
-        let command = words.map(WorkspaceHousekeepingCLI.shellQuoted).joined(separator: " ")
-        guard let pins else { return command }
-        return command + " (pinned, as the original was, to sweep run \(pins.sweepRun)"
-            + (pins.winningCell.map { ", cell L\($0.layer) α\($0.alpha)" } ?? "")
-            + (pins.vectorArtifactID.map { ", vector \($0)" } ?? "")
-            + (pins.experimentHash.map { ", epoch \($0)" } ?? "") + ")"
+        func spelled(_ words: [String]) -> String {
+            words.map(WorkspaceHousekeepingCLI.shellQuoted).joined(separator: " ")
+        }
+        guard let pins else { return spelled([ExperimentCLIHelp.program] + words) }
+        words += ["--sweep-run", pins.sweepRun]
+        if let wanted = pins.winningCell {
+            words += ["--expect-cell", "\(wanted.layer):\(wanted.alpha)"]
+        }
+        if let artifact = pins.vectorArtifactID { words += ["--expect-artifact", artifact] }
+        if let bytes = pins.vectorArtifactHash { words += ["--expect-artifact-hash", bytes] }
+        if let epoch = pins.experimentHash { words += ["--expect-epoch", epoch] }
+        return "this command line cannot pin a promotion to a sweep run; the Python "
+            + "engine's command line can, in this workspace: "
+            + spelled(["steerlab-server"] + words) + " --root <workspace>"
     }
 
     /// Deterministic identity of a promotion REQUEST — the idempotency key.

@@ -49,9 +49,11 @@ sets the temperature every arm runs at. `agent inspect`, `agent list`, and
 `attach-agent` say whether an agent is `swept` (a sweep chose its settings and
 promotion from that sweep made it) or `handmade`, and its thinking level
 (`result.agent`). The app's agent editor records the agents it saves as
-handmade too; an agent it saves from an edited one records the agent it was
-edited from (`editedFrom`: its kind, its file's SHA-256, and for a promoted
-agent the study and sweep run) and the fields the researcher changed. A
+handmade too; an agent it saves from an edited one records where the chain of
+edits began (`editedFrom`: that agent's kind, and for a promoted agent the
+study and sweep run, beside the SHA-256 of the file the edit started from)
+and the fields the researcher changed along the way, or that it is an
+unchanged copy. A
 handmade steered agent passes the same freeze gates as a
 promoted one; say in METHODS who chose its settings and why.
 
