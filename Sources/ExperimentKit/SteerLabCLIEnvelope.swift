@@ -338,6 +338,13 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// own repair.
     case refusedWhenRun
 
+    /// A panel seat declares its own temperature, and it is the study's
+    /// temperature, so the declaration changes nothing (public issue #15).
+    /// Said at `verify` for a panel study, never a refusal. The detail is
+    /// `MultiAgentRunner.seatTemperatureAdvisories` (server twin
+    /// `multi_agent.seat_temperature_advisories`), byte for byte.
+    case seatTemperatureChangesNothing
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

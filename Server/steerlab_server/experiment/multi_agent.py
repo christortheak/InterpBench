@@ -557,6 +557,115 @@ def seat_temperature_advisories(scenario: Scenario,
     return out
 
 
+#: The engine capability that says a panel passes on a thinking seat's answer
+#: and never its reasoning, gives thinking seats the study's reasoning budget,
+#: lets a bare seat follow the study's effort, and honours a seat's declared
+#: temperature and ``includeOwnReasoning`` (public issue #15).
+#: ``remoteStudy.panelAnswerRouting`` in the capability snapshot
+#: (``api/profile.py``). Both clients refuse to submit a panel study an engine
+#: without it would run differently.
+PANEL_ANSWER_ROUTING_CAPABILITY = "panelAnswerRouting"
+#: The client refusal's code when the engine predates the capability.
+PANEL_ANSWER_ROUTING_UNSUPPORTED_CODE = "panelAnswerRoutingUnsupported"
+#: The verbs that play a panel's turns.
+PANEL_ROUTING_VERBS = ("run", "pipeline")
+
+
+def remote_has_panel_answer_routing(capabilities) -> bool:
+    """Whether a capability snapshot advertises
+    :data:`PANEL_ANSWER_ROUTING_CAPABILITY`, nested or dotted; a nested value
+    wins. Swift twin ``ClusterCapabilities.supportsPanelAnswerRouting``."""
+    if not isinstance(capabilities, dict):
+        return False
+    remote = capabilities.get("remoteStudy")
+    nested = (remote.get(PANEL_ANSWER_ROUTING_CAPABILITY)
+              if isinstance(remote, dict) else None)
+    if nested is not None:
+        return nested is True
+    features = capabilities.get("features")
+    return (isinstance(features, dict) and features.get(
+        "remoteStudy." + PANEL_ANSWER_ROUTING_CAPABILITY) is True)
+
+
+def panel_rule_changes(scenario: Scenario, *, study_effort: str | None,
+                       root: str | None = None) -> list[str]:
+    """What an engine from before issue #15 would run differently in this
+    panel, as short reasons, or [] when the two engines run it alike: a seat
+    that thinks (an agent with thinking on, or a bare seat under a thinking
+    study), a seat that declares its own temperature, or
+    ``includeOwnReasoning``. Reads agent files, never a model."""
+    reasons: list[str] = []
+    if scenario.include_own_reasoning:
+        reasons.append("the panel shows each seat its own earlier reasoning")
+    for agent in scenario.agents:
+        if agent.temperature is not None:
+            reasons.append(f"seat '{agent.name}' declares its own temperature")
+    for agent in scenario.agents:
+        try:
+            variant = _runtime_settings(agent, True, root=root)[0]
+        except (OSError, KeyError, ValueError, TypeError):
+            continue
+        effort, _ = seat_reasoning(variant, study_effort=study_effort or "",
+                                   study_budget=None)
+        if effort != prompt_render.REASONING_OFF:
+            reasons.append(f"seat '{agent.name}' thinks")
+    return reasons
+
+
+def submission_panel_rule_changes(manifest, verb: str,
+                                  root: str | None = None) -> list[str]:
+    """:func:`panel_rule_changes` for the panel a study pins, when ``verb``
+    plays its turns; [] for every other study, verb, or an unreadable panel
+    (``verify`` reports that). Swift twin:
+    ``MultiAgentRunner.submissionPanelRuleChanges``."""
+    spath = getattr(manifest, "multi_agent_scenario_path", None)
+    if (verb not in PANEL_ROUTING_VERBS or not spath
+            or getattr(manifest, "study_kind", None) != "multiAgent"):
+        return []
+    base = paths.project_root() if root is None else root
+    if not os.path.isabs(spath):
+        spath = os.path.join(base, spath)
+    try:
+        scenario, _ = load_scenario(spath)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            ScenarioError):
+        return []
+    # Agent files are workspace-relative: resolve them against this study's
+    # workspace, not whatever the process happens to point at.
+    return panel_rule_changes(scenario, study_effort=manifest.reasoning_effort,
+                              root=base)
+
+
+def outdated_panel_engine_reason(where: str, reasons: list[str]) -> str:
+    """Why a client refuses to submit, in the same words on both clients
+    (Swift twin ``SubstrateRouting.panelAnswerRoutingSubmissionRefusal``)."""
+    return (f"The engine at {where} predates answer-only panel routing: its "
+            "capabilities do not list "
+            f"remoteStudy.{PANEL_ANSWER_ROUTING_CAPABILITY}, so it would pass "
+            "each turn's whole text on to the other seats, a thinking seat's "
+            "reasoning included, and would ignore what this panel declares "
+            f"({'; '.join(reasons)}). Nothing was submitted.")
+
+
+def study_seat_temperature_advisories(manifest, root: str | None = None) -> list[str]:
+    """:func:`seat_temperature_advisories` for the panel a multi-agent study
+    pins, against the study's temperature — what ``experiment verify`` says.
+    A study that pins no readable panel says nothing here: ``verify`` reports
+    that in its own words. Swift twin:
+    ``MultiAgentRunner.studySeatTemperatureAdvisories``."""
+    spath = getattr(manifest, "multi_agent_scenario_path", None)
+    if getattr(manifest, "study_kind", None) != "multiAgent" or not spath:
+        return []
+    if not os.path.isabs(spath):
+        spath = os.path.join(paths.project_root() if root is None else root, spath)
+    try:
+        scenario, _ = load_scenario(spath)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            ScenarioError):
+        return []
+    return seat_temperature_advisories(scenario, float(manifest.temperature))
+
+
 def _forbidden_contract_placeholder(text: str) -> str | None:
     """The first layout placeholder a contract field may not carry (spec §1.3),
     SPELLED AS IT APPEARS, or None when the text is clean.
@@ -1187,7 +1296,8 @@ def _render_contract_prompt(scenario: Scenario, turn: Turn, speaker_context: str
     return "\n\n".join(blocks)
 
 
-def _runtime_settings(agent: Agent, strip_interventions: bool):
+def _runtime_settings(agent: Agent, strip_interventions: bool,
+                      root: str | None = None):
     """Resolve an agent's variant → (variant, model_id, prompt_mode, system,
     qwen_thinking, injections, warnings, system_composition). Mirrors Swift
     runtimeSettings.
@@ -1204,7 +1314,7 @@ def _runtime_settings(agent: Agent, strip_interventions: bool):
         # `resolve_artifact`: an agent authored on another machine may name
         # its variant by that machine's absolute path — rebase onto this
         # workspace when the artifact is actually here.
-        path = paths.resolve_artifact(agent.variant_artifact_path)
+        path = paths.resolve_artifact(agent.variant_artifact_path, root)
         if agent.variant_artifact_hash and os.path.exists(path):
             with open(path, "rb") as handle:
                 actual = hashlib.sha256(handle.read()).hexdigest()

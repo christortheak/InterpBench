@@ -212,6 +212,26 @@ public enum SubstrateRouting {
             + "same seeds for every item. Nothing was submitted."
     }
 
+    /// Old-server guard for answer-only panel routing (issue #15): a panel
+    /// study whose panel an engine without `remoteStudy.panelAnswerRouting`
+    /// would run differently — a seat that thinks, a seat that declares its
+    /// own temperature, or `includeOwnReasoning`. Returns the refusal, or
+    /// nil for every other study, verb, or server. Same sentence as the
+    /// Python client's (`multi_agent.outdated_panel_engine_reason`).
+    public static func panelAnswerRoutingSubmissionRefusal(
+        manifest: ExperimentManifest, verb: String,
+        capabilities: ClusterCapabilities?, server: String
+    ) -> String? {
+        guard capabilities?.supportsPanelAnswerRouting != true else { return nil }
+        let reasons = MultiAgentRunner.submissionPanelRuleChanges(manifest, verb: verb)
+        guard !reasons.isEmpty else { return nil }
+        return "The engine at \(server) predates answer-only panel routing: its "
+            + "capabilities do not list remoteStudy.panelAnswerRouting, so it would "
+            + "pass each turn's whole text on to the other seats, a thinking seat's "
+            + "reasoning included, and would ignore what this panel declares "
+            + "(\(reasons.joined(separator: "; "))). Nothing was submitted."
+    }
+
     /// The greedy seed rule for a submission of `verb` (public issue #9): a
     /// step that runs the study (`run`, or a `pipeline` whose declared
     /// stages include it) at temperature 0 with several seeds, on a study

@@ -4336,6 +4336,14 @@ public struct ExperimentCLIRunner: Sendable {
                     sink.err("ADVISORY: \(note)\n")
                     capabilityAdvisories.append(.init(CLIAdvisory.seedSettingNotUsed, note))
                 }
+                // A panel seat whose declared temperature is the study's: the
+                // declaration changes nothing (issue #15). Server twin: the
+                // client's `verify`.
+                for note in MultiAgentRunner.studySeatTemperatureAdvisories(manifest) {
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(
+                        .init(CLIAdvisory.seatTemperatureChangesNothing, note))
+                }
                 // A sampling value the study's instruments never read (a
                 // readout-only study's temperature or samplesPerItem): said
                 // here, never refused. Server twin: the client's `verify`.

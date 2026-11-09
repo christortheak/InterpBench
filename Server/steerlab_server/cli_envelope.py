@@ -222,6 +222,13 @@ ADVISORY_CODES: tuple[str, ...] = (
     # ``StudySampling.frozenGreedySeedListAdvisory``), each client spelling
     # its own repair.
     "refusedWhenRun",
+    # A panel seat declares its own temperature, and it is the study's
+    # temperature, so the declaration changes nothing (public issue #15).
+    # Said at `verify` for a panel study, never a refusal. Named for the
+    # MECHANISM; the detail is ``multi_agent.seat_temperature_advisories``
+    # (Swift twin ``MultiAgentRunner.seatTemperatureAdvisories``), byte for
+    # byte.
+    "seatTemperatureChangesNothing",
 )
 
 

@@ -157,6 +157,18 @@ public final class StudyBundleSubmissionController {
             note(refusal, severity: .error)
             return .failure(StudyBatchSubmission.Failure(reason: refusal))
         }
+        // Old-server guard (issue #15) — same rule as
+        // UnifiedStudyRunner.submitBundle: a panel an engine from before
+        // answer-only routing would run differently.
+        if let refusal = SubstrateRouting.panelAnswerRoutingSubmissionRefusal(
+            manifest: manifest, verb: submissionVerb, capabilities: capabilities,
+            server: transport.origin?.connection.baseURL.absoluteString
+                ?? substrate ?? "the server")
+        {
+            jobs.remoteStatus = refusal
+            note(refusal, severity: .error)
+            return .failure(StudyBatchSubmission.Failure(reason: refusal))
+        }
         // Old-server guard (issue #6) — same rule as
         // UnifiedStudyRunner.submitBundle: a declared prompt reading would be
         // ignored by a server without remoteStudy.promptReading.

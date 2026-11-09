@@ -443,6 +443,13 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # one to servers WITHOUT this flag, which would read its prompts
             # their own way (`prompt_reading.submission_needs_capability`).
             "promptReading": True,
+            # A panel passes on a thinking seat's answer and never its
+            # reasoning, gives thinking seats the study's reasoning budget,
+            # lets a bare seat follow the study's effort, and honours a seat's
+            # declared temperature and includeOwnReasoning (issue #15).
+            # Clients refuse to send a panel study an engine WITHOUT this flag
+            # would run differently (`multi_agent.submission_panel_rule_changes`).
+            "panelAnswerRouting": True,
             "httpTransfer": profile.transfer_method in (None, "", "http"),
             "externalTransferRequired": (
                 profile.transfer_method not in (None, "", "http")

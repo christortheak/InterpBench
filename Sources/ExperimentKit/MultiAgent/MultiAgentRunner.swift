@@ -1503,6 +1503,61 @@ public enum MultiAgentRunner {
         }
     }
 
+    /// `seatTemperatureAdvisories` for the panel a multi-agent study pins,
+    /// against the study's temperature — what `experiment verify` says. A
+    /// study that pins no readable panel says nothing here. Server twin:
+    /// `multi_agent.study_seat_temperature_advisories`.
+    public static func studySeatTemperatureAdvisories(
+        _ manifest: ExperimentManifest
+    ) -> [String] {
+        guard manifest.studyKind == .multiAgent,
+            let path = manifest.multiAgentScenarioPath, !path.isEmpty,
+            let data = try? Data(contentsOf: ExperimentStore.resolveProjectPath(path)),
+            let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
+        else { return [] }
+        return seatTemperatureAdvisories(scenario, studyTemperature: manifest.temperature)
+    }
+
+    /// What an engine from before issue #15 would run differently in this
+    /// panel, as short reasons, or [] when the two engines run it alike: a
+    /// seat that thinks, a seat that declares its own temperature, or
+    /// `includeOwnReasoning`. Server twin: `multi_agent.panel_rule_changes`;
+    /// the wording is shared.
+    public static func panelRuleChanges(
+        _ scenario: MultiAgentScenario, studyEffort: ReasoningEffort?
+    ) -> [String] {
+        var reasons: [String] = []
+        if scenario.showsOwnReasoning {
+            reasons.append("the panel shows each seat its own earlier reasoning")
+        }
+        for agent in scenario.agents where agent.temperature != nil {
+            reasons.append("seat '\(agent.name)' declares its own temperature")
+        }
+        for agent in scenario.agents {
+            guard let (effort, _) = try? seatReasoning(
+                for: agent, studyEffort: studyEffort, studyBudget: nil),
+                effort.isOn
+            else { continue }
+            reasons.append("seat '\(agent.name)' thinks")
+        }
+        return reasons
+    }
+
+    /// `panelRuleChanges` for the panel a study pins, when `verb` plays its
+    /// turns; [] for every other study, verb, or an unreadable panel. Server
+    /// twin: `multi_agent.submission_panel_rule_changes`.
+    public static func submissionPanelRuleChanges(
+        _ manifest: ExperimentManifest, verb: String
+    ) -> [String] {
+        guard SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            manifest.studyKind == .multiAgent,
+            let path = manifest.multiAgentScenarioPath, !path.isEmpty,
+            let data = try? Data(contentsOf: ExperimentStore.resolveProjectPath(path)),
+            let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
+        else { return [] }
+        return panelRuleChanges(scenario, studyEffort: manifest.resolvedReasoningEffort)
+    }
+
     /// Python's `{:g}` for the values a temperature takes.
     static func formatTemperature(_ value: Double) -> String {
         if value.rounded() == value, abs(value) < 1e15 { return String(Int(value)) }

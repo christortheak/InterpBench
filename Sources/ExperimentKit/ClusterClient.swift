@@ -49,6 +49,13 @@ public struct ClusterCapabilities: Codable, Sendable {
         /// which reuse the fixed seed list for that study shape, so its
         /// submission must refuse there.
         public var declaredSeedPolicy: Bool?
+        /// A panel passes on a thinking seat's answer and never its
+        /// reasoning, gives thinking seats the study's reasoning budget, lets
+        /// a bare seat follow the study's effort, and honours a seat's
+        /// declared temperature and `includeOwnReasoning` (issue #15).
+        /// Absent on older servers, which would run such a panel differently,
+        /// so its submission must refuse there.
+        public var panelAnswerRouting: Bool?
         /// The temperature-0 rules (one seed, one sample per item) refuse
         /// only a study that generates sampled text (review round 3 of
         /// public issue #9). Absent on older servers, which refused a
@@ -238,6 +245,17 @@ public struct ClusterCapabilities: Codable, Sendable {
     public var supportsVariantStudySampling: Bool {
         if let value = remoteStudy?.variantStudySampling { return value }
         if case .bool(let value)? = features?["remoteStudy.variantStudySampling"] {
+            return value
+        }
+        return false
+    }
+
+    /// Answer-only panel routing (`"remoteStudy.panelAnswerRouting"`, issue
+    /// #15), in either spelling; a nested value wins. Python twin:
+    /// `multi_agent.remote_has_panel_answer_routing`.
+    public var supportsPanelAnswerRouting: Bool {
+        if let value = remoteStudy?.panelAnswerRouting { return value }
+        if case .bool(let value)? = features?["remoteStudy.panelAnswerRouting"] {
             return value
         }
         return false
@@ -3300,6 +3318,18 @@ public struct ClusterClient: Sendable {
             throw ExperimentError.refusing(
                 .missingPrerequisite, refusal, repair: SubstrateRouting.declaredSeedPolicyRepair)
         }
+        // A server-resident panel study an older engine would run differently
+        // (issue #15), refused the same way, when its panel is readable here.
+        if SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            let body = try? await experimentManifestBody(name: experiment),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
+            let refusal = SubstrateRouting.panelAnswerRoutingSubmissionRefusal(
+                manifest: manifest, verb: verb, capabilities: try await capabilities(),
+                server: profile.baseURL.absoluteString)
+        {
+            throw ExperimentError.refusing(
+                .missingPrerequisite, refusal, repair: SubstrateRouting.declaredSeedPolicyRepair)
+        }
         // A server-resident study that declares a prompt reading an older
         // engine would ignore (issue #6), refused the same way. The
         // capabilities are asked for only when the study declares one.
@@ -3407,6 +3437,7 @@ public struct ClusterClient: Sendable {
         // An older engine would seed a declared derivedSHA256 at one sample
         // per item with the fixed list: refused before submitting.
         try await requireDeclaredSeedPolicy(inspectedBundle: inspected, verb: verb)
+        try await requirePanelAnswerRouting(inspectedBundle: inspected, verb: verb)
         try await requirePromptReading(inspectedBundle: inspected, verb: verb)
         // An older engine ignores `rereadChoices`: refused before submitting
         // when its capabilities do not list it.

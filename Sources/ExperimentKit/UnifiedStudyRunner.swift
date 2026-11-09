@@ -139,6 +139,17 @@ public final class UnifiedStudyRunner {
             note(refusal, .error)
             return
         }
+        // Old-server guard (issue #15): a panel an engine from before
+        // answer-only routing would run differently — refuse BEFORE
+        // packaging/uploading.
+        if let refusal = SubstrateRouting.panelAnswerRoutingSubmissionRefusal(
+            manifest: manifest, verb: verb, capabilities: capabilities,
+            server: client.profile.baseURL.absoluteString)
+        {
+            statusLine = refusal
+            note(refusal, .error)
+            return
+        }
         // Old-server guard (issue #6): a declared prompt reading would be
         // ignored by a server without it — refuse BEFORE packaging/uploading.
         if let refusal = SubstrateRouting.promptReadingSubmissionRefusal(

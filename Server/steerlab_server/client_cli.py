@@ -2315,6 +2315,14 @@ def _experiment(invocation: Invocation) -> CLIResult:
                 note = _manifest_module.BASELINE_ONLY_STUDY_ADVISORY
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("baselineOnlyStudy", note))
+            # A panel seat whose declared temperature is the study's: the
+            # declaration changes nothing (issue #15). Swift twin: the Mac
+            # `experiment verify`.
+            from .experiment import multi_agent as _multi_agent
+            for note in _multi_agent.study_seat_temperature_advisories(
+                    manifest, _paths.project_root()):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("seatTemperatureChangesNothing", note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
                 state="okWithAdvisories" if advisories else "ready",
@@ -4669,6 +4677,11 @@ def _run(invocation: Invocation) -> CLIResult:
     # refused at the same stage, for the same reason.
     reading_declared = prompt_reading.submission_needs_capability(
         manifest, study_verb)
+    # A panel an engine from before issue #15 would run differently (it
+    # passed reasoning on): refused at the same stage, for the same reason.
+    from .experiment import multi_agent as _multi_agent
+    panel_rule_changes = _multi_agent.submission_panel_rule_changes(
+        manifest, study_verb, workspace_root)
     try:
         return _run_machine(
             invocation, stages=stages, common=common, name=name,
@@ -4680,7 +4693,8 @@ def _run(invocation: Invocation) -> CLIResult:
             started_at=started_at, runner_api=runner_api, bundles=bundles,
             seed_rule_changed=seed_rule_changed,
             greedy_rules_refusal=greedy_rules_refusal,
-            reading_declared=reading_declared)
+            reading_declared=reading_declared,
+            panel_rule_changes=panel_rule_changes)
     except ClientRefusal:
         raise
     except Exception as exc:   # noqa: BLE001 — every throw keeps its TYPE and
@@ -4710,7 +4724,8 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
                  runner_api, bundles,
                  seed_rule_changed: bool = False,
                  greedy_rules_refusal: tuple | None = None,
-                 reading_declared: bool = False) -> CLIResult:
+                 reading_declared: bool = False,
+                 panel_rule_changes: list | None = None) -> CLIResult:
     """Stages 2–9. Split from :func:`_run` only so the stage-table decoration
     above has one place to sit."""
     import time
@@ -4751,6 +4766,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
             evidence_out=evidence_out, started_at=started_at,
             workspace=workspace, runner_api=runner_api, bundles=bundles,
             time=time, seed_rule_changed=seed_rule_changed,
+            panel_rule_changes=panel_rule_changes,
             greedy_rules_refusal=greedy_rules_refusal,
             reading_declared=reading_declared)
     except runner_api.RunnerError as exc:
@@ -4773,7 +4789,8 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
               runner_api, bundles, time,
               seed_rule_changed: bool = False,
               greedy_rules_refusal: tuple | None = None,
-              reading_declared: bool = False) -> CLIResult:
+              reading_declared: bool = False,
+              panel_rule_changes: list | None = None) -> CLIResult:
     """Stages 3–9: everything that touches the wire or the workspace."""
 
     # ---- stage 3: what is this runner, and can it do this? -----------------
@@ -4817,6 +4834,20 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
         raise _die(
             stages, "capabilities", code=code, reason=reason, repair=repair,
             common=common,
+            facts={"runnerOffers": {
+                "engineVersion": identity.get("engineVersion")}})
+    from .experiment import multi_agent as _multi_agent
+    if panel_rule_changes and not _multi_agent.remote_has_panel_answer_routing(
+            capabilities):
+        # An older engine would pass a thinking seat's reasoning on and
+        # ignore the panel's new declarations. Swift twin:
+        # `SubstrateRouting.panelAnswerRoutingSubmissionRefusal`.
+        raise _die(
+            stages, "capabilities",
+            code=_multi_agent.PANEL_ANSWER_ROUTING_UNSUPPORTED_CODE,
+            reason=_multi_agent.outdated_panel_engine_reason(
+                client.base_url, panel_rule_changes),
+            repair=sampling.outdated_engine_repair(), common=common,
             facts={"runnerOffers": {
                 "engineVersion": identity.get("engineVersion")}})
     from .experiment import prompt_reading

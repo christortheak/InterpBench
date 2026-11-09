@@ -259,6 +259,34 @@ struct ReasoningSplitTests {
         #expect(MultiAgentRunner.seatTemperatureAdvisories(scenario, studyTemperature: 0.2).isEmpty)
     }
 
+    // MARK: - An older engine is never sent a panel it would run differently
+
+    @Test func aPanelTheRuleChangesIsNamedAndOneItDoesNotIsNot() {
+        var scenario = Self.panel()
+        #expect(MultiAgentRunner.panelRuleChanges(scenario, studyEffort: .off).isEmpty)
+        #expect(
+            MultiAgentRunner.panelRuleChanges(scenario, studyEffort: .on)
+                == ["seat 'Ava' thinks", "seat 'Ben' thinks"])
+        scenario.agents[1].temperature = 0.5
+        scenario.includeOwnReasoning = true
+        #expect(
+            MultiAgentRunner.panelRuleChanges(scenario, studyEffort: .off) == [
+                "the panel shows each seat its own earlier reasoning",
+                "seat 'Ben' declares its own temperature",
+            ])
+    }
+
+    @Test func theCapabilityIsReadInEitherSpelling() throws {
+        func capabilities(_ json: String) throws -> ClusterCapabilities {
+            try JSONDecoder().decode(ClusterCapabilities.self, from: Data(json.utf8))
+        }
+        #expect(try capabilities(#"{"remoteStudy":{"panelAnswerRouting":true}}"#)
+            .supportsPanelAnswerRouting)
+        #expect(try capabilities(#"{"features":{"remoteStudy.panelAnswerRouting":true}}"#)
+            .supportsPanelAnswerRouting)
+        #expect(try !capabilities(#"{"remoteStudy":{}}"#).supportsPanelAnswerRouting)
+    }
+
     // MARK: - Resume never mixes two routing rules
 
     static func oldEngineTurn(speaker: String) -> MultiAgentTurnResult {
