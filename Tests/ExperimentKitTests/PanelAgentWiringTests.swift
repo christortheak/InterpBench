@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SteeringKit
 import Testing
@@ -212,6 +213,20 @@ import Testing
                 manifest: manifest, verb: "analyze", workspaceRoot: root) == nil)
 
             try writeAgent(root, ["reasoningEffort": "off"], model: Self.plain)
+            #expect(ModelVariantArtifact.armRefusal(manifest, workspaceRoot: root) == nil)
+        }
+    }
+
+    @Test func aFileThatIsNotThePinnedPanelIsNeverJudged() async throws {
+        try await withWorkspace { root in
+            try writeAgent(root, ["reasoningEffort": "medium"], model: Self.plain)
+            var manifest = try panelStudy(root, model: Self.plain, status: .frozen)
+            let bytes = try Data(contentsOf: root.appending(path: "prompts/panels/p.json"))
+            manifest.multiAgentScenarioHash = SHA256.hash(data: bytes)
+                .map { String(format: "%02x", $0) }.joined()
+            #expect(!ModelVariantArtifact.manifestArmFindings(manifest, workspaceRoot: root).isEmpty)
+            manifest.multiAgentScenarioHash = String(repeating: "0", count: 64)
+            #expect(ModelVariantArtifact.manifestArmFindings(manifest, workspaceRoot: root).isEmpty)
             #expect(ModelVariantArtifact.armRefusal(manifest, workspaceRoot: root) == nil)
         }
     }

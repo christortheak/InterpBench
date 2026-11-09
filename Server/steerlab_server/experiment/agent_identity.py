@@ -610,10 +610,15 @@ def scenario_seat_findings(scenario, *, root: str | None, study_model_id: str = 
 
 def manifest_seat_findings(manifest, root: str | None) -> list[tuple[str, str, str]]:
     """:func:`scenario_seat_findings` for the panel a panel study pins, read
-    from its workspace ``root``; [] for any other study, and for a panel that
-    cannot be read here (verify and the run refuse that themselves)."""
+    from its workspace ``root``; [] for any other study, for a panel that
+    cannot be read here, and for a file whose bytes are not the pinned panel
+    (``multiAgentScenarioHash``): verify and the run refuse those
+    themselves, and a stale copy at the same path must never refuse a study
+    for seats it does not have. Swift twin:
+    ``ModelVariantArtifact.manifestSeatFindings``."""
     if manifest.study_kind != "multiAgent":
         return []
+    import hashlib
     from . import multi_agent, paths
     spath = manifest.raw.get("multiAgentScenarioPath")
     if not isinstance(spath, str) or not spath:
@@ -621,7 +626,12 @@ def manifest_seat_findings(manifest, root: str | None) -> list[tuple[str, str, s
     base = paths.project_root() if root is None else root
     if not os.path.isabs(spath):
         spath = os.path.join(base, spath)
+    pinned = manifest.raw.get("multiAgentScenarioHash")
     try:
+        if isinstance(pinned, str) and pinned:
+            with open(spath, "rb") as handle:
+                if hashlib.sha256(handle.read()).hexdigest() != pinned:
+                    return []
         scenario, _ = multi_agent.load_scenario(spath)
     except (OSError, ValueError, KeyError, TypeError, AttributeError,
             multi_agent.ScenarioError):
@@ -702,11 +712,11 @@ def arm_problems_repair(manifest, findings, *, frozen: bool, authoring) -> str:
     if seats:
         panel = manifest.raw.get("multiAgentSemanticScenarioPath") or "<panel>"
         steps.append(
-            "make the agent again for "
+            "make a new agent for "
             + _listed([f"seat '{seat}'" for seat in seats]) + ": "
             + authoring("agent create <new-name> --model <model> --revision <sha> …")
-            + " (or the app's agent editor), then cast it in place of the agent "
-            "the seat holds and compile the panel again, casting every seat: "
+            + " (or the app's agent editor), then compile the panel again, casting "
+            "every seat, with each new agent in place of the one its seat holds: "
             + authoring((f"panel compile {panel} --experiment {target} "
                          "--seat <seat>=<agent-path> …",
                          f"panel compile {panel} --experiment {target} "

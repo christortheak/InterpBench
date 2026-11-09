@@ -1134,8 +1134,11 @@ extension ModelVariantArtifact {
     }
 
     /// `scenarioSeatFindings` for the panel a panel study pins, read from
-    /// `workspaceRoot`; [] for any other study and for a panel that cannot
-    /// be read here (verify and the run refuse that themselves). Server twin:
+    /// `workspaceRoot`; [] for any other study, for a panel that cannot be
+    /// read here, and for a file whose bytes are not the pinned panel
+    /// (`multiAgentScenarioHash`): verify and the run refuse those
+    /// themselves, and a stale copy at the same path must never refuse a
+    /// study for seats it does not have. Server twin:
     /// `agent_identity.manifest_seat_findings`.
     public static func manifestSeatFindings(
         _ manifest: ExperimentManifest, workspaceRoot: URL
@@ -1143,8 +1146,14 @@ extension ModelVariantArtifact {
         guard manifest.studyKind == .multiAgent,
             let path = manifest.multiAgentScenarioPath, !path.isEmpty,
             let data = try? Data(contentsOf: ExperimentStore.resolveProjectPath(
-                path, root: workspaceRoot)),
-            let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
+                path, root: workspaceRoot))
+        else { return [] }
+        if let pinned = manifest.multiAgentScenarioHash, !pinned.isEmpty,
+            SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() != pinned
+        {
+            return []
+        }
+        guard let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
         else { return [] }
         return scenarioSeatFindings(
             scenario, studyModelID: manifest.modelID, studyRevision: manifest.modelRevision,
@@ -1335,12 +1344,12 @@ extension ModelVariantArtifact {
         let seats = arms.filter { fixes[$0]?.contains(.seat) == true }
         if !seats.isEmpty {
             let panel = manifest.multiAgentSemanticScenarioPath ?? "<panel>"
-            steps.append("make the agent again for "
+            steps.append("make a new agent for "
                 + listed(seats.map { "seat '\($0)'" }) + ": \(program) agent create "
                 + "<new-name> --model <model> --revision <sha> … (or the app's agent editor), "
-                + "then cast it in place of the agent the seat holds and compile the panel "
-                + "again, casting every seat: \(program) panel compile \(panel) --experiment "
-                + "\(target) --seat <seat>=<agent-path> …")
+                + "then compile the panel again, casting every seat, with each new agent in "
+                + "place of the one its seat holds: \(program) panel compile \(panel) "
+                + "--experiment \(target) --seat <seat>=<agent-path> …")
         }
         for arm in arms {
             let wanted = fixes[arm] ?? []

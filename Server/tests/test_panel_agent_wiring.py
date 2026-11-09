@@ -283,6 +283,18 @@ def test_a_frozen_panel_study_is_told_at_verify_and_refused_at_submission_and_ru
     runner_api.require_greedy_seed_list(staged, "analyze", root)
 
 
+def test_a_file_that_is_not_the_pinned_panel_is_never_judged(tmp_path):
+    """A copy at the pinned path whose bytes are not the pinned panel (a stale
+    file in an engine's own root, say) never refuses a study for its seats;
+    verify refuses the drift itself."""
+    manifest = panel_study(tmp_path, {"reasoningEffort": "medium"}, model=PLAIN,
+                           status="frozen")
+    assert agent_identity.manifest_arm_findings(manifest, str(tmp_path))
+    manifest.raw["multiAgentScenarioHash"] = "0" * 64
+    assert agent_identity.manifest_arm_findings(manifest, str(tmp_path)) == []
+    assert study_admission.settings_refusal(manifest, str(tmp_path)) is None
+
+
 def test_a_panel_whose_seat_agents_meet_the_rules_is_not_refused(tmp_path):
     manifest = panel_study(tmp_path, {"reasoningEffort": "medium"}, status="frozen")
     assert agent_identity.frozen_arm_problems_advisory(manifest, str(tmp_path)) is None
