@@ -1986,13 +1986,27 @@ def _bundle_json_members(bundle_path: str):
     workspace paths: the files the settings preflight reads (a panel, its
     seats' agent files, vector sidecars, capability records), never the
     vectors or weights themselves. Extracted with the ``data`` filter, so
-    no member can land outside the folder. Empty when the bundle cannot be
-    read. Removed on exit."""
+    no member can land outside the folder.
+
+    A bundle is untrusted input, so this follows the real unpack's limits
+    (``bundles``), on the DECLARED sizes, before anything is written: an
+    archive with more members than ``max_member_count()``, or whose files
+    declare more than ``max_total_bytes()`` in all, extracts nothing; and a
+    JSON member over ``max_metadata_bytes()`` is left out. The folder is
+    empty when the bundle cannot be read or breaks a limit, so these checks
+    fall to run start, where the real unpack refuses such a bundle. Removed
+    on exit."""
     with tempfile.TemporaryDirectory(prefix="steerlab-bundle-settings-") as scratch:
         try:
             with tarfile.open(bundle_path, "r:gz") as tar:
-                members = [m for m in tar.getmembers()
-                           if m.isfile() and m.name.endswith(".json")]
+                every = tar.getmembers()
+                if len(every) > bundles.max_member_count():
+                    raise bundles.BundleError("more members than the unpack admits")
+                if sum(m.size for m in every if m.isfile()) > bundles.max_total_bytes():
+                    raise bundles.BundleError("more bytes than the unpack admits")
+                limit = bundles.max_metadata_bytes()
+                members = [m for m in every
+                           if m.isfile() and m.name.endswith(".json") and m.size <= limit]
                 tar.extractall(scratch, members=members, filter="data")
         except Exception:  # noqa: BLE001 - unreadable: judged at run start instead
             shutil.rmtree(scratch, ignore_errors=True)

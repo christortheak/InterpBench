@@ -650,3 +650,51 @@ def test_one_set_protocol_call_that_pins_a_panel_and_its_budget_is_judged_by_tha
             "multiAgentScenarioPath": "prompts/panels/bare.json",
             "multiAgentScenarioHash": hashlib.sha256(bare.read_bytes()).hexdigest(),
             "reasoningMaxTokens": 64}, root=str(tmp_path))
+
+
+# --- Round 3b: the admission extraction follows the real unpack's limits ------------
+
+
+def _extracted(bundle):
+    """The files the admission helper extracts from ``bundle``, relative."""
+    from steerlab_server.api import submissions
+    with submissions._bundle_json_members(bundle) as folder:
+        base = Path(folder)
+        return sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("variable", ["STEERLAB_MAX_BUNDLE_MEMBERS",
+                                      "STEERLAB_MAX_BUNDLE_TOTAL_BYTES"])
+def test_an_archive_over_the_unpacks_limits_extracts_nothing(tmp_path, monkeypatch,
+                                                              variable):
+    """More members, or more declared bytes, than the real unpack admits: the
+    admission writes nothing, so the bundle is judged at run start, where
+    the unpack refuses it."""
+    source = tmp_path / "source"
+    panel_study(source, {"reasoningEffort": "medium"}, model=PLAIN, status="frozen")
+    bundle = _bundle(source, tmp_path / "b.tar.gz")
+    assert AGENT_PATH in _extracted(bundle)
+    monkeypatch.setenv(variable, "2")
+    assert _extracted(bundle) == []
+    # Nothing to judge here, so the bundle is not refused at admission.
+    (tmp_path / "engine").mkdir()
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path / "engine"))
+    assert _submit_bundle(tmp_path, monkeypatch, bundle) is None
+
+
+def test_a_json_member_over_the_metadata_limit_is_left_out(tmp_path, monkeypatch):
+    """A JSON member larger than the unpack's metadata limit is never written;
+    the others are still extracted and judged."""
+    from steerlab_server.api import submissions
+    source = tmp_path / "source"
+    panel_study(source, {"reasoningEffort": "medium"}, model=PLAIN, status="frozen")
+    (source / "prompts" / "padding.json").write_text(json.dumps({"pad": "x" * 200_000}))
+    bundle = _bundle(source, tmp_path / "b.tar.gz")
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_METADATA_BYTES", "100000")
+    extracted = _extracted(bundle)
+    assert "prompts/padding.json" not in extracted
+    assert AGENT_PATH in extracted and "prompts/panels/p.json" in extracted
+    (tmp_path / "engine").mkdir()
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path / "engine"))
+    with pytest.raises(submissions.SubmissionRefusal, match="seat 'Ava': "):
+        _submit_bundle(tmp_path, monkeypatch, bundle)
