@@ -65,6 +65,19 @@ def tensor_keys(spec):
     return keys
 
 
+def convert_lens(spec, tensors, path):
+    """Write a lens's converted file: one tensor per fitted source layer, under
+    ``layer_<i>``, in the precision the source stored. This is the file every
+    lens consumer reads, and its SHA-256 is the record's ``converted.sha256``.
+
+    The one conversion. An import publishes its result, and an engine with a
+    lens library keeps the same bytes when a fit ends
+    (``jlens/lens_library.keep_fitted``); both call this, so the hash a later
+    import records is the hash the library filed the fit under.
+    """
+    tensors.save({f'layer_{layer}': key for layer, key in spec['lens']['layers'].items()}, path)
+
+
 def lens_details(spec, tensors):
     block = spec.get('lens')
     if not isinstance(block, dict) or block.keys() - {'targetLayer', 'layers', 'promptsFitted', 'corpus', 'corpora', 'maxSeqLen', 'tier', 'fitDtype'}:
@@ -225,7 +238,7 @@ def publish_lens(spec, plan, tensors, captured, staged, target, root, artifact_i
     if details != plan['details']:
         raise ImportRefusal('The captured lens metadata differs from the review. Review these source bytes again.')
     tensor_path = staged / 'jacobians.safetensors'
-    tensors.save({f'layer_{layer}': key for layer, key in spec['lens']['layers'].items()}, tensor_path)
+    convert_lens(spec, tensors, tensor_path)
     metadata = spec.get('source', {})
     source = SourceRef(repo=metadata.get('repository'), folder='source',
                        tensorFile='tensorFile' + Path(plan['files']['tensorFile']['path']).suffix,
