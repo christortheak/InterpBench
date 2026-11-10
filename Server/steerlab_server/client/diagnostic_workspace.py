@@ -52,8 +52,8 @@ def main():
             return 0
         from ..experiment.diagnostic_archives import Refusal
         repair = Refusal.repair_action
-        from .diagnostic_commands import workspace_action
-        print(json.dumps({'ok': True, 'clientSHA256': identity, 'clientRoot': root, 'result': workspace_action(document['action'], document['payload'])}))
+        from .diagnostic_commands import bridge_action
+        print(json.dumps({'ok': True, 'clientSHA256': identity, 'clientRoot': root, 'result': bridge_action(document['action'], document['payload'])}))
         return 0
     except Exception as exc:
         repair = getattr(exc, 'repair_action', None) or getattr(exc, 'repair', None) or repair

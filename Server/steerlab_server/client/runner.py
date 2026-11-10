@@ -891,12 +891,16 @@ class RunnerClient:
                     "from a runner that has since restarted with a different "
                     "STEERLAB_JOBS_DB is gone, not hidden."))
         if status == 413:
+            # The lens advice is the same sentence on the Mac
+            # (`LensLibrary.oversizeAdvice`): a request that carries a lens
+            # is the usual body over the cap (public issue #13).
+            from .lens_transfer import OVERSIZE_LENS_ADVICE
             raise RunnerHTTPError(
                 status, detail, url=url, code="runnerRefused", state="refused",
                 repair_action=(
                     "the runner refused the body as oversize — raise its "
                     "STEERLAB_MAX_UPLOAD_BYTES, or package a smaller bundle. "
-                    "Nothing was staged."))
+                    + OVERSIZE_LENS_ADVICE + " Nothing was staged."))
         if status == 503:
             raise RunnerHTTPError(
                 status, detail, url=url, code="runnerUnavailable",
@@ -1039,6 +1043,10 @@ class RunnerClient:
         if not os.path.isfile(source):
             raise FileNotFoundError(2, "no such bundle", source)
         filename = os.path.basename(source)
+        # A request that refers to its lens needs the engine's lens library:
+        # asked before a byte is sent (`lens_transfer`).
+        from . import lens_transfer
+        lens_transfer.require_library_for_archive(self, source)
         local = sha256_file(source)
         local_bytes = os.path.getsize(source)
 
@@ -1336,6 +1344,78 @@ class RunnerClient:
         # Hashing/compressing multi-gigabyte evidence may produce no response
         # bytes for minutes. Explicit caller budgets still take precedence.
         return self._diagnostic_timeout
+
+    # -- the lens library ----------------------------------------------------
+    #
+    # A site keeps converted lens files once, filed under their SHA-256
+    # (`converted.sha256`), outside any workspace. `lens_transfer.push` holds
+    # the order these are called in; each method here is one route.
+
+    def lens_library_status(self, sha256: str) -> dict:
+        """``GET /api/lens-library/{sha}``: whether the site holds the bytes,
+        and the parts of an upload in progress."""
+        return self._json("GET", f"/api/lens-library/{quote(sha256, safe='')}")
+
+    def lens_library_begin(self, sha256: str, size: int, parts: list) -> dict:
+        """``POST …/begin``: the part manifest. Answers the parts still to
+        send; idempotent for an identical manifest."""
+        return self._json(
+            "POST", f"/api/lens-library/{quote(sha256, safe='')}/begin",
+            json_body={"bytes": size, "parts": parts},
+            timeout=self.diagnostic_timeout)
+
+    def lens_library_put_part(self, sha256: str, part: dict, source: str) -> dict:
+        """``PUT …/parts/{index}``: one part's bytes, streamed from its place
+        in the file. The file is never read whole."""
+        def chunks():
+            remaining = part["bytes"]
+            with open(source, "rb") as handle:
+                handle.seek(part["offset"])
+                while remaining:
+                    block = handle.read(min(UPLOAD_CHUNK_BYTES, remaining))
+                    if not block:
+                        raise RunnerRefusal(
+                            "the converted lens file ended before the part it "
+                            "was planned to hold; it changed during the upload",
+                            repair_action="run lens-push again once nothing "
+                                          "else is writing the lens folder")
+                    remaining -= len(block)
+                    yield block
+
+        return self._json(
+            "PUT",
+            f"/api/lens-library/{quote(sha256, safe='')}/parts/{int(part['index'])}",
+            content=chunks(),
+            headers={"Content-Type": "application/octet-stream",
+                     "Content-Length": str(part["bytes"]),
+                     "X-Content-SHA256": part["sha256"]},
+            timeout=self.diagnostic_timeout)
+
+    def lens_library_complete(self, sha256: str) -> dict:
+        """``POST …/complete``: the site hashes the whole file and publishes
+        the entry."""
+        return self._json(
+            "POST", f"/api/lens-library/{quote(sha256, safe='')}/complete",
+            json_body={}, timeout=self.diagnostic_timeout)
+
+    def lens_library_register(self, record: dict) -> dict:
+        """``POST /api/lens-library/register``: the lens record, into the
+        site's serving workspace."""
+        return self._json("POST", "/api/lens-library/register",
+                          json_body={"record": record},
+                          timeout=self.diagnostic_timeout)
+
+    def lens_library_adopt(self, path: str, sha256: str) -> dict:
+        """``POST /api/lens-library/adopt``: a copy already on the site. The
+        site hashes it and keeps it; the copy is left alone."""
+        return self._json("POST", "/api/lens-library/adopt",
+                          json_body={"path": path, "sha256": sha256},
+                          timeout=self.diagnostic_timeout)
+
+    def lens_record(self, lens_id: str) -> dict:
+        """``GET /api/jlens/lenses/{lensID}``: the site workspace's record of
+        one lens."""
+        return self._json("GET", f"/api/jlens/lenses/{quote(lens_id, safe='')}")
 
     def stage_diagnostic(self, path: str, sha256: str) -> dict:
         return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256}, timeout=self.diagnostic_timeout)
