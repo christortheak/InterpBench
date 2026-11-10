@@ -586,6 +586,20 @@ def test_another_machines_folder_never_reaches_the_site(site):
     assert site.client.post('/api/lens-library/register', json={'record': 'lens.json'}).status_code == 400
     assert site.client.post('/api/lens-library/register', json={'record': record_for(site.sha), 'x': 1}).status_code == 400
     assert sorted(path.name for path in (site.root / 'runs/jlens-lenses').iterdir()) == [LENS_ID]
+    # A lens folder on the site that is a link out of the workspace is never written through.
+    outside = site.root.parent / 'outside'
+    outside.mkdir()
+    (site.root / 'runs/jlens-lenses/custom-lens-linked').symlink_to(outside)
+    linked = site.client.post('/api/lens-library/register',
+                              json={'record': record_for(site.sha, lens_id='custom-lens-linked',
+                                                         path='runs/jlens-lenses/custom-lens-linked/jacobians.safetensors')})
+    assert linked.status_code == 409 and refusal(linked)['code'] == 'lensRecordNotOrdinary'
+    assert list(outside.iterdir()) == []
+    # The same qualification twice in one record is one qualification.
+    twice = [qualification(site.sha, 'q-1'), qualification(site.sha, 'q-1')]
+    assert site.client.post('/api/lens-library/register',
+                            json={'record': record_for(site.sha, qualifications=twice)}).json()['changed'] is True
+    assert [q.qualificationID for q in lens_store.resolve(LENS_ID, str(site.root)).qualifications] == ['q-1']
 
 
 def test_a_registered_record_gains_qualifications_and_never_loses_one(site):

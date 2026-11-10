@@ -300,6 +300,8 @@ def _publish(base, staged, sha, origin):
         found = _entry(base, sha)
         if found is not None:
             return found
+        if not _under(base, sha).exists():
+            raise               # nothing holds the name: the failure is the storage's own, and says so
         raise LensLibraryRefusal(
             'lensLibraryEntryBusy',
             f'The lens library already has a folder for {sha} that is not a complete entry: another copy of this '
@@ -420,12 +422,13 @@ def begin(sha, body):
                 f'The lens library has {free} bytes free, and receiving this lens needs {needed}. Nothing was begun.',
                 "Free space on the lens library's storage, or ask the site's operator to, then run `lens-push` again.")
         if current is None:
+            # No plan was ever published here, so nothing in the folder was
+            # checked against one: start from an empty folder.
+            _discard(folder)
             for name in ('received', 'spool'):
                 (folder / name).mkdir(parents=True, exist_ok=True)
-            data = folder / 'data'
-            if not data.exists():
-                with open(data, 'xb') as stream:
-                    stream.truncate(plan['bytes'])
+            with open(folder / 'data', 'xb') as stream:
+                stream.truncate(plan['bytes'])
             staged = folder / ('manifest-' + secrets.token_hex(8))
             staged.write_bytes(archives.encoded(plan))
             try:
@@ -649,8 +652,7 @@ def register(document, workspace_root):
         if not isinstance(lens_id, str) or len(archives.parts(lens_id)) != 1 or lens_id.startswith('.'):
             raise ValueError
         record = JLensRecord.from_dict(document)
-        lens_store.lens_directory(lens_id, str(workspace_root))
-    except (ValueError, TypeError, AttributeError, KeyError, JLensError) as exc:
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
         raise invalid('This is not a lens record (`lens.json`) with a usable lens name.') from exc
     converted = record.converted
     if (converted is None or not isinstance(converted.sha256, str) or not _KEY.fullmatch(converted.sha256)
@@ -676,8 +678,11 @@ def register(document, workspace_root):
     try:
         target = archives.ordinary(workspace, canonical.rsplit('/', 1)[0] + '/' + lens_store.RECORD_NAME, missing=True)
     except archives.Refusal as exc:
-        raise invalid("The site's lens folder for this name is reached through a symbolic link; nothing was "
-                      'written.') from exc
+        raise LensLibraryRefusal(
+            'lensRecordNotOrdinary',
+            f"The site's folder for the lens '{lens_id}' is reached through a symbolic link, or a file stands where "
+            'a folder belongs. Nothing was written.',
+            "Ask the site's operator to replace it with an ordinary folder, then send the lens again.") from exc
     with _locked('record:' + lens_id):
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -711,12 +716,13 @@ def register(document, workspace_root):
         for entry in record.qualifications:
             if entry.qualificationID not in known:
                 added.append(entry)
+                known[entry.qualificationID] = entry     # the same entry twice in one record is added once
             elif known[entry.qualificationID] != entry:
                 raise LensLibraryRefusal(
                     'lensQualificationDiffers',
                     f"The site's record for the lens '{lens_id}' already has a qualification "
                     f'{entry.qualificationID} with different content. Nothing was changed.',
-                    'A qualification is never replaced. Compare the two records; if yours is the newer check, run '
+                    'A qualification is never replaced. Compare the two records. If yours is the one to keep, run '
                     'the qualification again so it gets its own ID, then send the lens again.')
         for entry in added:
             qualification.append_qualification(existing, entry, root=str(workspace))
