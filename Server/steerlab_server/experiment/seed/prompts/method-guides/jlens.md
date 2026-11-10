@@ -652,10 +652,11 @@ own: `lensID`, `layers` (or `allLayers` for every fitted source layer), `topK`
 wins, then the agent's own, then the default. The agent's vectors, adapter, and
 neutral basis travel with the request and are hash-checked again on the node.
 
-A request also carries its lens unless you say otherwise, and the converted
-file of a lens for a large model is several gigabytes: more than a site accepts
-in one upload, and another copy on the site for every request. Send the lens to
-the site once, then package each request so that it refers to the site's copy:
+A request also carries its lens unless you say otherwise. The converted file of
+a lens for a large model is several gigabytes, which can be more than a site
+accepts in one upload (4 GiB unless the site raised it), and every request that
+carries it leaves another copy on the site. Send the lens to the site once,
+then package each request so that it refers to the site's copy:
 
 ```sh
 steerlab-cli remote lens-push <lensID> --site <id>
@@ -664,10 +665,11 @@ steerlab-cli science package <request.json> --archive <file> --plan-sha256 <dige
 ```
 
 On the Python client the first command is `steerlab runner lens-push <lensID>
---runner <url>`. `lens-push` sends the lens in parts that follow its layers,
-checks each part, and registers the lens's record on the site. Run again after
-an interruption, it sends only what is missing. When the site already holds the
-lens (it was fitted there, or sent from another workspace), nothing is uploaded
+--runner <url>`, and the other two begin `steerlab science`. `lens-push` sends
+the lens in parts that follow its layers, checks each part, and registers the
+lens's record on the site. Run again after an interruption, it sends only what
+is missing. When the site already holds the lens (for example, it was sent from
+another workspace, or the site kept it after fitting it), nothing is uploaded
 and the record is still registered. `lens-status <lensID>` says what the site
 holds. With `--lens-reference`, the input plan lists the lens under
 `libraryLenses` and the archive leaves its converted file out; the file is

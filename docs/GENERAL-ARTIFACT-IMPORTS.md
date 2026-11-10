@@ -152,18 +152,22 @@ stays its source. Two verbs take it elsewhere without minting another lens:
 - **A site.** `steerlab-cli remote lens-push <lensID> --site <id>` (or `steerlab
   runner lens-push <lensID> --runner <url>`) sends the converted file to the
   site's lens library once, in parts that follow its layers, each checked, and
-  registers the lens's record there. No part comes near the upload limit. Run
-  again after an interruption, it sends only what is missing. `lens-status
+  registers the lens's record there. No part is larger than the engine's
+  `lensLibrary.partMaxBytes` (256 MiB at most), so the upload limit does not
+  stand in the way of a large lens. Run again after an interruption, it sends
+  only what is missing. `lens-status
   <lensID>` says what the site holds. A request packaged with `science package
   --lens-reference` then refers to the site's copy and leaves the converted file
   out. On a site that forbids HTTP transfer, copy the converted file there with
   the site's own tool and run `lens-push` with `--adopt <path on the site>`.
 
-A site keeps its library in the folder its profile names as
+A cluster site keeps its library in the folder its profile names as
 `constraints.storageRoots.lensLibrary` (rendered as `STEERLAB_LENS_LIBRARY_ROOT`).
-An engine with no such folder, or from before the library, has none: both
-clients refuse `lens-push`, and the upload of a request that refers to its lens,
-before sending anything.
+A cluster engine whose profile names no such folder has no library, because an
+engine never guesses a folder on cluster storage; neither has an engine from
+before the library. Both clients read the engine's `lensLibrary.available`
+capability and, where it is not true, refuse `lens-push` and the upload of a
+request that refers to its lens before sending anything.
 
 ## Intended use and large files
 
