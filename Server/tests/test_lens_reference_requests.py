@@ -269,6 +269,37 @@ def test_a_request_that_reads_no_lens_names_none_and_needs_no_library(setup, mon
     assert scientific_execution.plan(staged['request'], profile)['request']['operation'] == 'battery'
 
 
+def test_a_local_job_is_told_which_lens_library_its_engine_has(setup, monkeypatch):
+    import time
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    root, request, profile = setup
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    told = []
+
+    def run(self, command, **kwargs):
+        told.append(kwargs.get('env'))
+        Path(command[-2]).write_text(json.dumps({'result': {}}))
+        return SimpleNamespace(returncode=0, stderr='')
+    monkeypatch.setattr(scientific_execution.LocalExecutor, 'run', run)
+
+    def submit(profile):
+        submitted = scientific_execution.submit(request, scientific_execution.plan(request, profile)['planSHA256'],
+                                                profile=profile, jobs=jobs)
+        deadline = time.monotonic() + 5
+        while jobs.get(submitted['jobId']).status not in {'failed', 'succeeded'} and time.monotonic() < deadline:
+            time.sleep(.01)
+    submit(profile)
+    assert told == [{'STEERLAB_LENS_LIBRARY_ROOT': str(root / '.steerlab/lens-library')}]
+    # An engine inside a scheduler allocation with no folder declared has no library. The local
+    # executor drops the scheduler's job id for its child, so the child is told, and cannot guess.
+    monkeypatch.setenv('SLURM_JOB_ID', '1')
+    submit(ServerProfile.from_env())
+    assert told[-1] == {'STEERLAB_LENS_LIBRARY_ROOT': ''}
+    monkeypatch.delenv('SLURM_JOB_ID')
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', '')
+    assert ServerProfile.from_env().lens_library_root is None and lens_library.root() is None
+
+
 def test_an_archive_cannot_claim_a_lens_its_request_does_not_read(managed):
     root, profile = managed
     request = probe_request(root)

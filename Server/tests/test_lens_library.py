@@ -149,8 +149,12 @@ def test_the_root_is_named_by_the_site_and_never_guessed_on_a_cluster(tmp_path, 
     assert ServerProfile.from_env().lens_library_root == str(tmp_path / 'lenses')
     monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
     assert ServerProfile.from_env().lens_library_root == str(tmp_path / 'lenses')
-    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', '')
-    assert ServerProfile.from_env().lens_library_root is None
+    # Set but empty means "no library" wherever it is read: how an engine tells a local child it has none.
+    for executor in ('slurm', 'local'):
+        monkeypatch.setenv('STEERLAB_EXECUTOR', executor)
+        monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', '')
+        monkeypatch.delenv('SLURM_JOB_ID', raising=False)
+        assert ServerProfile.from_env().lens_library_root is None
 
 
 def test_capabilities_say_whether_lenses_are_kept_and_how_large_a_part_may_be(site, monkeypatch):

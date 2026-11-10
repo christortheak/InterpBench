@@ -289,7 +289,10 @@ def submit(request, expected, *, profile, jobs, registry=None, execution_capsule
                 jobs.store.update(job)
                 if registry is not None and reviewed.get('compute') != 'cpu':
                     registry.unload_all()
+                # The child is told which lens library this engine has, or that
+                # it has none, so it never works one out for itself.
                 proc = LocalExecutor().run(command(job.id), log=job.log,
+                                            env={'STEERLAB_LENS_LIBRARY_ROOT': profile.lens_library_root or ''},
                                             should_cancel=lambda: job.cancelled)
                 record = records / (job.id + '.json')
                 if record.exists():
@@ -336,11 +339,12 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
     # The lens library is the launching engine's, so it is resolved before
     # this process is pointed at the execution root: an engine that keeps its
     # library beside its own records would otherwise look for it beside the
-    # execution copy. An engine with no library stays without one.
+    # execution copy. An engine with no library stays without one (set and
+    # empty says so).
     library_root = ServerProfile.from_env().lens_library_root
     os.environ['STEERLAB_ROOT'] = root
     os.environ['STEERLAB_RUN_ROOT'] = str(Path(root) / 'runs')
-    if library_root: os.environ['STEERLAB_LENS_LIBRARY_ROOT'] = library_root
+    os.environ['STEERLAB_LENS_LIBRARY_ROOT'] = library_root or ''
     os.chdir(root)
     directory = Path(packet).parent
     result = {'scientificPlan': reviewed, 'resumable': False,

@@ -164,11 +164,17 @@ def _lens_library_root(executor: str, metadata_root: str) -> str | None:
     variables its bundle carries and cannot tell which deployment launched it.
     Anywhere else the library sits beside this engine's own records, in
     ``<metadata root>/lens-library``.
+
+    The variable set but empty means "no library", whatever the executor. An
+    engine sets it that way for a process it launches on the same machine, so
+    the child answers as its launcher does (the local executor drops the
+    scheduler's job id, which the rule above would otherwise have read).
     """
-    declared = _expanded_path(os.environ.get("STEERLAB_LENS_LIBRARY_ROOT"))
+    raw = os.environ.get("STEERLAB_LENS_LIBRARY_ROOT")
+    declared = _expanded_path(raw)
     if declared:
         return declared
-    if executor == "slurm" or os.environ.get("SLURM_JOB_ID"):
+    if raw is not None or executor == "slurm" or os.environ.get("SLURM_JOB_ID"):
         return None
     return os.path.join(metadata_root, "lens-library")
 

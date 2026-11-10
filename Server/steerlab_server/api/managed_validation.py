@@ -12,10 +12,10 @@ def validate(request, root):
     environment = {**os.environ, 'STEERLAB_ROOT': str(Path(root).resolve()), 'STEERLAB_RUN_ROOT': str(Path(root).resolve() / 'runs'), 'PYTHONPATH': str(Path(__file__).resolve().parents[2])}
     # The lens library is this engine's, wherever the validated root is: an
     # engine that keeps it beside its own records names it for the child,
-    # which would otherwise look beside the root it was pointed at.
+    # which would otherwise look beside the root it was pointed at. Set and
+    # empty tells the child there is none.
     from .profile import ServerProfile
-    library = ServerProfile.from_env().lens_library_root
-    if library: environment['STEERLAB_LENS_LIBRARY_ROOT'] = library
+    environment['STEERLAB_LENS_LIBRARY_ROOT'] = ServerProfile.from_env().lens_library_root or ''
     try:
         result = subprocess.run([sys.executable, '-m', __name__], input=archives.encoded({'request': request, 'root': str(root)}),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, env=environment, timeout=120)
