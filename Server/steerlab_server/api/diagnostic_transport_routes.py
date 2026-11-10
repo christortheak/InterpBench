@@ -16,7 +16,13 @@ def build_router(state):
             if state.jobs is None: raise archives.Refusal('Use the controller that owns durable job records.')
             return callback()
         except (ValueError, OSError, KeyError, TypeError) as exc:
-            raise HTTPException(409, detail={'code': 'diagnosticTransportRefused', 'reason': str(exc), 'repairAction': getattr(exc, 'repair_action', archives.Refusal.repair_action)}) from exc
+            # A request that refers to a lens this engine does not hold keeps
+            # its own code (`lensNotInLibrary`, `lensLibraryUnavailable`), so a
+            # client can tell it from a damaged archive. Every other refusal
+            # here keeps the family's code.
+            from ..jlens.lens_library import LensLibraryRefusal
+            code = exc.code if isinstance(exc, LensLibraryRefusal) else 'diagnosticTransportRefused'
+            raise HTTPException(409, detail={'code': code, 'reason': str(exc), 'repairAction': getattr(exc, 'repair_action', archives.Refusal.repair_action)}) from exc
     @router.post('/api/science/workspace/{action}')
     def workspace(action: str, body: dict):
         from pathlib import Path

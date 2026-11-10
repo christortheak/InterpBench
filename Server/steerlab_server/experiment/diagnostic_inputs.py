@@ -219,22 +219,28 @@ def _custom_code_block(reviewed, root):
             'acknowledgeFlag': '--custom-code-sha256 ' + ','.join(pending) if pending else None}
 
 
-def plan(request, root):
+def plan(request, root, lens_reference=False):
     """The reviewed input plan: every file an execution copy carries, hashed.
     When those files hold custom code (a policy's expert provider), the plan
-    also carries the notice and the code itself under ``customCode``."""
-    reviewed = _plan(request, root)
+    also carries the notice and the code itself under ``customCode``.
+
+    ``lens_reference`` (``--lens-reference``, public issues #13 and #14): each
+    lens's converted file is checked here, then named by its hash under
+    ``libraryLenses`` and left out of ``files``, for a site whose lens library
+    holds it. Off, the request carries its lenses, as it always has
+    (``managed_inputs`` gives the modes)."""
+    reviewed = _plan(request, root, lens_reference)
     block = _custom_code_block(reviewed, root)
     return {**reviewed, 'customCode': block} if block else reviewed
 
 
-def _plan(request, root):
+def _plan(request, root, lens_reference=False):
     from ..api.scientific_execution import request_document
     from . import paths
     request = request_document(request)
     from . import managed_methods, managed_inputs
     if request['operation'] in managed_methods.OPERATIONS:
-        return managed_inputs.plan(request, root)
+        return managed_inputs.plan(request, root, lens_reference)
     root = Path(root).resolve(); p = request['parameters']; files = set()
     def add(path):
         path = Path(path)
@@ -279,16 +285,24 @@ def _plan(request, root):
     # Battery and stability closures are only ever planned to travel (package,
     # stage, verify a staged copy), so the transport bound applies at review.
     result = {'schemaVersion': 1, 'request': request, 'sourceRoot': str(root), 'files': archives.snapshot(root, files)}
+    # These operations read no lens, so a plan asked to refer names none.
+    if lens_reference is managed_inputs.REFERRED: result['libraryLenses'] = []
     return {**result, 'planSHA256': archives.digest(result)}
 
 
-def package(request, root, destination, expected, acknowledge=None):
+def package(request, root, destination, expected, acknowledge=None, lens_reference=False):
     """Package the reviewed inputs. Inputs that carry custom code are packaged
     only once every piece of it is acknowledged in this workspace: earlier, or
     now, by naming each SHA-256 the plan shows in ``acknowledge`` (the
-    comma-separated value of ``--custom-code-sha256``)."""
+    comma-separated value of ``--custom-code-sha256``).
+
+    With ``lens_reference`` the archive carries each lens's record and names
+    its converted file by hash (``context.lensReference`` and
+    ``context.libraryLenses``); the plan must have been reviewed the same
+    way, since the two plans list different files."""
     from . import custom_code
-    reviewed = plan(request, root)
+    lens_reference = bool(lens_reference)
+    reviewed = plan(request, root, lens_reference)
     if reviewed['planSHA256'] != expected: raise archives.Refusal('Input source plan changed; re-review before packaging.')
     block = reviewed.get('customCode')
     named = [part.strip() for part in (acknowledge or '').split(',') if part.strip()]
@@ -319,6 +333,9 @@ def package(request, root, destination, expected, acknowledge=None):
     # used to carry `sourceRoot`, the workspace's absolute path here, which no
     # reader used. The reviewed plan's digest still identifies the source.
     context = {'request': reviewed['request'], 'sourcePlanSHA256': expected}
+    # Present only when the request refers to its lenses: an archive that
+    # carries them is described exactly as it was before.
+    if lens_reference: context.update(lensReference=True, libraryLenses=reviewed['libraryLenses'])
     return archives.package(root, [e['path'] for e in reviewed['files']], destination,
         kind='diagnosticInput', context=context, expected_entries=reviewed['files'])
 

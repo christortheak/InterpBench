@@ -11,6 +11,41 @@ def storage(profile):
     return Path(profile.run_root or Path(profile.root) / 'runs').resolve()
 
 
+def referred_lenses(metadata):
+    """The lenses a staged archive refers to instead of carrying, as packaging
+    recorded them (`--lens-reference`); none for an archive that carries its
+    lenses, whose description is the one it always had."""
+    context = metadata['context']
+    if 'lensReference' not in context and 'libraryLenses' not in context:
+        return []
+    lenses = context.get('libraryLenses')
+    if context.get('lensReference') is not True or not isinstance(lenses, list) or any(
+            not isinstance(lens, dict) or set(lens) != {'lensID', 'convertedSHA256', 'bytes'}
+            or not isinstance(lens['lensID'], str) or not isinstance(lens['convertedSHA256'], str)
+            or type(lens['bytes']) is not int for lens in lenses):
+        raise archives.Refusal('The archive names its lenses in a form this engine does not read; package the request again.')
+    return lenses
+
+
+def closure_matches(metadata, root):
+    """Plan the archive's closure where it will run, and say whether it is
+    exactly what the archive declares: the files it carries, and the lenses it
+    refers to.
+
+    A lens referred to must be in this engine's lens library. That is checked
+    first and by name (existence and size; nothing is hashed), so an engine
+    that lacks the lens, or has no library, says so with a repair instead of
+    reporting a closure that does not match.
+    """
+    from ..experiment import diagnostic_inputs, managed_inputs
+    lenses = referred_lenses(metadata)
+    if lenses:
+        from ..jlens import lens_library
+        lens_library.require_held(lenses)
+    closure = diagnostic_inputs.plan(metadata['context']['request'], root, lens_reference=managed_inputs.WHERE_HELD)
+    return closure['files'] == metadata['entries'] and closure.get('libraryLenses', []) == lenses
+
+
 def stage(path, expected, profile):
     base = storage(profile)
     base.mkdir(parents=True, exist_ok=True)
@@ -26,6 +61,12 @@ def stage(path, expected, profile):
     source = archives.ordinary(base, relative)
     metadata = archives.inspect(source, expected)
     if metadata['kind'] != 'diagnosticInput': raise archives.Refusal('Expected diagnostic inputs, not evidence.')
+    # Before anything is copied or unpacked: a request that refers to a lens
+    # this engine does not hold is refused in a sentence, with its repair.
+    lenses = referred_lenses(metadata)
+    if lenses:
+        from ..jlens import lens_library
+        lens_library.require_held(lenses)
     target = archives.ordinary(base, 'diagnostic-input-' + expected, missing=True)
     with manifest_files.transaction(str(target), workspace_root=profile.metadata_root):
         archives.refuse_empty_publication_claim(target)
@@ -36,9 +77,7 @@ def stage(path, expected, profile):
                 archives.inspect(capture, expected, extract_to=workspace)
                 # Evaluate the staged bytes through the real cheap admission
                 # owner before publication; no model is loaded or job submitted.
-                from ..experiment import diagnostic_inputs
-                closure = diagnostic_inputs.plan(metadata['context']['request'], str(workspace))
-                if closure['files'] != metadata['entries']: raise archives.Refusal('Input bundle does not contain exactly the required diagnostic closure.')
+                if not closure_matches(metadata, str(workspace)): raise archives.Refusal('Input bundle does not contain exactly the required diagnostic closure.')
                 scientific_execution.input_plan(metadata['context']['request'], str(workspace))
                 (Path(temp) / 'capsule/input.json').write_bytes(archives.encoded(metadata))
                 shutil.move(capture, Path(temp) / 'capsule/input.tar.gz')
@@ -60,8 +99,11 @@ def resolve(expected, profile):
 
 @input_hashes.operation
 def verify_inputs(root, expected):
-    """Re-read the complete portable closure at admission and on the queued child."""
-    from ..experiment import diagnostic_inputs
+    """Re-read the complete portable closure at admission and on the queued child.
+
+    A lens the archive refers to is checked in the lens library by existence
+    and size here. The queued child hashes it once, where it hashes its other
+    inputs (`scientific_execution.input_plan` with `verify_library`)."""
     root = Path(root)
     if root.name != 'workspace' or root.parent.name != 'diagnostic-input-' + expected:
         raise archives.Refusal('Staged execution root differs from the input digest.')
@@ -69,8 +111,7 @@ def verify_inputs(root, expected):
     if metadata['kind'] != 'diagnosticInput': raise archives.Refusal('Staged archive has the wrong kind.')
     if archives.snapshot(root, [e['path'] for e in metadata['entries']]) != metadata['entries']:
         raise archives.Refusal('Staged input bytes changed; restage the original archive.')
-    closure = diagnostic_inputs.plan(metadata['context']['request'], root)
-    if closure['files'] != metadata['entries']:
+    if not closure_matches(metadata, root):
         raise archives.Refusal('Staged dependency closure changed or escapes the isolated copy.')
     return metadata['context']['request']
 

@@ -88,13 +88,19 @@ def workspace_file(root, relative):
 
 
 @input_hashes.operation
-def input_plan(request, root):
+def input_plan(request, root, *, verify_library=False):
     request = request_document(request)
     p = request['parameters']
     from ..experiment import managed_methods, managed_inputs
     if request['operation'] in managed_methods.OPERATIONS:
         from . import managed_validation
-        captured = managed_inputs.plan(request, root)
+        # Where a request runs, a lens whose converted file is not in the
+        # execution root is taken from this engine's lens library when that
+        # holds its hash (public issues #13 and #14); one that is present is
+        # carried and hashed as before, so such a plan is unchanged. The
+        # library's file is checked by existence and size here, and hashed
+        # once on the queued job (`verify_library`).
+        captured = managed_inputs.plan(request, root, managed_inputs.WHERE_HELD, verify_library)
         validated = managed_validation.validate(request, root)
         result = {'request': request, 'root': str(Path(root).resolve()), 'inputSHA256': digest(captured),
                 'models': validated['models'], 'effectiveConfig': validated['effectiveConfig'],
@@ -325,10 +331,16 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
     started = time.time()
     reviewed = json.loads(Path(packet).read_text())
     root = reviewed['root']
-    prior_environment = {key: os.environ.get(key) for key in ('STEERLAB_ROOT', 'STEERLAB_RUN_ROOT')}
+    prior_environment = {key: os.environ.get(key) for key in ('STEERLAB_ROOT', 'STEERLAB_RUN_ROOT', 'STEERLAB_LENS_LIBRARY_ROOT')}
     prior_cwd = os.getcwd()
+    # The lens library is the launching engine's, so it is resolved before
+    # this process is pointed at the execution root: an engine that keeps its
+    # library beside its own records would otherwise look for it beside the
+    # execution copy. An engine with no library stays without one.
+    library_root = ServerProfile.from_env().lens_library_root
     os.environ['STEERLAB_ROOT'] = root
     os.environ['STEERLAB_RUN_ROOT'] = str(Path(root) / 'runs')
+    if library_root: os.environ['STEERLAB_LENS_LIBRARY_ROOT'] = library_root
     os.chdir(root)
     directory = Path(packet).parent
     result = {'scientificPlan': reviewed, 'resumable': False,
@@ -358,7 +370,9 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
             staged_request = diagnostic_transport.verify_inputs(root, reviewed['inputBundleSHA256'])
             if staged_request != reviewed['request']:
                 raise ScientificRefusal('Staged archive request differs from the queued plan.')
-        current = input_plan(reviewed['request'], root)
+        # The queued job hashes a lens taken from the lens library once, here,
+        # as it hashes the inputs its execution root carries.
+        current = input_plan(reviewed['request'], root, verify_library=True)
         if current['inputSHA256'] != reviewed['inputSHA256']:
             raise ScientificRefusal('Inputs changed while queued; diagnostic refused before model loading.')
         p = current['request']['parameters']
@@ -398,6 +412,11 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         status = 'succeeded'
     except Exception as exc:
         error = str(exc)
+        from ..jlens.lens_library import LensLibraryRefusal
+        if isinstance(exc, LensLibraryRefusal):
+            # The job record keeps one sentence; a lens the library lost while
+            # the job waited needs its repair there too.
+            error += ' ' + exc.repair_action
         if getattr(exc, 'scheduler_interrupted', False):
             # A scheduler signal stopped the owner (a cancel, or the walltime).
             # The record names no status, like the in-progress record above,
@@ -406,9 +425,30 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
             status = None
         print(error, file=sys.stderr)
     finally:
-        write_json(Path(record), {'id': job_id, 'kind': 'science:' + reviewed['request']['operation'],
+        document = {'id': job_id, 'kind': 'science:' + reviewed['request']['operation'],
             **({'status': status} if status is not None else {}), 'result': result, 'error': error,
-            'finishedAt': time.time(), **executor_identity, 'elapsedSeconds': time.time() - started})
+            'finishedAt': time.time(), **executor_identity, 'elapsedSeconds': time.time() - started}
+        write_json(Path(record), document)
+    if status == 'succeeded' and reviewed['request']['operation'] in ('jlens-fit', 'jlens-fit-merge') and result.get('runDirectory'):
+        # A lens fitted here stays here (public issue #14): the engine keeps
+        # the bytes an import of this fit produces, so the researcher's
+        # machine need not send them back. This runs after the fit's own
+        # record is written and outside the fitting owner: it reads the run
+        # folder, writes only to the lens library, and cannot fail the fit.
+        from ..jlens import lens_library
+        if reviewed.get('roundSubmission'):
+            # One shard of a fitting round is a slice of the lens, not the
+            # lens: the round's merge is what a researcher imports, and the
+            # library has no delete, so a copy of every shard would stay.
+            result['lensLibrary'] = {'kept': False, 'convertedSHA256': None,
+                                     'reason': 'This fit is one shard of a fitting round: a slice of a lens, not a lens. '
+                                               "Only the round's merged lens is offered to the lens library."}
+        else:
+            result['lensLibrary'] = lens_library.keep_fitted(result['runDirectory'])
+        try:
+            write_json(Path(record), document)
+        except OSError:
+            pass
     os.chdir(prior_cwd)
     for key, value in prior_environment.items():
         if value is None: os.environ.pop(key, None)

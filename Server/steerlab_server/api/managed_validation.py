@@ -10,6 +10,12 @@ from ..experiment import diagnostic_archives as archives
 
 def validate(request, root):
     environment = {**os.environ, 'STEERLAB_ROOT': str(Path(root).resolve()), 'STEERLAB_RUN_ROOT': str(Path(root).resolve() / 'runs'), 'PYTHONPATH': str(Path(__file__).resolve().parents[2])}
+    # The lens library is this engine's, wherever the validated root is: an
+    # engine that keeps it beside its own records names it for the child,
+    # which would otherwise look beside the root it was pointed at.
+    from .profile import ServerProfile
+    library = ServerProfile.from_env().lens_library_root
+    if library: environment['STEERLAB_LENS_LIBRARY_ROOT'] = library
     try:
         result = subprocess.run([sys.executable, '-m', __name__], input=archives.encoded({'request': request, 'root': str(root)}),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, env=environment, timeout=120)
