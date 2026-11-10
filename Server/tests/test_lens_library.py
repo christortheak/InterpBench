@@ -166,7 +166,15 @@ def test_capabilities_say_whether_lenses_are_kept_and_how_large_a_part_may_be(si
     blocked.write_text('not a folder')
     monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(blocked / 'lenses'))
     assert capability_snapshot()['lensLibrary']['available'] is False
+    # `profile validate` says why, and only for a folder the site declared.
+    from steerlab_server.api.profile import validate_profile
+    (check,) = [c for c in validate_profile()['checks'] if c['name'] == 'lensLibraryRoot']
+    assert check['status'] == 'warn' and 'cannot be written' in check['message']
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(site.root / 'not-yet-made' / 'lenses'))
+    (check,) = [c for c in validate_profile()['checks'] if c['name'] == 'lensLibraryRoot']
+    assert check['status'] == 'ok' and capability_snapshot()['lensLibrary']['available'] is True
     monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')
+    assert not [c for c in validate_profile()['checks'] if c['name'] == 'lensLibraryRoot']
     monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
     monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'controller')
     snapshot = capability_snapshot()
@@ -411,6 +419,38 @@ def test_two_senders_of_one_lens_both_succeed_and_the_entry_is_whole(site):
         assert digest((site.library / sha / 'jacobians.safetensors').read_bytes()) == sha
         assert json.loads((site.library / sha / 'entry.json').read_bytes())['bytes'] == source.stat().st_size
         assert not (site.library / '.incoming' / sha).exists()
+
+
+def test_an_entry_is_published_where_the_filesystem_has_no_create_only_rename(site, monkeypatch):
+    # Cluster storage (Lustre, NFS) answers EINVAL to the no-replace rename; publication
+    # then claims the entry's name with mkdir, and still never replaces an entry.
+    import errno
+    from steerlab_server.experiment import diagnostic_archives as archives
+    monkeypatch.setattr(archives, '_rename_noreplace', lambda source, target: errno.EINVAL)
+    sha, _, done = push(site.client, site.source)
+    assert done.status_code == 200 and done.json()['held'] is True
+    entry = site.library / sha
+    assert digest((entry / 'jacobians.safetensors').read_bytes()) == sha
+    before = (entry / 'entry.json').read_bytes()
+    # A second publisher of the same bytes finds the entry and leaves it as it is.
+    staged = site.root / 'runs/again.safetensors'
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(site.source.read_bytes())
+    with lens_library._staging(site.library.resolve()) as folder:
+        (folder / 'jacobians.safetensors').write_bytes(site.source.read_bytes())
+        assert lens_library._publish(site.library.resolve(), folder, sha, 'adopted')['bytes'] == staged.stat().st_size
+    assert (entry / 'entry.json').read_bytes() == before
+    # A name that is taken by something that is not an entry is refused, never replaced.
+    other = 'e' * 64
+    (site.library / other).mkdir()
+    (site.library / other / 'unrelated').write_text('kept')
+    with lens_library._staging(site.library.resolve()) as folder:
+        (folder / 'jacobians.safetensors').write_bytes(site.source.read_bytes())
+        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+            lens_library._publish(site.library.resolve(), folder, other, 'adopted')
+    assert refused.value.code == 'lensLibraryEntryBusy'
+    assert sorted(path.name for path in (site.library / other).iterdir()) == ['unrelated']
+    assert not list((site.library / '.incoming').iterdir())
 
 
 def test_a_lens_that_cannot_fit_is_refused_before_it_is_begun(site, monkeypatch):

@@ -586,6 +586,21 @@ def validate_profile(profile: ServerProfile | None = None) -> dict[str, Any]:
         _check_root(add, "archiveRoot", profile.archive_root, must_write=False)
     if profile.node_cache_root:
         _check_root(add, "nodeCacheRoot", profile.node_cache_root, must_write=True)
+    # Only a DECLARED lens library is checked: the folder is created on first
+    # use, so it need not exist yet, but something above it must let this
+    # engine create it. A site that names a folder it cannot write would
+    # otherwise learn so from `lensLibrary.available: false`, with no reason.
+    if os.environ.get("STEERLAB_LENS_LIBRARY_ROOT") and profile.lens_library_root:
+        from ..jlens import lens_library
+        if lens_library.writable(profile.lens_library_root):
+            add("lensLibraryRoot", "ok", profile.lens_library_root,
+                path=profile.lens_library_root)
+        else:
+            add("lensLibraryRoot", "warn",
+                f"{profile.lens_library_root} cannot be written, so this engine "
+                "keeps no lenses and every request must carry its lens; create "
+                "the folder, or make it writable for the account that runs the "
+                "engine", path=profile.lens_library_root)
 
     if profile.executor == "slurm":
         # All four scheduler binaries are site data (WP5 G5, audit c6-c8 —
