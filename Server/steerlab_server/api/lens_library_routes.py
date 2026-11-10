@@ -81,7 +81,7 @@ def build_router(state):
     async def part(sha: str, index: str, request: Request):
         require_http_transfer()
         try:
-            expected = library.expect_part(sha, index, request.headers.get('x-content-sha256'))
+            expected = await asyncio.to_thread(library.expect_part, sha, index, request.headers.get('x-content-sha256'))
             if expected is None:
                 return {'received': True}   # the library holds this lens already; nothing to keep
             try:

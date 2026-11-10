@@ -286,7 +286,14 @@ def _publish(base, staged, sha, origin):
     size = (staged / FILE_NAME).stat().st_size
     entry = {'schemaVersion': SCHEMA_VERSION, 'convertedSHA256': sha, 'bytes': size, 'origin': origin,
              'addedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
-    (staged / ENTRY_NAME).write_bytes(archives.encoded(entry))
+    # Both files reach storage before the entry gets its name, so a crash
+    # cannot leave a published entry whose record or bytes are still in flight.
+    with open(staged / FILE_NAME, 'rb') as stream:
+        os.fsync(stream.fileno())
+    with open(staged / ENTRY_NAME, 'xb') as stream:
+        stream.write(archives.encoded(entry))
+        stream.flush()
+        os.fsync(stream.fileno())
     try:
         archives.publish_directory(staged, _under(base, sha))
     except OSError as exc:
