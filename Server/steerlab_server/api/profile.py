@@ -81,6 +81,10 @@ class ServerProfile:
     slurm_walltime: str | None
     slurm_memory: str | None
     maintenance_calendar_path: str | None
+    #: Where this deployment keeps converted lens files, once each, under their
+    #: SHA-256 (``jlens/lens_library.py``). ``None`` means it keeps none: a
+    #: request must then carry its lens. See ``_lens_library_root``.
+    lens_library_root: str | None = None
 
     @classmethod
     def from_env(cls) -> "ServerProfile":
@@ -88,12 +92,13 @@ class ServerProfile:
         metadata = (_expanded_path(os.environ.get("STEERLAB_METADATA_ROOT"))
                     or os.path.join(root, ".steerlab"))
         max_loaded = os.environ.get("STEERLAB_MAX_LOADED_MODELS")
+        executor = _choice("STEERLAB_EXECUTOR", "local", _VALID_EXECUTORS)
         return cls(
             profile=_choice("STEERLAB_SERVER_PROFILE", "local", _VALID_PROFILES),
             launch_topology=_choice("STEERLAB_LAUNCH_TOPOLOGY", "local", _VALID_TOPOLOGIES),
             bind=os.environ.get("STEERLAB_BIND", "127.0.0.1"),
             auth_mode=_choice("STEERLAB_AUTH_MODE", "none", _VALID_AUTH),
-            executor=_choice("STEERLAB_EXECUTOR", "local", _VALID_EXECUTORS),
+            executor=executor,
             max_loaded_models=(int(max_loaded) if max_loaded else None),
             root=root,
             metadata_root=metadata,
@@ -112,6 +117,7 @@ class ServerProfile:
             slurm_walltime=os.environ.get("STEERLAB_SLURM_WALLTIME"),
             slurm_memory=os.environ.get("STEERLAB_SLURM_MEMORY"),
             maintenance_calendar_path=os.environ.get("STEERLAB_MAINTENANCE_CALENDAR"),
+            lens_library_root=_lens_library_root(executor, metadata),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +151,26 @@ def _expanded_path(value: str | None) -> str | None:
     if not value:
         return None
     return os.path.expanduser(os.path.expandvars(value))
+
+
+def _lens_library_root(executor: str, metadata_root: str) -> str | None:
+    """The lens library's folder, or ``None`` when this deployment has none.
+
+    ``STEERLAB_LENS_LIBRARY_ROOT`` names it (a site profile renders the
+    variable from its ``lensLibrary`` storage role). Without it, a deployment
+    that runs its work through Slurm has no library: cluster storage has
+    quotas and purge rules only the site knows, so a folder there is never
+    guessed. The same holds inside a scheduler job, which starts with only the
+    variables its bundle carries and cannot tell which deployment launched it.
+    Anywhere else the library sits beside this engine's own records, in
+    ``<metadata root>/lens-library``.
+    """
+    declared = _expanded_path(os.environ.get("STEERLAB_LENS_LIBRARY_ROOT"))
+    if declared:
+        return declared
+    if executor == "slurm" or os.environ.get("SLURM_JOB_ID"):
+        return None
+    return os.path.join(metadata_root, "lens-library")
 
 
 def _choice(name: str, default: str, allowed: set[str]) -> str:
@@ -220,6 +246,13 @@ def _prompt_reading_description() -> dict[str, Any]:
     return prompt_reading.engine_description()
 
 
+def _lens_library_capability(profile: "ServerProfile") -> dict[str, Any]:
+    """Whether this engine keeps lenses, and the largest part it takes when
+    one is sent (imported lazily: the library module reads this one)."""
+    from ..jlens import lens_library
+    return lens_library.capability(profile.lens_library_root)
+
+
 def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
     profile = ServerProfile.from_env()
     role = server_role(profile)
@@ -250,6 +283,15 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
         choice_reread.CAPABILITY_KEY: [choice_reread.REMOTE_OPTION,
                                        choice_reread.SOURCE_RUN_OPTION],
         "sciencePlacement": science_placement.capabilities(profile),
+        # Public issues #13 and #14: this engine keeps converted lens files in
+        # a library outside any workspace, found by their SHA-256, so a
+        # request can refer to its lens (`--lens-reference`) instead of
+        # carrying it, and a lens is sent once, in parts no larger than
+        # `partMaxBytes` (the `/api/lens-library/` routes). `available` is
+        # false when no folder is set for it or the folder cannot be written;
+        # a client checks it before sending a lens or a request that refers
+        # to one, and an engine without this section has no library at all.
+        "lensLibrary": _lens_library_capability(profile),
         "serviceRole": service_role(),
         "serverVersion": __version__,
         "runningEngineVersion": RUNNING_ENGINE_VERSION,
@@ -279,6 +321,7 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             "runRoot": profile.run_root,
             "archiveRoot": profile.archive_root,
             "nodeCacheRoot": profile.node_cache_root,
+            "lensLibraryRoot": profile.lens_library_root,
             "absoluteUserPaths": "local-profile-only",
         },
         "availableJobTypes": [
