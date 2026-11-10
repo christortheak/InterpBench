@@ -227,7 +227,7 @@ def test_bytes_that_differ_from_the_import_are_never_planned(tmp_path):
     file.write_bytes(b'not a tensor file')
     with pytest.raises(lens_transfer.LensRefusal, match='not a readable safetensors file'):
         lens_transfer.push_plan(root, lens_id, 1 << 20)
-    with pytest.raises(lens_transfer.LensRefusal, match='holds no lens named absent') as caught:
+    with pytest.raises(lens_transfer.LensRefusal, match='^This workspace holds no lens named absent') as caught:
         lens_transfer.push_plan(root, 'absent', 1 << 20)
     assert caught.value.code == 'lensNotFound'
     for wrong in (0, -1, 'many', None, 1.5):
@@ -569,6 +569,11 @@ def test_a_copy_checks_every_file_before_and_after(tmp_path, monkeypatch):
 
     with pytest.raises(lens_transfer.LensRefusal, match='names this workspace'):
         lens_transfer.copy(origin, lens_id, str(origin))
+    # A lens the OTHER workspace does not hold: the refusal names that workspace.
+    with pytest.raises(lens_transfer.LensRefusal) as caught:
+        lens_transfer.copy(root, 'absent', str(origin))
+    assert str(caught.value) == f'The workspace at {origin} holds no lens named absent (no runs/jlens-lenses/absent/lens.json).'
+    assert caught.value.code == 'lensNotFound' and 'that workspace' in caught.value.repair_action
     with pytest.raises(lens_transfer.LensRefusal, match='no workspace folder'):
         lens_transfer.copy(root, lens_id, str(tmp_path / 'nowhere'))
 

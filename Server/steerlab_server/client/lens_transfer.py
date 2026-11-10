@@ -110,19 +110,21 @@ def canonical_path(lens_id):
     return f'runs/jlens-lenses/{lens_id}/{CONVERTED_NAME}'
 
 
-def workspace_lens(root, lens_id):
+def workspace_lens(root, lens_id, *, other=False):
     """``(root, record, file)`` for a lens in a workspace: its record as
     stored, and the workspace-relative path of its converted file. Nothing is
-    hashed here."""
+    hashed here. ``other`` says the workspace is not the one the command is
+    working in (``lens-copy --from``), so a refusal names it."""
     root = Path(root).resolve()
     _lens_name(lens_id)
+    holder, inside = (f'The workspace at {root}', 'that workspace') if other else ('This workspace', 'this workspace')
     directory = Path(paths.jlens_lens_directory(lens_id, str(root))).relative_to(root).as_posix()
     record_file = archives.ordinary(root, directory + '/' + RECORD_NAME, missing=True)
     if not record_file.is_file():
         raise LensRefusal(
-            f'This workspace holds no lens named {lens_id} (no {directory}/{RECORD_NAME}).',
-            'Name a lens this workspace holds (the folders under runs/jlens-lenses/), or name the '
-            'workspace that holds it.', code='lensNotFound')
+            f'{holder} holds no lens named {lens_id} (no {directory}/{RECORD_NAME}).',
+            f'Name a lens {inside} holds (the folders under its runs/jlens-lenses/), or name the '
+            'workspace that holds the lens.', code='lensNotFound')
     try:
         record = json.loads(record_file.read_bytes())
     except (ValueError, UnicodeError) as exc:
@@ -139,12 +141,12 @@ def workspace_lens(root, lens_id):
     selected = Path(artifact_paths.converted_file(lens_id, converted['path'], str(root)))
     if not selected.is_relative_to(root):
         raise LensRefusal(
-            f"Lens {lens_id} keeps its converted file outside this workspace's lens library.",
-            'Import the lens again in this workspace, so its converted file is in runs/jlens-lenses/.')
+            f'Lens {lens_id} keeps its converted file outside the lens library of {inside}.',
+            f'Import the lens again in {inside}, so its converted file is in runs/jlens-lenses/.')
     relative = selected.relative_to(root).as_posix()
     if not archives.ordinary(root, relative, missing=True).is_file():
         raise LensRefusal(
-            f'The converted file of lens {lens_id} is missing from this workspace ({relative}).',
+            f'The converted file of lens {lens_id} is missing from {inside} ({relative}).',
             'Restore it from a copy, or import the lens again from its source files.')
     return root, record, relative
 
@@ -508,7 +510,7 @@ def _copy_plan(root, lens_id, source_root):
     if origin == root:
         raise LensRefusal('--from names this workspace, which already holds its own lenses.',
                           'Give --from the other workspace, and name this one with --workspace or --root.')
-    _, record, relative = workspace_lens(origin, lens_id)
+    _, record, relative = workspace_lens(origin, lens_id, other=True)
     directory = Path(paths.jlens_lens_directory(lens_id, str(origin))).relative_to(origin).as_posix()
     if relative != canonical_path(lens_id):
         raise LensRefusal(
