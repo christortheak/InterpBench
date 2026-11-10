@@ -333,6 +333,37 @@ def test_a_corrupt_part_is_refused_and_nothing_of_it_is_kept(site):
     assert incomplete.status_code == 409 and refusal(incomplete)['code'] == 'lensUploadIncomplete'
 
 
+def test_a_part_that_arrives_in_pieces_is_streamed_and_an_overlong_one_is_cut_off(site):
+    import asyncio
+    import httpx
+    plan, data = part_plan(site.source, 64), site.source.read_bytes()
+    assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).status_code == 200
+    part = plan['parts'][1]
+    body = data[part['offset']:part['offset'] + part['bytes']]
+    pulled = []
+
+    async def pieces(payload, size):
+        for low in range(0, len(payload), size):
+            pulled.append(low)
+            yield payload[low:low + size]
+
+    async def send(payload, size):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=site.app, client=('127.0.0.1', 50000)),
+                                     base_url='http://testserver') as client:
+            return await client.put(f'/api/lens-library/{site.sha}/parts/1', content=pieces(payload, size),
+                                    headers={'X-Content-SHA256': part['sha256']})
+    # Far longer than its plan: refused, and the rest of the body is never read into the upload.
+    refused = asyncio.run(send(body + bytes(64 * 50), 16))
+    assert refused.status_code == 409 and 'more than' in refusal(refused)['reason']
+    assert len(pulled) < 50 and site.client.get(f'/api/lens-library/{site.sha}').json()['receivedParts'] == []
+    assert not list((site.library / '.incoming' / site.sha / 'spool').iterdir())
+    answered = asyncio.run(send(body, 7))
+    assert answered.status_code == 200 and answered.json() == {'received': True}
+    assert site.client.get(f'/api/lens-library/{site.sha}').json()['receivedParts'] == [1]
+    held = (site.library / '.incoming' / site.sha / 'data').read_bytes()
+    assert held[part['offset']:part['offset'] + part['bytes']] == body
+
+
 def test_an_interrupted_upload_resumes_with_only_the_missing_parts(site):
     plan, data = part_plan(site.source, 64), site.source.read_bytes()
     assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).status_code == 200
