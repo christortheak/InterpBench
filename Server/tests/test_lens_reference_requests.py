@@ -188,6 +188,10 @@ def test_a_probe_batch_reads_a_lens_the_site_holds_and_the_request_does_not_carr
     assert record['result']['prompts'] == len(PROMPTS)
     assert readings(record['result']) == carried_readings
     assert Path(record['result']['runDirectory']).parent == capsule / 'runs'
+    finished = SimpleNamespace(status='succeeded', finished_at=1.0, kind='science:' + batch.OPERATION,
+                               result={**record['result'], 'scientificPlan': admitted})
+    jobs = SimpleNamespace(get=lambda _id: finished)
+    exported = transport.export('referred', jobs, profile)
     # What was admitted is the closure that names the lens by hash.
     closure = plan_by_hand(request, capsule, [e['path'] for e in referred['files']])
     by_hand = {key: closure[key] for key in ('schemaVersion', 'request', 'sourceRoot', 'files')} | {'libraryLenses': named}
@@ -211,8 +215,13 @@ def test_a_probe_batch_reads_a_lens_the_site_holds_and_the_request_does_not_carr
     with pytest.raises(lens_library.LensLibraryRefusal) as refused:
         scientific_execution.plan(staged['request'], profile)
     assert refused.value.code == 'lensNotInLibrary'
+    # The library is a cache: losing the entry loses no result. The finished job's output still comes home.
+    again = transport.export('referred', jobs, profile)
+    assert again['bundleSha256'] == exported['bundleSha256'] and again['entries'] == exported['entries']
+    assert any(entry['path'].endswith('/' + batch.MANIFEST) for entry in again['entries'])
     # An engine with no library says that instead, with the other repair.
     monkeypatch.setenv('SLURM_JOB_ID', '1')
+    assert transport.export('referred', jobs, profile)['bundleSha256'] == exported['bundleSha256']
     for call in (lambda: transport.stage(packed['bundlePath'], packed['bundleSha256'], profile),
                  lambda: scientific_execution.plan(staged['request'], profile)):
         with pytest.raises(lens_library.LensLibraryRefusal) as refused:

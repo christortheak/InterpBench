@@ -27,7 +27,7 @@ def referred_lenses(metadata):
     return lenses
 
 
-def closure_matches(metadata, root):
+def closure_matches(metadata, root, *, finished=False):
     """Plan the archive's closure where it will run, and say whether it is
     exactly what the archive declares: the files it carries, and the lenses it
     refers to.
@@ -36,11 +36,19 @@ def closure_matches(metadata, root):
     first and by name (existence and size; nothing is hashed), so an engine
     that lacks the lens, or has no library, says so with a repair instead of
     reporting a closure that does not match.
+
+    `finished`: the job has already run, and its output is being exported or
+    cleaned up. The library is a cache, and losing an entry must lose no
+    result, so a lens that is no longer held does not stand between a
+    researcher and output that exists; the execution copy's own bytes were
+    verified by the caller either way.
     """
     from ..experiment import diagnostic_inputs, managed_inputs
     lenses = referred_lenses(metadata)
     if lenses:
         from ..jlens import lens_library
+        if finished and not lens_library.holds(lenses):
+            return True
         lens_library.require_held(lenses)
     closure = diagnostic_inputs.plan(metadata['context']['request'], root, lens_reference=managed_inputs.WHERE_HELD)
     return closure['files'] == metadata['entries'] and closure.get('libraryLenses', []) == lenses
@@ -88,22 +96,23 @@ def stage(path, expected, profile):
             'nextAction': 'Plan and submit the returned request object on this controller. Client workspace paths in the original request are not runner paths.'}
 
 
-def resolve(expected, profile):
+def resolve(expected, profile, *, finished=False):
     if not isinstance(expected, str) or len(expected) != 64 or any(c not in '0123456789abcdef' for c in expected):
         raise archives.Refusal('Invalid staged input digest.')
     base = storage(profile)
     capsule = archives.ordinary(base, 'diagnostic-input-' + expected)
     root = archives.ordinary(capsule, 'workspace')
-    return verify_inputs(root, expected), root
+    return verify_inputs(root, expected, finished=finished), root
 
 
 @input_hashes.operation
-def verify_inputs(root, expected):
+def verify_inputs(root, expected, *, finished=False):
     """Re-read the complete portable closure at admission and on the queued child.
 
     A lens the archive refers to is checked in the lens library by existence
     and size here. The queued child hashes it once, where it hashes its other
-    inputs (`scientific_execution.input_plan` with `verify_library`)."""
+    inputs (`scientific_execution.input_plan` with `verify_library`).
+    `finished` is for a job that has already run (`closure_matches`)."""
     root = Path(root)
     if root.name != 'workspace' or root.parent.name != 'diagnostic-input-' + expected:
         raise archives.Refusal('Staged execution root differs from the input digest.')
@@ -111,7 +120,7 @@ def verify_inputs(root, expected):
     if metadata['kind'] != 'diagnosticInput': raise archives.Refusal('Staged archive has the wrong kind.')
     if archives.snapshot(root, [e['path'] for e in metadata['entries']]) != metadata['entries']:
         raise archives.Refusal('Staged input bytes changed; restage the original archive.')
-    if not closure_matches(metadata, root):
+    if not closure_matches(metadata, root, finished=finished):
         raise archives.Refusal('Staged dependency closure changed or escapes the isolated copy.')
     return metadata['context']['request']
 
@@ -123,7 +132,7 @@ def output(job_id, jobs, profile):
     result = job.result or {}; plan = result.get('scientificPlan') or {}
     capsule = plan.get('inputBundleSHA256') or plan.get('executionCapsuleSHA256')
     if capsule:
-        _, root = resolve(capsule, profile)
+        _, root = resolve(capsule, profile, finished=True)
     else:
         root = Path(profile.root).resolve()
     if plan.get('root') != str(root): raise archives.Refusal('This job belongs to another serving root.')

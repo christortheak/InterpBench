@@ -225,6 +225,16 @@ def require_held(lenses):
             raise not_held(lens['lensID'], lens['convertedSHA256'])
 
 
+def holds(lenses):
+    """Whether the library holds every lens named. It never raises: an engine
+    with no library, or one that has lost an entry, holds nothing."""
+    try:
+        require_held(lenses)
+    except (ValueError, OSError):
+        return False
+    return True
+
+
 # --- publication: create-only, never replaced -----------------------------------
 
 @contextmanager
