@@ -161,6 +161,9 @@ public enum CLIFlagVocabulary {
         "experiment set-sampling --seeds": "<n>[,<n>…]",
         "remote fetch --out": "<dir>",
         "remote import --out": "<dir>",
+        "remote lens-push --adopt": "<path-on-the-site>",
+        "science lens-copy --from": "<workspace-dir>",
+        "science lens-copy --plan-sha256": "<digest>",
         "results export --out": "<dir>",
         "docs cli-reference --path": "<file>",
         "concept import-chat --positive": "<chat.jsonl>",
@@ -424,6 +427,21 @@ public enum CLIFlagVocabulary {
     ]
 
     private static let verbPurposes: [String: String] = [
+        "science input-plan --lens-reference":
+            "Refer to each lens the request names by its copy in the site's lens "
+            + "library, and leave the lens file out of the plan.",
+        "science package --lens-reference":
+            "Refer to each lens the request names by its copy in the site's lens "
+            + "library, and leave the lens file out of the archive. The input plan "
+            + "must have been reviewed with the same flag.",
+        "science lens-copy --from": "The folder of the workspace that holds the lens.",
+        "science lens-copy --plan-sha256":
+            "The planSHA256 the review showed. With it the lens is copied; without "
+            + "it the copy is reviewed and nothing is written.",
+        "remote lens-push --adopt":
+            "The path, on the site, of a copy of the lens's converted file placed "
+            + "there with the site's own transfer tool. The site checks it against "
+            + "the lens's hash and keeps it; nothing is uploaded.",
         "concept import-chat --positive":
             "Chat-format JSONL whose assistant replies express the concept: "
             + "one {\"messages\": [user, assistant]} object per line.",

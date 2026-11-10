@@ -7,6 +7,13 @@ import Foundation
 public enum DiagnosticWorkspace {
     public static let actions = ["evidence-analyze", "policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody", "results-export", "report", "results-report", "results-check-choices"]
 
+    /// Actions only this Mac's own command line and app reach. They are not
+    /// in `actions`, so the local HTTP service (`http`) never serves them:
+    /// `lens-copy` reads a second folder on this machine, which a caller of
+    /// that service must not be able to name. Python twin:
+    /// `diagnostic_commands.LOCAL_ACTIONS`.
+    public static let localActions = ["lens-push-plan", "lens-record", "lens-copy"]
+
     /// Asks the Python client only to confirm that its files are the source
     /// this build was compiled against: nothing is imported, read, or
     /// written. Internal to the bridge, so not one of the `actions` the
@@ -49,7 +56,9 @@ public enum DiagnosticWorkspace {
 
     public static func perform(_ action: String, payload: [String: JSONValue],
                                python: URL? = nil, source: URL? = nil) async throws -> JSONValue {
-        guard actions.contains(action) || action == identityCheckAction else {
+        guard actions.contains(action) || localActions.contains(action)
+            || action == identityCheckAction
+        else {
             throw ExperimentError(reason: "Unknown diagnostic workspace action.")
         }
         let source = try source ?? CodeResources.serverPayload()
@@ -156,6 +165,9 @@ public enum DiagnosticWorkspace {
 
     static func http(_ action: String, body: Data, root: URL) async -> StudyAuthoringHTTP.Response {
         do {
+            guard actions.contains(action) else {
+                throw ExperimentError(reason: "Unknown diagnostic workspace action.")
+            }
             let payload = try JSONDecoder().decode([String: JSONValue].self, from: body)
             guard case .string(let path) = payload["workspaceRoot"],
                   try ManifestFileTransaction.canonicalPath(URL(filePath: path)) == ManifestFileTransaction.canonicalPath(root) else {
@@ -206,11 +218,27 @@ enum DiagnosticWorkspaceCLI {
         ("--sha256", "archiveSHA256"), ("--plan-sha256", "planSHA256"), ("--custom-code-sha256", "customCodeSHA256"),
     ]
 
-    static func run(_ invocation: ExperimentCLIInvocation, sink: ExperimentCLISink) async throws -> ExperimentCLIResult {
-        let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: !["custody", "probe-list", "policy-list"].contains(invocation.verb ?? ""))
-        // `science report` owns its `--out` (the page) and its own result sentence.
-        if arguments.verb == ScienceReport.action { return try await ScienceReport.run(arguments, root: ExperimentStore.workspaceRoot, sink: sink) }
-        var payload: [String: JSONValue] = ["workspaceRoot": .string(ExperimentStore.workspaceRoot.path)]
+    /// `science lens-copy`: the lens, and the workspace that holds it. The
+    /// folder is made absolute here, because the Python client runs in a
+    /// scratch directory of its own.
+    static func lensCopyPayload(_ arguments: DiagnosticArguments, root: URL, directory: URL) -> [String: JSONValue] {
+        let named = NSString(string: arguments.flags["--from"] ?? "").expandingTildeInPath
+        let from = (named.hasPrefix("/") ? URL(filePath: named) : directory.appending(path: named))
+            .standardizedFileURL.path
+        var payload: [String: JSONValue] = [
+            "workspaceRoot": .string(root.path), "lensID": .string(arguments.positional ?? ""),
+            "fromWorkspace": .string(from),
+        ]
+        if let digest = arguments.flags["--plan-sha256"] { payload["planSHA256"] = .string(digest) }
+        return payload
+    }
+
+    /// The request the Python action receives for one `science` verb: its
+    /// positional under the action's own field name, the value flags of
+    /// `flagFields`, and `lensReference` only when `--lens-reference` was
+    /// typed.
+    static func payload(_ arguments: DiagnosticArguments, root: URL) throws -> [String: JSONValue] {
+        var payload: [String: JSONValue] = ["workspaceRoot": .string(root.path)]
         if let value = arguments.positional {
             let key = ["policy-inspect", "evidence-analyze"].contains(arguments.verb) ? "path" : arguments.verb.hasPrefix("policy-") ? "settingsText" : arguments.verb.hasPrefix("measurements-") ? "experiment" : arguments.verb == "corpus-preview" ? "specText" : arguments.verb == "corpus-publish" ? "previewID" : arguments.verb.hasPrefix("artifact-") ? "descriptionFile" : (arguments.verb.hasPrefix("sae-") || arguments.verb == "probe-inspect") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
             payload[key] = .string((arguments.verb == "corpus-preview" || key == "settingsText") ? try String(contentsOfFile: value, encoding: .utf8) : value)
@@ -220,7 +248,31 @@ enum DiagnosticWorkspaceCLI {
         for (flag, key) in flagFields {
             if let value = arguments.flags[flag] { payload[key] = .string(value) }
         }
-        let result = try await DiagnosticWorkspace.perform(arguments.verb, payload: payload)
+        // A request that refers to its lens. Absent, the field is not sent:
+        // carry mode is asked for exactly as before the flag existed.
+        if arguments.flags["--lens-reference"] != nil { payload["lensReference"] = .bool(true) }
+        return payload
+    }
+
+    static func run(_ invocation: ExperimentCLIInvocation, sink: ExperimentCLISink) async throws -> ExperimentCLIResult {
+        let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: !["custody", "probe-list", "policy-list"].contains(invocation.verb ?? ""))
+        // `science report` owns its `--out` (the page) and its own result sentence.
+        if arguments.verb == ScienceReport.action { return try await ScienceReport.run(arguments, root: ExperimentStore.workspaceRoot, sink: sink) }
+        if arguments.verb == "lens-copy" {
+            let result = try await DiagnosticWorkspace.perform(
+                "lens-copy",
+                payload: lensCopyPayload(
+                    arguments, root: ExperimentStore.workspaceRoot,
+                    directory: URL(filePath: FileManager.default.currentDirectoryPath)))
+            sink.out(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
+            var changed = false
+            if case .object(let object) = result, case .bool(let value) = object["changed"] { changed = value }
+            return .init(
+                message: LensLibrary.copyMessage(for: result) ?? "Diagnostic workspace operation completed.",
+                changed: changed, payload: ["response": result])
+        }
+        let result = try await DiagnosticWorkspace.perform(
+            arguments.verb, payload: try Self.payload(arguments, root: ExperimentStore.workspaceRoot))
         sink.out(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
         var changed = ["package", "import"].contains(arguments.verb)
         if case .object(let object) = result, case .bool(let value) = object["changed"] { changed = value }

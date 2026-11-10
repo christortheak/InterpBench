@@ -118,6 +118,28 @@ public struct ClusterCapabilities: Codable, Sendable {
         }
     }
 
+    /// The site's lens library (`"lensLibrary"`, public issue #14): converted
+    /// lens files kept once, outside any workspace, under their SHA-256.
+    /// `available` is true only when the engine has a folder for it that it
+    /// can write; `partMaxBytes` is the largest part of a lens it accepts in
+    /// one request. Absent on an engine from before the library.
+    public struct LensLibrary: Codable, Sendable {
+        public var schemaVersion: Int?
+        public var available: Bool?
+        public var partMaxBytes: Int?
+
+        public init(schemaVersion: Int? = nil, available: Bool? = nil, partMaxBytes: Int? = nil) {
+            self.schemaVersion = schemaVersion
+            self.available = available
+            self.partMaxBytes = partMaxBytes
+        }
+    }
+    public var lensLibrary: LensLibrary?
+    /// Whether the engine has a lens library to send a lens to, or to resolve
+    /// a request that refers to its lens. Absent or false, both clients send
+    /// nothing. Python twin: `lens_transfer.library_available`.
+    public var lensLibraryAvailable: Bool { lensLibrary?.available == true }
+
     public var serverVersion: String?
     public var runningEngineVersion: String?
     public var deployedBuildCommit: String?
@@ -3249,13 +3271,44 @@ public struct ClusterClient: Sendable {
         return output
     }
 
+    /// Upload a bundle or a request archive, streamed from the file.
+    ///
+    /// The archive is never read into memory: a request that carries a lens
+    /// for a large model is several gigabytes (public issue #13). Two things
+    /// are settled before a byte is sent. A request that refers to its lens
+    /// (`science package --lens-reference`) needs the engine's lens library,
+    /// so an engine without one is refused here, in the words the Python
+    /// client uses (`LensLibrary.unavailableReason`). And a file that is not
+    /// there fails as a missing file, as it always has.
+    ///
+    /// An upload the server refuses as too large (413) is answered with the
+    /// repair, not with the bare status.
     public func uploadBundle(_ url: URL) async throws -> UploadedBundle {
         try await requireHTTPTransfer()
-        let data = try Data(contentsOf: url)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        let refersToLibrary = await Task.detached { LensLibrary.archiveRefersToLibrary(url) }.value
+        if refersToLibrary, try await capabilities().lensLibraryAvailable != true {
+            throw LensLibrary.Refusal(
+                code: LensLibrary.unavailableCode,
+                reason: LensLibrary.unavailableReason(
+                    server: profile.baseURL.absoluteString, archive: true),
+                repairAction: LensLibrary.unavailableRepair)
+        }
         var request = try makeRequest(path: "/api/bundles/upload", method: "POST")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(url.lastPathComponent, forHTTPHeaderField: "X-SteerLab-Filename")
-        let (responseData, response) = try await session.upload(for: request, from: data)
+        // The server inspects and hashes the whole archive before it answers.
+        request.timeoutInterval = 3600
+        let (responseData, response) = try await session.upload(for: request, fromFile: url)
+        if (response as? HTTPURLResponse)?.statusCode == 413 {
+            throw LensLibrary.Refusal(
+                code: LensLibrary.oversizeCode,
+                reason: LensLibrary.oversizeReason(
+                    detail: Self.refusalDetail(responseData).message),
+                repairAction: LensLibrary.oversizeRepair)
+        }
         try validate(response: response, data: responseData)
         return try decoder.decode(UploadedBundle.self, from: responseData)
     }
@@ -5824,5 +5877,178 @@ extension ClusterClient {
         let reply = try decoder.decode(Reply.self, from: data)
         guard reply.sha256 == sha else { throw ExperimentError(reason: "The staged source hash differs from the selected file.") }
         return reply.path
+    }
+}
+
+
+// MARK: - The site lens library (public issues #13 and #14)
+
+extension ClusterClient {
+    /// `GET /api/lens-library/{sha}`.
+    struct LensLibraryStatus: Decodable, Sendable {
+        var held: Bool
+        var bytes: Int?
+        var receivedParts: [Int]?
+    }
+    /// `POST /api/lens-library/{sha}/begin`.
+    struct LensLibraryBegin: Decodable, Sendable {
+        var held: Bool
+        var missingParts: [Int]?
+    }
+    /// `POST …/complete` and `POST /api/lens-library/adopt`.
+    struct LensLibraryHeld: Decodable, Sendable {
+        var held: Bool
+        var bytes: Int?
+    }
+    /// `POST /api/lens-library/register`.
+    struct LensLibraryRegistration: Decodable, Sendable {
+        var lensID: String
+        var registered: Bool?
+        var changed: Bool?
+    }
+
+    /// What a server's refusal says: FastAPI's `{"detail": …}`, where the
+    /// detail is a sentence or an object with a `message` (or `reason`), a
+    /// `code`, and a `repairAction`; a repair may also sit beside the detail.
+    static func refusalDetail(_ data: Data) -> (code: String?, message: String, repair: String?) {
+        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard case .object(let body)? = try? JSONDecoder().decode(JSONValue.self, from: data) else {
+            return (nil, text, nil)
+        }
+        func string(_ value: JSONValue?) -> String? {
+            if case .string(let text)? = value, !text.isEmpty { return text }
+            return nil
+        }
+        let outer = string(body["repairAction"])
+        switch body["detail"] {
+        case .string(let message)?:
+            return (nil, message, outer)
+        case .object(let detail)?:
+            return (
+                string(detail["code"]),
+                string(detail["message"]) ?? string(detail["reason"]) ?? text,
+                string(detail["repairAction"]) ?? outer)
+        default:
+            return (nil, text, outer)
+        }
+    }
+
+    /// A lens-library answer: a refusal (4xx) becomes the server's own
+    /// sentence, code, and repair; anything else is checked as usual.
+    private func lensLibraryAnswer(_ data: Data, _ response: URLResponse) throws -> Data {
+        if let http = response as? HTTPURLResponse, (400..<500).contains(http.statusCode),
+            ![401, 403].contains(http.statusCode)
+        {
+            let detail = Self.refusalDetail(data)
+            throw LensLibrary.Refusal(
+                code: detail.code ?? "lensLibraryRefused",
+                reason: detail.message.isEmpty
+                    ? "The server refused the lens library request (\(http.statusCode))."
+                    : detail.message,
+                repairAction: detail.repair ?? "")
+        }
+        try validate(response: response, data: data)
+        return data
+    }
+
+    private func lensLibraryJSON<T: Decodable>(
+        _ method: String, _ path: String, body: Data? = nil
+    ) async throws -> T {
+        var request = try makeRequest(path: path, method: method)
+        // The site hashes a whole lens before it answers `complete` or `adopt`.
+        request.timeoutInterval = 3600
+        if let body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await session.data(for: request)
+        return try decoder.decode(T.self, from: try lensLibraryAnswer(data, response))
+    }
+
+    func lensLibraryStatus(_ sha256: String) async throws -> LensLibraryStatus {
+        try await lensLibraryJSON("GET", "/api/lens-library/\(sha256)")
+    }
+
+    func lensLibraryBegin(_ sha256: String, bytes: Int, parts: [LensLibrary.Part]) async throws
+        -> LensLibraryBegin
+    {
+        struct Manifest: Encodable {
+            var bytes: Int
+            var parts: [LensLibrary.Part]
+        }
+        return try await lensLibraryJSON(
+            "POST", "/api/lens-library/\(sha256)/begin",
+            body: try encoder.encode(Manifest(bytes: bytes, parts: parts)))
+    }
+
+    /// One part's bytes, streamed. The part is copied out of the lens file
+    /// into a private scratch file a megabyte at a time and uploaded from
+    /// there, so neither the lens nor the part is ever held in memory.
+    func lensLibraryPutPart(_ sha256: String, part: LensLibrary.Part, of file: URL) async throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-lens-part-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: scratch, withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let piece = scratch.appending(component: "part")
+        try await Task.detached { try LensLibrary.copyPart(part, of: file, to: piece) }.value
+        var request = try makeRequest(
+            path: "/api/lens-library/\(sha256)/parts/\(part.index)", method: "PUT")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(part.sha256, forHTTPHeaderField: "X-Content-SHA256")
+        request.timeoutInterval = 3600
+        let (data, response) = try await session.upload(for: request, fromFile: piece)
+        _ = try lensLibraryAnswer(data, response)
+    }
+
+    func lensLibraryComplete(_ sha256: String) async throws -> LensLibraryHeld {
+        try await lensLibraryJSON(
+            "POST", "/api/lens-library/\(sha256)/complete", body: Data("{}".utf8))
+    }
+
+    /// The record travels as the exact JSON text the Python client read from
+    /// `lens.json`, never through this app's number type: a qualification's
+    /// integers and decimals must arrive as they were written.
+    func lensLibraryRegister(recordJSON: String) async throws -> LensLibraryRegistration {
+        try await lensLibraryJSON(
+            "POST", "/api/lens-library/register",
+            body: Data(("{\"record\":" + recordJSON + "}").utf8))
+    }
+
+    func lensLibraryAdopt(path: String, sha256: String) async throws -> LensLibraryHeld {
+        struct Body: Encodable {
+            var path: String
+            var sha256: String
+        }
+        return try await lensLibraryJSON(
+            "POST", "/api/lens-library/adopt",
+            body: try encoder.encode(Body(path: path, sha256: sha256)))
+    }
+
+    /// The site workspace's record of one lens (`GET /api/jlens/lenses/{id}`).
+    /// `hashes` is the record's two hashes, or nil when the site has no such
+    /// lens. `known` is false when this server does not show its records to
+    /// this client (a runner serves no workbench route).
+    func siteLensRecord(_ lensID: String) async throws
+        -> (known: Bool, hashes: (converted: String?, tensor: String?)?)
+    {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        let name = lensID.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        let request = try makeRequest(path: "/api/jlens/lenses/\(name)", method: "GET")
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            if http.statusCode == 404 { return (true, nil) }
+            if http.statusCode == 403 { return (false, nil) }
+        }
+        try validate(response: response, data: data)
+        struct Record: Decodable {
+            struct Converted: Decodable { var sha256: String? }
+            struct Source: Decodable { var tensorSHA256: String? }
+            var converted: Converted?
+            var source: Source?
+        }
+        let record = try decoder.decode(Record.self, from: data)
+        return (true, (record.converted?.sha256, record.source?.tensorSHA256))
     }
 }

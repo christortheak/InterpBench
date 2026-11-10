@@ -115,7 +115,7 @@ public enum CLIReferenceDocument {
         .init(
             id: "swift-remote",
             verbLabels: [
-                "remote science-stage", "remote science-export", "remote science-fetch", "remote science-call", "remote cleanup-plan", "remote cleanup-apply",
+                "remote science-stage", "remote lens-push", "remote lens-status", "remote science-export", "remote science-fetch", "remote science-call", "remote cleanup-plan", "remote cleanup-apply",
                 "remote science-plan", "remote science-submit", "remote recovery", "remote recover", "remote reconcile",
                 "remote model-plan", "remote model-install", "remote model-status", "remote model-cancel",
                 "remote capabilities", "remote package", "remote upload",
@@ -126,7 +126,7 @@ public enum CLIReferenceDocument {
             ]),
         .init(id: "swift-agent", verbLabels: ["agent list", "agent inspect", "agent create", "agent delete"]),
         .init(id: "swift-design", verbLabels: ["design expand", "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update", "design rename", "design delete"]),
-        .init(id: "swift-authoring", verbLabels: ["authoring prompt", "authoring study", "science list", "science guide", "science operation", "science evidence-analyze", "science policy-list", "science policy-inspect", "science policy-review", "science policy-publish", "science policy-attach-review", "science policy-attach", "science measurements-review", "science measurements-save", "science probe-list", "science probe-inspect", "science corpus-preview", "science corpus-publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science interview", "science draft", "science publish", "science input-plan", "science package", "science import", "science custody", "science verify-custody", "science report"]),
+        .init(id: "swift-authoring", verbLabels: ["authoring prompt", "authoring study", "science list", "science guide", "science operation", "science evidence-analyze", "science policy-list", "science policy-inspect", "science policy-review", "science policy-publish", "science policy-attach-review", "science policy-attach", "science measurements-review", "science measurements-save", "science probe-list", "science probe-inspect", "science corpus-preview", "science corpus-publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science interview", "science draft", "science publish", "science input-plan", "science package", "science lens-copy", "science import", "science custody", "science verify-custody", "science report"]),
         .init(id: "swift-pack", verbLabels: ["pack preview", "pack apply", "pack export"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),
         .init(
