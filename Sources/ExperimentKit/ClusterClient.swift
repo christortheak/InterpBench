@@ -123,7 +123,7 @@ public struct ClusterCapabilities: Codable, Sendable {
     /// `available` is true only when the engine has a folder for it that it
     /// can write; `partMaxBytes` is the largest part of a lens it accepts in
     /// one request. Absent on an engine from before the library.
-    public struct LensLibrary: Codable, Sendable {
+    public struct LensLibraryCapability: Codable, Sendable {
         public var schemaVersion: Int?
         public var available: Bool?
         public var partMaxBytes: Int?
@@ -134,7 +134,7 @@ public struct ClusterCapabilities: Codable, Sendable {
             self.partMaxBytes = partMaxBytes
         }
     }
-    public var lensLibrary: LensLibrary?
+    public var lensLibrary: LensLibraryCapability?
     /// Whether the engine has a lens library to send a lens to, or to resolve
     /// a request that refers to its lens. Absent or false, both clients send
     /// nothing. Python twin: `lens_transfer.library_available`.
