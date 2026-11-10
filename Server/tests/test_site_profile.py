@@ -47,7 +47,8 @@ FIXTURE_DIR = (
 )
 
 #: The committed cross-engine fixtures, same list as the Swift twin.
-FIXTURES = ("v1-maximal", "v2-maximal", "v2-neutral", "example-slurm-site")
+FIXTURES = ("v1-maximal", "v2-maximal", "v2-neutral", "example-slurm-site",
+            "v2-lens-library")
 
 
 def load_fixture(name: str) -> ClusterSiteProfile:
@@ -114,6 +115,27 @@ def test_fixtures_cover_both_default_sets():
     assert env.default_set(load_fixture("v1-maximal")) == env.LEGACY_V1
     assert env.default_set(load_fixture("v2-maximal")) == env.NEUTRAL_V2
     assert env.default_set(load_fixture("v2-neutral")) == env.NEUTRAL_V2
+
+
+def test_the_lens_library_role_renders_only_when_declared():
+    """The lens library role (public issue #14). Declared, the site's folder
+    renders as its own key beside the other declared roots. Undeclared, the
+    file is byte for byte what it was: an engine never guesses a folder on
+    cluster storage. ``v2-lens-library`` is ``v2-neutral`` plus the role, so
+    the two renders differ by that one line. Swift twin:
+    ``theLensLibraryRoleRendersOnlyWhenDeclared``."""
+    declared, neutral = load_fixture("v2-lens-library"), load_fixture("v2-neutral")
+    assert declared.constraints.storage_roots == {"lensLibrary": "~/steerlab-lens-library"}
+    assert env.resolved_environment(declared)["STEERLAB_LENS_LIBRARY_ROOT"] == "$HOME/steerlab-lens-library"
+    line = 'export STEERLAB_LENS_LIBRARY_ROOT="$HOME/steerlab-lens-library"\n'
+    rendered = env.render_env_file(declared)
+    assert rendered.count(line) == 1
+    assert rendered.replace(line, "").replace(declared.name, neutral.name) == env.render_env_file(neutral)
+    for fixture in FIXTURES:
+        if fixture != "v2-lens-library":
+            profile = load_fixture(fixture)
+            assert "STEERLAB_LENS_LIBRARY_ROOT" not in env.resolved_environment(profile)
+            assert "LENS_LIBRARY" not in env.render_env_file(profile)
 
 
 def test_rendering_is_deterministic_and_timestamp_free():

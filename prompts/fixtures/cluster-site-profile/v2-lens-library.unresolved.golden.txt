@@ -1,0 +1,12 @@
+STEERLAB_PREFIX	no environment.envPrefix — not emitted
+STEERLAB_ROOT	no workspace storage root — not emitted; the server gets no tree
+HF_HOME	no hfCache storage root — not emitted
+STEERLAB_METADATA_ROOT	no metadata storage root — using $HOME/.steerlab
+STEERLAB_SLURM_GPU_TYPES	no GPU inventory — not emitted; gres cannot be validated
+STEERLAB_SLURM_WALLTIME	no scheduler.jobDefaults.walltime — not emitted; the executor's 04:00:00 applies
+STEERLAB_SLURM_MEMORY	no scheduler.jobDefaults.memory — not emitted; no --mem header
+STEERLAB_LOGIN_NODE_PATTERNS	no policy.loginNodes — no host is a login node and no allocation is required, so the bootstrap guard never refuses
+HF_HUB_OFFLINE	hubOfflineMode is auto — derived from computeEgress (unknown)
+STEERLAB_HOUSEKEEPING_ROLES	no storage.scannedRoles — housekeeping reports workspace, metadata and hfCache only; a declared archive or asset tier is never inspected
+STEERLAB_QUOTA_COMMAND	no storage.quotaCommand — housekeeping reports whole-filesystem df numbers only, which on a quota'd filesystem overstate the headroom
+STEERLAB_PRESTAGE_MIN_FREE_GB	no storage.prestageMinFreeGB — bootstrap.sh's built-in pre-stage floor applies, and its refusal names one institution's filesystem

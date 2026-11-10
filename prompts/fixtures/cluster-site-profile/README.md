@@ -9,7 +9,7 @@ other's source.
 
 ## Files
 
-Four profiles, each with three goldens:
+Five profiles, each with three goldens:
 
 | Profile | What it exercises |
 |---|---|
@@ -17,6 +17,7 @@ Four profiles, each with three goldens:
 | `v2-maximal.json` | every schema-2 key stated, so a decoder that drops or renames one fails the key-list assertion. Also exercises tilde→`$HOME` normalization, single-quoted regexes and node templates, the per-partition QOS override, and per-job-class resource blocks. |
 | `v2-neutral.json` | a **v2-stamped** profile that declares almost nothing. The declare-or-omit half of the rule: no legacy constant may leak in through a default. |
 | `example-slurm-site.json` | the **worked example** (WP5 Step 12): a fictional but COHERENT production Slurm site stating what a real profile would state and nothing it would not. `v2-maximal` is a decoder torture test, not a site anyone would run; this is the one to copy. It is also what §4.2's "ship a fully populated but fictional example" means in practice, now that the real preset lives outside the repo. |
+| `v2-lens-library.json` | `v2-neutral` plus one declared storage role, `lensLibrary`: the folder a site keeps lens files in, rendered as `STEERLAB_LENS_LIBRARY_ROOT`. The four profiles above do not declare the role, and their goldens are unchanged by it: an undeclared library renders nothing. |
 
 - `<profile>.env.golden.txt` — the complete rendered cluster env file (G1/G2/G4).
 - `<profile>.headers.golden.txt` — the `#SBATCH` block for every job class, in

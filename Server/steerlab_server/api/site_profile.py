@@ -547,7 +547,9 @@ class SiteStorage:
 class SiteConstraints:
     compute_egress: str = "unknown"
     #: Role-keyed storage roots. Known roles: workspace, hfCache, archive,
-    #: metadata, and (schema 2) run, asset, nodeCache. Extra roles ride verbatim.
+    #: metadata, (schema 2) run, asset, nodeCache, and lensLibrary (the folder
+    #: the site keeps lens files in, ``STEERLAB_LENS_LIBRARY_ROOT``). Extra
+    #: roles ride verbatim.
     storage_roots: dict[str, str] = field(default_factory=dict)
     purge_days: int | None = None
     purge_warn_days: int | None = None

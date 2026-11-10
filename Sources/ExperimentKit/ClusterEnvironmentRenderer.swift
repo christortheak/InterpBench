@@ -967,6 +967,10 @@ public enum ClusterEnvironmentRenderer {
         ("archive", "STEERLAB_ARCHIVE_ROOT"),
         ("asset", "STEERLAB_ASSET_ROOT"),
         ("nodeCache", "STEERLAB_NODE_CACHE_ROOT"),
+        // Where the site keeps converted lens files once, outside any
+        // workspace (public issue #14). Undeclared, nothing is rendered: the
+        // engine never guesses a folder on cluster storage.
+        ("lensLibrary", "STEERLAB_LENS_LIBRARY_ROOT"),
     ]
 
     private static func storageRoot(_ profile: ClusterSiteProfile, _ role: String) -> String? {
