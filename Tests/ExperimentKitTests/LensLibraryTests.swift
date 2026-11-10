@@ -446,14 +446,15 @@ import Testing
         ])
         // The plan was asked for with the server's part limit, once.
         #expect(bridge.calls.map(\.0) == ["lens-push-plan"])
-        #expect(bridge.calls[0].1 == [
+        #expect(bridge.calls.first?.1 == [
             "workspaceRoot": .string(lens.root.path), "lensID": .string(Self.lensID),
             "partMaxBytes": .number(100),
         ])
         // The record arrives as the exact text the Python client read: an
         // integer no double can hold is still that integer.
         #expect(site.registerBodies == [Data((#"{"record":"# + lens.recordJSON + "}").utf8)])
-        #expect(String(decoding: site.registerBodies[0], as: UTF8.self).contains("18446744073709551615"))
+        #expect(String(decoding: site.registerBodies.first ?? Data(), as: UTF8.self)
+            .contains("18446744073709551615"))
         #expect(result.message == "Sent lens custom-lens-example to the site's lens library "
             + "(3 parts, 250 bytes); the site has its record.")
         #expect(result.json == .object([
@@ -556,8 +557,8 @@ import Testing
         #expect(site.entries == [lens.sha: lens.data] && site.registered[Self.lensID] != nil)
         #expect(site.sent("PUT").isEmpty && site.sent("POST", containing: "begin").isEmpty)
         #expect(site.adoptions.count == 1)
-        #expect(site.adoptions[0]["path"] as? String == "/scratch/incoming/jacobians.safetensors")
-        #expect(site.adoptions[0]["sha256"] as? String == lens.sha)
+        #expect(site.adoptions.first?["path"] as? String == "/scratch/incoming/jacobians.safetensors")
+        #expect(site.adoptions.first?["sha256"] as? String == lens.sha)
         // An adoption hashes nothing here: the site checks its own copy.
         #expect(bridge.calls.map(\.0) == ["lens-push-plan", "lens-record"])
         #expect(result.message == "The site checked its copy of lens custom-lens-example and keeps "
@@ -678,8 +679,9 @@ import Testing
         let before = Self.footprint()
         let uploaded = try await client.uploadBundle(archive)
         #expect(uploaded.bytes == size)
-        #expect(site.uploads.count == 1 && site.uploads[0].bytes == size, "every byte was sent")
-        let growth = Int64(site.uploads[0].footprint) - Int64(before)
+        let upload = try #require(site.uploads.first)
+        #expect(site.uploads.count == 1 && upload.bytes == size, "every byte was sent")
+        let growth = Int64(upload.footprint) - Int64(before)
         #expect(growth < Int64(size / 2), "the upload held \(growth) more bytes in memory")
         #expect(site.sent("POST") == ["POST /api/bundles/upload"])
     }
