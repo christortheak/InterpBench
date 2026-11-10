@@ -153,9 +153,9 @@ private struct ArtifactImportSheet: View {
                     onImported()
                 }
                 self.plan = nil
-                status = "Imported into \(plan.workspaceRoot). " + (isLens
-                    ? "Refresh the J-lens library for \(plan.modelID) and select the new lens."
-                    : "Refresh Data → Concepts & Vectors or Playground → Steering Vectors for \(plan.modelID).")
+                status = ArtifactImportSelection.completionStatus(
+                    result: job.result, workspaceRoot: plan.workspaceRoot, modelID: plan.modelID,
+                    isLens: isLens)
             } catch { status = error.localizedDescription }
         }
     }

@@ -58,6 +58,23 @@ public struct ArtifactImportSelection: Sendable {
         return Self(description: url, kind: value.kind, modelID: value.modelID, files: files)
     }
 
+    /// What the import dialog says once the import job has succeeded. A lens
+    /// is named from its reviewed files, so importing files the workspace
+    /// already holds as a lens finds that lens and imports nothing (the job's
+    /// result says `existing`): the dialog names it, and does not call it new.
+    public static func completionStatus(
+        result: [String: JSONValue]?, workspaceRoot: String, modelID: String, isLens: Bool
+    ) -> String {
+        if isLens, result?["existing"] == .bool(true), case .string(let lensID)? = result?["lensID"] {
+            return "This workspace already holds these files as lens \(lensID), so nothing was "
+                + "imported. Refresh the J-lens library for \(modelID) and select that lens."
+        }
+        return "Imported into \(workspaceRoot). "
+            + (isLens
+                ? "Refresh the J-lens library for \(modelID) and select the new lens."
+                : "Refresh Data → Concepts & Vectors or Playground → Steering Vectors for \(modelID).")
+    }
+
     public static func fileSHA256(_ url: URL) throws -> String {
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }

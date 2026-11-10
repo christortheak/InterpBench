@@ -43,9 +43,97 @@ def test_sparse_lens_roundtrip_preserves_matrices_and_unknown_revision(source):
     np.testing.assert_array_equal(matrix.numpy() @ [2, -1], [0, 2])
     output = Path(result['outputDirectory'])
     assert (output / 'source/tensorFile.safetensors').read_bytes() == path.with_name('weights.safetensors').read_bytes()
+    # One lens, one name: the same reviewed bytes find the lens they made.
+    before = snapshot(root)
     second = imports.publish(path, root, plan['planSHA256'])
-    assert second['lensID'] != result['lensID']
+    assert second['lensID'] == result['lensID']
+    assert second['changed'] is False and second['existing'] is True
+    assert second['record'] == result['record'] and second['outputDirectory'] == result['outputDirectory']
+    assert result['changed'] is True and 'existing' not in result
+    assert len(lens_store.list_lenses(str(root))) == 1
+    assert snapshot(root) == before, 'an import that finds its lens writes nothing'
+
+
+def snapshot(root):
+    return {path.relative_to(root).as_posix(): (path.stat().st_mtime_ns, path.read_bytes())
+            for path in sorted(Path(root).rglob('*')) if path.is_file()}
+
+
+def test_a_lens_is_named_from_the_bytes_that_were_reviewed(source, tmp_path):
+    """The name is written out here by hand, from the two file hashes: the
+    same reviewed import gives it on any machine and in any workspace."""
+    import hashlib
+    path, root, spec = source
+    description = hashlib.sha256(path.read_bytes()).hexdigest()
+    tensor = hashlib.sha256(path.with_name('weights.safetensors').read_bytes()).hexdigest()
+    canonical = ('{"descriptionSHA256":"' + description + '","kind":"jlens","tensorSHA256":"' + tensor + '"}').encode()
+    expected = 'custom-lens-' + hashlib.sha256(canonical).hexdigest()[:32]
+
+    plan = imports.inspect_source(path, root)
+    assert imports.lens_name(plan) == expected
+    result = imports.publish(path, root, plan['planSHA256'])
+    assert result['lensID'] == expected
+    assert Path(result['outputDirectory']) == root / 'runs/jlens-lenses' / expected
+    assert result['record']['converted']['path'] == f'runs/jlens-lenses/{expected}/jacobians.safetensors'
+
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    other = imports.inspect_source(path, elsewhere)
+    assert imports.publish(path, elsewhere, other['planSHA256'])['lensID'] == expected
+
+    # A different review (here, the intended use) is a different lens, and
+    # both stay.
+    spec['lens']['tier'] = 'evidence'
+    path.write_text(json.dumps(spec))
+    changed = imports.inspect_source(path, root)
+    third = imports.publish(path, root, changed['planSHA256'])
+    assert third['changed'] is True and third['lensID'] != expected and third['lensID'].startswith('custom-lens-')
     assert len(lens_store.list_lenses(str(root))) == 2
+
+
+def test_an_older_lens_with_a_random_name_is_found_by_its_bytes(source):
+    """Imports before this rule minted `custom-lens-<random>`. The same bytes
+    imported again find that lens under the name it has."""
+    path, root, _ = source
+    plan = imports.inspect_source(path, root)
+    first = imports.publish(path, root, plan['planSHA256'])
+    old_name = 'custom-lens-' + '5e' * 16
+    library = root / 'runs/jlens-lenses'
+    (library / first['lensID']).rename(library / old_name)
+    record = json.loads((library / old_name / 'lens.json').read_text())
+    record['lensID'] = old_name
+    record['converted']['path'] = f'runs/jlens-lenses/{old_name}/jacobians.safetensors'
+    (library / old_name / 'lens.json').write_text(json.dumps(record))
+    before = snapshot(root)
+
+    again = imports.publish(path, root, plan['planSHA256'])
+
+    assert again['lensID'] == old_name and again['existing'] is True and again['changed'] is False
+    assert again['outputDirectory'] == str(library / old_name)
+    assert snapshot(root) == before and [lens.lensID for lens in lens_store.list_lenses(str(root))] == [old_name]
+
+
+def test_a_leftover_folder_under_the_name_is_refused_with_its_repair(source):
+    path, root, _ = source
+    plan = imports.inspect_source(path, root)
+    leftover = root / 'runs/jlens-lenses' / imports.lens_name(plan)
+    leftover.mkdir(parents=True)
+    (leftover / 'note.txt').write_text('not a lens')
+    with pytest.raises(ImportRefusal, match='holds no lens record for these files') as caught:
+        imports.publish(path, root, plan['planSHA256'])
+    assert caught.value.repair_action == 'Move that folder aside, then import again.'
+    assert sorted(item.name for item in leftover.parent.iterdir()) == [leftover.name]
+
+
+def test_sae_imports_still_get_a_fresh_name_each_time(source):
+    path, root, _ = source
+    make_sae(source)
+    plan = imports.inspect_source(path, root)
+    first = imports.publish(path, root, plan['planSHA256'])
+    second = imports.publish(path, root, plan['planSHA256'])
+    assert first['changed'] is True and second['changed'] is True
+    assert first['vectorPath'] != second['vectorPath'] and 'existing' not in second
+    assert Path(first['outputDirectory']).is_dir() and Path(second['outputDirectory']).is_dir()
 
 
 @pytest.mark.parametrize('change', ['matrix', 'description'])
@@ -268,6 +356,10 @@ def test_cli_roundtrip_uses_the_same_review_and_typed_refusal(source):
     code, publication = call('artifact-import', '--plan-sha256', review['result']['planSHA256'])
     assert code == 0, publication
     assert publication['changed'] is True
+    code, repeated = call('artifact-import', '--plan-sha256', review['result']['planSHA256'])
+    assert code == 0 and repeated['changed'] is False, repeated
+    assert repeated['result']['existing'] is True
+    assert repeated['result']['lensID'] == publication['result']['lensID']
     code, rejected = call('artifact-import', '--plan-sha256', '0' * 64)
     assert code == 65 and rejected['error']['code'] == 'artifactImportRefused', rejected
 

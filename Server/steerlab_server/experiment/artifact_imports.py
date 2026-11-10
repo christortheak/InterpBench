@@ -179,17 +179,56 @@ def sae_details(spec, tensors, root, files):
             'conversion': 'decoder row × measured residual norm / decoder norm (float32)'}
 
 
+def lens_name(plan):
+    """One lens, one name: a custom lens is named from the bytes that were
+    reviewed, so the same reviewed import gives the same name on any machine.
+    The name is ``custom-lens-`` and the first 32 hex characters of the
+    SHA-256 of the canonical JSON of the description and tensor file hashes."""
+    files = plan['files']
+    return 'custom-lens-' + diagnostic_archives.digest({
+        'descriptionSHA256': files['description']['sha256'], 'kind': 'jlens',
+        'tensorSHA256': files['tensorFile']['sha256']})[:32]
+
+
+def existing_lens(plan, root):
+    """The lens this workspace already holds for the reviewed bytes, under any
+    name (one imported before names followed the bytes has a random one), or
+    None. Matched on the source tensor's hash and the description's hash, the
+    two the record keeps as ``source.tensorSHA256`` and ``source.configSHA256``.
+    Several matches give the content-derived name first, then the oldest."""
+    from ..jlens import lens_store
+    tensor, description = plan['files']['tensorFile']['sha256'], plan['files']['description']['sha256']
+    matches = [record for record in lens_store.list_lenses(str(root))
+               if record.source.tensorSHA256 == tensor and record.source.configSHA256 == description]
+    derived = lens_name(plan)
+    return min(matches, key=lambda record: (record.lensID != derived, record.importedAt, record.lensID), default=None)
+
+
+def _existing_result(record, plan, root):
+    from ..jlens import lens_store
+    return {'kind': 'jlens', 'lensID': record.lensID, 'record': record.to_dict(), 'changed': False, 'existing': True,
+            'outputDirectory': lens_store.lens_directory(record.lensID, str(root)), 'warnings': plan['warnings']}
+
+
 def publish(description_file, root, expected):
-    """Capture immutable input bytes, validate those copies, and publish once."""
+    """Capture immutable input bytes, validate those copies, and publish once.
+
+    A lens whose reviewed bytes this workspace already holds is not imported
+    again: the existing lens is returned with ``changed`` false and
+    ``existing`` true, and nothing is written. SAE imports are unchanged."""
     plan = inspect_source(description_file, root)
     if expected != plan['planSHA256']:
         raise ImportRefusal('The reviewed description, source files, or calibration changed. Review a fresh plan before importing.')
     root = Path(plan['workspaceRoot'])
     kind = plan['kind']
+    if kind == 'jlens':
+        held = existing_lens(plan, root)
+        if held is not None:
+            return _existing_result(held, plan, root)
     relative_parent = 'runs/jlens-lenses' if kind == 'jlens' else 'runs'
     parent = diagnostic_archives.ordinary(root, relative_parent, missing=True)
     parent.mkdir(parents=True, exist_ok=True)
-    artifact_id = ('custom-lens-' if kind == 'jlens' else 'sae-import-') + uuid.uuid4().hex
+    artifact_id = lens_name(plan) if kind == 'jlens' else 'sae-import-' + uuid.uuid4().hex
     target = parent / artifact_id
     with tempfile.TemporaryDirectory(prefix='.artifact-import-', dir=parent) as temporary:
         staged = Path(temporary) / 'result'
@@ -214,7 +253,21 @@ def publish(description_file, root, expected):
         receipt = {**plan, 'changed': True, 'outputRelative': target.relative_to(root).as_posix(),
                    'retainedSources': {k: str(v.relative_to(staged)) for k, v in captured.items()}}
         (staged / 'import-receipt.json').write_bytes(diagnostic_archives.encoded(receipt))
-        diagnostic_archives.publish_directory(staged, target)
+        try:
+            diagnostic_archives.publish_directory(staged, target)
+        except FileExistsError:
+            if kind != 'jlens':
+                raise
+            # The name follows the bytes, so only another import of the same
+            # bytes can have taken it while this one was copying.
+            held = existing_lens(plan, root)
+            if held is not None:
+                return _existing_result(held, plan, root)
+            refusal = ImportRefusal(
+                f'A folder named {target.relative_to(root).as_posix()} already exists and holds no lens record '
+                'for these files, so nothing was imported.')
+            refusal.repair_action = 'Move that folder aside, then import again.'
+            raise refusal from None
     return {**result, 'changed': True, 'outputDirectory': str(target), 'warnings': plan['warnings']}
 
 

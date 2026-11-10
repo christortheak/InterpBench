@@ -3,6 +3,29 @@ import Testing
 @testable import ExperimentKit
 
 @Suite(.serialized) struct ArtifactImportTests {
+    /// The dialog's last line is true whether the lens was imported or found.
+    @Test func theDialogNamesALensTheWorkspaceAlreadyHolds() {
+        let imported: [String: JSONValue] = ["lensID": .string("custom-lens-example"), "changed": .bool(true)]
+        #expect(ArtifactImportSelection.completionStatus(
+            result: imported, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            == "Imported into /workspace. Refresh the J-lens library for example/model and select the new lens.")
+        let found = imported.merging(["existing": .bool(true), "changed": .bool(false)]) { _, new in new }
+        #expect(ArtifactImportSelection.completionStatus(
+            result: found, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            == "This workspace already holds these files as lens custom-lens-example, so nothing was "
+            + "imported. Refresh the J-lens library for example/model and select that lens.")
+        // An SAE decoder import is always new, and a job with no result reads as before.
+        for result in [found, nil] as [[String: JSONValue]?] {
+            #expect(ArtifactImportSelection.completionStatus(
+                result: result, workspaceRoot: "/workspace", modelID: "example/model", isLens: false)
+                == "Imported into /workspace. Refresh Data → Concepts & Vectors or Playground → "
+                + "Steering Vectors for example/model.")
+        }
+        #expect(ArtifactImportSelection.completionStatus(
+            result: nil, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            .hasSuffix("select the new lens."))
+    }
+
     @Test func localDescriptionPlansAndPublishesThroughThePortableOwner() async throws {
         let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let python = URL(filePath: try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"]))
