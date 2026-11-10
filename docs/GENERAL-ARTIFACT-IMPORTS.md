@@ -14,7 +14,7 @@ The source guide includes miniature examples; replace their geometry with the
 artifact's actual dimensions and layer mapping. No researcher dataset is generated.
 
 The app explicitly stages the selected files to the connected Python workbench,
-then displays a plan. After review, Import publishes to a new library location.
+then displays a plan. After review, Import publishes to the workspace library.
 Local original files remain in place. A workbench can run on this Mac; no GPU is
 needed for import. Staged source files remain under `.steerlab/artifact-inputs/`;
 completed artifacts retain their own source copies and an import receipt. This
@@ -109,8 +109,19 @@ HTTP service. Runner-only deployments reject workbench authoring.
 
 ## Retention and downstream behavior
 
-Every successful publication gets a fresh ID, even for a second import of the
-same source. No old lens or vector is replaced. Lenses start without qualification
+One lens, one name. A custom lens is named from the files that were reviewed:
+`custom-lens-` followed by the first 32 hexadecimal characters of the SHA-256 of
+the canonical JSON `{"descriptionSHA256", "kind": "jlens", "tensorSHA256"}`, the
+two file hashes the plan shows. The same reviewed import therefore gives the
+same lens ID in any workspace and on any machine. Importing files that a
+workspace already holds as a lens returns that lens, with `existing: true` and
+`changed: false`, and writes nothing. The match is on the tensor file's hash and
+the description's hash, so it also finds a lens imported before this rule, which
+keeps the random ID it was given. A different description (a different intended
+use, say) is a different lens with its own name.
+
+An SAE decoder import still gets a fresh ID every time. No old lens or vector is
+ever replaced. Lenses start without qualification
 records; model-tier labels are not qualification. Imported lenses use the same
 per-layer reader and token-direction/readout machinery as published lenses.
 The output receipt binds the reviewed source files and retained copies.
@@ -124,6 +135,35 @@ is not source provenance: `gemmascopeSource.importPath` is `custom-sae-decoder`,
 with the actual source hashes, feature axis, layer, and calibration recorded.
 The app labels the family “SAE feature (decoder row).” This imports a decoder
 intervention, not the encoder, thresholds, or a complete latent SAE.
+
+## The same lens elsewhere
+
+A lens lives in one workspace's `runs/jlens-lenses/<lensID>/`, and the workspace
+stays its source. Two verbs take it elsewhere without minting another lens:
+
+- **A second workspace on the same machine.** `science lens-copy <lensID> --from
+  <workspace directory>` copies the lens folder into the current workspace under
+  the same name and record. It reviews by default and writes nothing; repeat it
+  with the `--plan-sha256` the review shows to copy. Every file is hashed before
+  and after. On macOS each file is cloned where the filesystem allows, so the
+  copy uses no extra disk space; elsewhere, or where a clone fails, it is a full
+  copy, and the result's `copyMethod` says which. The same lens already present
+  changes nothing; a different lens under that name is refused.
+- **A site.** `steerlab-cli remote lens-push <lensID> --site <id>` (or `steerlab
+  runner lens-push <lensID> --runner <url>`) sends the converted file to the
+  site's lens library once, in parts that follow its layers, each checked, and
+  registers the lens's record there. No part comes near the upload limit. Run
+  again after an interruption, it sends only what is missing. `lens-status
+  <lensID>` says what the site holds. A request packaged with `science package
+  --lens-reference` then refers to the site's copy and leaves the converted file
+  out. On a site that forbids HTTP transfer, copy the converted file there with
+  the site's own tool and run `lens-push` with `--adopt <path on the site>`.
+
+A site keeps its library in the folder its profile names as
+`constraints.storageRoots.lensLibrary` (rendered as `STEERLAB_LENS_LIBRARY_ROOT`).
+An engine with no such folder, or from before the library, has none: both
+clients refuse `lens-push`, and the upload of a request that refers to its lens,
+before sending anything.
 
 ## Intended use and large files
 

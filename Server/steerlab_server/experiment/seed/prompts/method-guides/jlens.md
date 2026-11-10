@@ -60,9 +60,14 @@ Both clients offer `science artifact-plan <description.json> --json`, then
 `science artifact-import <description.json> --plan-sha256 <reviewed-hash> --json`.
 Select the destination workspace with the client's usual root/workspace option.
 The app's J-lens dialog offers **Import my own lens files** and explicitly stages
-files to the connected Python workbench before review. Import publishes a fresh
-lens ID, retains source copies, and does not qualify it or train anything. Use
-that explicit lens ID when several fits exist for the same model.
+files to the connected Python workbench before review. Import names the lens
+from the reviewed files (`custom-lens-` and part of their hash), so importing
+the same files again, in this workspace or another, finds the same lens and
+writes nothing. It retains source copies, and does not qualify the lens or
+train anything. Use that explicit lens ID when several fits exist for the same
+model. To use a lens in a second workspace on the same machine, `science
+lens-copy <lensID> --from <workspace directory>` copies it under the same name
+and record; review it, then repeat with the `--plan-sha256` it shows.
 
 Choose intended use with the researcher: optional `lens.tier` is `testing`
 (the default, for rehearsal) or `evidence` (intended study use). This declaration
@@ -646,6 +651,31 @@ own: `lensID`, `layers` (or `allLayers` for every fitted source layer), `topK`
 `promptMode`, and `systemPrompt` with the CLI's precedence: an explicit value
 wins, then the agent's own, then the default. The agent's vectors, adapter, and
 neutral basis travel with the request and are hash-checked again on the node.
+
+A request also carries its lens unless you say otherwise, and the converted
+file of a lens for a large model is several gigabytes: more than a site accepts
+in one upload, and another copy on the site for every request. Send the lens to
+the site once, then package each request so that it refers to the site's copy:
+
+```sh
+steerlab-cli remote lens-push <lensID> --site <id>
+steerlab-cli science input-plan <request.json> --lens-reference
+steerlab-cli science package <request.json> --archive <file> --plan-sha256 <digest> --lens-reference
+```
+
+On the Python client the first command is `steerlab runner lens-push <lensID>
+--runner <url>`. `lens-push` sends the lens in parts that follow its layers,
+checks each part, and registers the lens's record on the site. Run again after
+an interruption, it sends only what is missing. When the site already holds the
+lens (it was fitted there, or sent from another workspace), nothing is uploaded
+and the record is still registered. `lens-status <lensID>` says what the site
+holds. With `--lens-reference`, the input plan lists the lens under
+`libraryLenses` and the archive leaves its converted file out; the file is
+still verified on your machine before the request is packaged, and again on the
+node. A site with no lens library refuses a request that refers to its lens,
+and both clients say so before they upload one: package without the flag
+there. Your workspace stays the source of the lens: anything a site holds can
+be sent again.
 
 Review states, before anything is submitted:
 

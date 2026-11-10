@@ -210,6 +210,8 @@ steerlab workspace handoff
 steerlab workspace guide [<topic>]
 steerlab runner science-call <operation> --action <value> --request <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-stage <server-archive-path> --runner <url> --sha256 <digest> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner lens-push <lensID> --runner <url> [--adopt <path-on-the-site>] [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner lens-status <lensID> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-export <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-fetch <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner cleanup-plan <job-id> --receipt-sha256 <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
@@ -242,8 +244,9 @@ steerlab science sae-pin <roster-path> --experiment <value> --plan-sha256 <value
 steerlab science interview <operation>
 steerlab science draft <operation> --answers <value>
 steerlab science publish <operation> --answers <value> --destination <value> --plan-sha256 <value>
-steerlab science input-plan <request.json>
-steerlab science package <request.json> --archive <value> --plan-sha256 <value> [--custom-code-sha256 <value>]
+steerlab science input-plan <request.json> [--lens-reference]
+steerlab science package <request.json> --archive <value> --plan-sha256 <value> [--custom-code-sha256 <value>] [--lens-reference]
+steerlab science lens-copy <lensID> --from <workspace-dir> [--plan-sha256 <digest>]
 steerlab science import <archive.tar.gz> --sha256 <digest>
 steerlab science custody
 steerlab science verify-custody <receipt-sha256>
@@ -326,12 +329,16 @@ steerlab runner status <job-id> --runner <url>
 steerlab runner logs <job-id> [--follow | --tail <n>] --runner <url>
 steerlab runner evidence <job-id> --out <file.tar.gz> --runner <url>
 steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
+steerlab runner lens-push <lensID> --runner <url>        # a lens, sent once
+steerlab runner lens-status <lensID> --runner <url>
 ```
 
 | verb | route(s) it speaks | notes |
 |---|---|---|
 | `runner capabilities` | `GET /api/info` (+ `GET /api/capabilities` as fallback) | the runner's `engineVersion`, its artifact root, its devices and capability snapshot. Warns when the runner's root looks like a source checkout |
-| `runner upload <bundle>` | `POST /api/bundles/upload` | streams the archive; **refuses** if the runner reports a different sha256 than the client computed. Prints the staged path and the digest — the two things `submit` wants |
+| `runner upload <bundle>` | `POST /api/bundles/upload` | streams the archive; **refuses** if the runner reports a different sha256 than the client computed. Prints the staged path and the digest — the two things `submit` wants. A request archive that refers to its lens (`science package --lens-reference`) is not sent to a runner with no lens library: `lensLibraryUnavailable`/65, before a byte goes. An upload the runner refuses as too large (413) says that a lens can be sent once with `lens-push` and referred to |
+| `runner lens-push <lensID>` | `GET /api/capabilities`, `GET /api/lens-library/{sha}`, `POST …/begin`, `PUT …/parts/{n}`, `POST …/complete`, `POST /api/lens-library/register` | sends a workspace lens's converted file to the runner's lens library once, filed under its SHA-256. The file is verified against the hash its import recorded, then sent in parts that follow its layers, each with its own hash and none larger than the runner's `lensLibrary.partMaxBytes`. Only the parts the runner lacks are sent, so the verb can be run again after an interruption; when the runner already holds the bytes nothing is uploaded and the record is still registered. `--adopt <path-on-the-site>` asks the runner to check and keep a copy already on it (`POST /api/lens-library/adopt`), for a site that forbids HTTP transfer. A runner with no lens library is `lensLibraryUnavailable`/65 |
+| `runner lens-status <lensID>` | `GET /api/capabilities`, `GET /api/lens-library/{sha}`, `GET /api/jlens/lenses/{lensID}` | reads only: whether the runner's library holds the lens's bytes (`held`), the parts of an upload in progress (`receivedParts`), and whether the runner has the lens's record (`siteRecord`: `registered`, `absent`, `different`, or `unknown` on a runner that serves no lens records) |
 | `runner submit` | `POST /api/bundles/inspect`, then `POST /api/studies/submit-bundle` | `--bundle-sha` is checked against the runner's own inspect of `--bundle-path` **before** anything is submitted. Without `--executor`, `analyze` and `verify` are sent as `local` and every other verb sends none, so the runner's own executor applies. Reports the job id, the runner's identity, and the digest |
 | `runner jobs [<id>]` | `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` | `--cancel` needs an id — this client will not cancel a runner's whole queue |
 | `runner status <id>` | `GET /api/jobs/{id}/status` | one read that returns: the scheduler's view in fixed fields, records written so far, and how the job ended, as `result.response` — the same document as the Mac's `remote status` (§3.8). Checks `cluster.jobStatus` first: an older runner is `jobStatusUnsupported`/65, an id that is not a job id `usage`/64 |
@@ -2565,6 +2572,8 @@ workflow that works. The success message names the file to author:
 
 ```
 steerlab-cli remote science-stage <server-archive-path> --sha256 <hex> [--site <id>] [--url <server>]
+steerlab-cli remote lens-push <lensID> [--adopt <path-on-the-site>] [--site <id>] [--url <server>]
+steerlab-cli remote lens-status <lensID> [--site <id>] [--url <server>]
 steerlab-cli remote science-export <job-id> [--site <id>] [--url <server>]
 steerlab-cli remote science-fetch <job-id> [--site <id>] [--url <server>]
 steerlab-cli remote science-call <operation> --action <value> --request <value> [--site <id>] [--url <server>]
@@ -2598,6 +2607,8 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 | Verb | Purpose |
 |---|---|
 | `remote science-stage` | Stage a verified diagnostic execution copy without editing workbench sources. |
+| `remote lens-push` | Send a workspace lens to the site's lens library once, in parts that follow its layers, each checked, and register its record there. Sends only what the site lacks, so it can be run again after an interruption. With --adopt, the site checks and keeps a copy already on it, and nothing is uploaded. |
+| `remote lens-status` | Report whether the site's lens library holds a workspace lens and whether the site has its record. Reads only. |
 | `remote science-export` | Package completed diagnostic output and return its hash for permitted transfer. |
 | `remote science-fetch` | Download and verify diagnostic evidence into the captured workspace, retaining local custody. |
 | `remote science-call` | Call a catalogued scientific HTTP action with its existing authority and gates. |
@@ -3339,8 +3350,9 @@ steerlab-cli science sae-pin <roster-path> --experiment <name> --plan-sha256 <va
 steerlab-cli science interview <operation>
 steerlab-cli science draft <operation> --answers <value>
 steerlab-cli science publish <operation> --answers <value> --destination <value> --plan-sha256 <value>
-steerlab-cli science input-plan <request.json>
-steerlab-cli science package <request.json> --archive <value> [--custom-code-sha256 <value>] --plan-sha256 <value>
+steerlab-cli science input-plan <request.json> [--lens-reference]
+steerlab-cli science package <request.json> --archive <value> [--custom-code-sha256 <value>] [--lens-reference] --plan-sha256 <value>
+steerlab-cli science lens-copy <lensID> --from <workspace-dir> [--plan-sha256 <digest>]
 steerlab-cli science import <archive.tar.gz> --sha256 <hex>
 steerlab-cli science custody
 steerlab-cli science verify-custody <receipt-sha256>
@@ -3368,7 +3380,7 @@ steerlab-cli science report <run-folder-or-report.json> [--out <file>]
 | `science corpus-preview` | Read chosen data sources and capture a fitting corpus preview; public dataset files may download. |
 | `science corpus-publish` | Save the reviewed fitting corpus and provenance in a new directory. |
 | `science artifact-plan` | Inspect a custom lens or SAE decoder and hash its source files without publishing. |
-| `science artifact-import` | Import the reviewed instrument into a fresh library destination. |
+| `science artifact-import` | Import the reviewed instrument into the workspace library. A lens is named from its reviewed files, so importing the same files again finds the same lens. |
 | `science sae-check` | Inspect the SAE roster and qualification warnings without a model. |
 | `science sae-show` | Inspect an existing qualification record without changing its scientific status. |
 | `science sae-pin-plan` | Review roster and draft bytes before pinning. |
@@ -3376,8 +3388,9 @@ steerlab-cli science report <run-folder-or-report.json> [--out <file>]
 | `science interview` | Read the shared method interview and exact form fields. |
 | `science draft` | Review conceptual answers, a machine request and its input hashes. |
 | `science publish` | Publish the reviewed request and rationale in a new requests directory. |
-| `science input-plan` | Discover and hash local diagnostic inputs using the portable archive owner. |
-| `science package` | Package exactly the reviewed diagnostic inputs for permitted transfer. Inputs that carry custom code need each SHA-256 the input plan shows, in --custom-code-sha256. |
+| `science input-plan` | Discover and hash local diagnostic inputs using the portable archive owner. With --lens-reference, a request that names a lens refers to the copy in the site's lens library and leaves the lens file out; send the lens once with lens-push first. |
+| `science package` | Package exactly the reviewed diagnostic inputs for permitted transfer. Inputs that carry custom code need each SHA-256 the input plan shows, in --custom-code-sha256. With --lens-reference, a request that names a lens refers to the copy in the site's lens library and leaves the lens file out; send the lens once with lens-push first. |
+| `science lens-copy` | Copy a lens from another workspace on this machine into this one, under the same name and record. Reviews by default and writes nothing; repeat with the --plan-sha256 the review shows to copy it. Each file is checked before and after, and on macOS the copy is a clone that uses no extra disk space where the filesystem allows. |
 | `science import` | Verify and import diagnostic evidence into this workspace without replacing outputs. |
 | `science custody` | Reverify and list local diagnostic evidence receipts for offline inspection. |
 | `science verify-custody` | Verify the retained diagnostic archive and every expanded output file. |
