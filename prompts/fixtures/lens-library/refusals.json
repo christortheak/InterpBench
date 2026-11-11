@@ -190,6 +190,13 @@
     "reason": "Sending lens custom-lens-example to the site was interrupted before the site confirmed that it holds the whole lens and has its record (the connection was lost).",
     "repairAction": "Run the command again: it sends only what the site still lacks."
   },
+  "statusUnanswered": {
+    "code": "lensStatusUnanswered",
+    "lensID": "custom-lens-example",
+    "cause": "the connection was lost.",
+    "reason": "The engine did not answer lens-status about lens custom-lens-example (the connection was lost). Nothing was changed.",
+    "repairAction": "Run the command again: lens-status only reads."
+  },
   "changed": {
     "code": "lensRefused",
     "reason": "The converted lens file changed after it was checked. Nothing more was sent.",

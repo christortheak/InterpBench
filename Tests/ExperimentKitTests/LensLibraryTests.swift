@@ -145,8 +145,9 @@ import Testing
         var failComplete = false
         /// An answer the contract does not allow, by route name.
         var answers: [String: [String: Any]] = [:]
-        /// One failed answer for a call, by name (`status`, `begin`, `part`,
-        /// `complete`, `adopt`, `register`), given once.
+        /// One failed answer for a call, by name (`capabilities`, `status`,
+        /// `begin`, `part`, `complete`, `adopt`, `register`, `record`),
+        /// given once.
         enum Trouble { case answer(Int, Data), noAnswer }
         var trouble: [String: Trouble] = [:]
         /// How long each request was allowed to wait for its answer, by path.
@@ -195,6 +196,7 @@ import Testing
             calls.append("\(method) \(path)")
             timeouts[path] = request.timeoutInterval
             if path == "/api/capabilities" {
+                if let failed = try planned("capabilities") { return failed }
                 var document: [String: Any] = [
                     "remoteStudy": ["httpTransfer": !external, "externalTransferRequired": external]
                 ]
@@ -222,6 +224,7 @@ import Testing
                 ])
             }
             if path.hasPrefix("/api/jlens/lenses/") {
+                if let failed = try planned("record") { return failed }
                 guard servesRecords else {
                     return try json(["detail": ["code": "workbench_required", "message": "runner only"]], 403)
                 }
@@ -474,6 +477,13 @@ import Testing
             lensID: try Self.text(fixture["interrupted"], "lensID"), cause: try Self.text(fixture["interrupted"], "cause"))
             == (try Self.text(fixture["interrupted"], "reason")))
         #expect(LensLibrary.resumeRepair == (try Self.text(fixture["interrupted"], "repairAction")))
+        // A lens-status read that got no answer.
+        #expect(LensLibrary.statusUnansweredCode == (try Self.text(fixture["statusUnanswered"], "code")))
+        #expect(LensLibrary.statusUnansweredReason(
+            lensID: try Self.text(fixture["statusUnanswered"], "lensID"),
+            cause: try Self.text(fixture["statusUnanswered"], "cause"))
+            == (try Self.text(fixture["statusUnanswered"], "reason")))
+        #expect(LensLibrary.statusRetryRepair == (try Self.text(fixture["statusUnanswered"], "repairAction")))
         #expect(LensLibrary.changedCode == (try Self.text(fixture["changed"], "code")))
         #expect(LensLibrary.changedReason == (try Self.text(fixture["changed"], "reason")))
         #expect(LensLibrary.changedRepair == (try Self.text(fixture["changed"], "repairAction")))
@@ -1032,6 +1042,79 @@ import Testing
             Self.lensID, client: old.client(), root: lens.root, bridge: bridge.run)
         #expect(!none.libraryAvailable && !none.held)
         #expect(old.sent("GET", containing: "/api/lens-library/").isEmpty)
+    }
+
+    /// lens-status reads three things from the engine: its capabilities,
+    /// what its lens library holds, and its record of the lens. A failure on
+    /// the engine, or a lost connection, on any of them says the engine did
+    /// not answer and to run the command again. Nothing about jobs. Python
+    /// twin: `test_a_status_read_that_gets_no_answer_says_to_run_it_again`.
+    @Test(arguments: ["capabilities", "status", "record"], ["a 500", "no answer"])
+    func aStatusReadThatGetsNoAnswerSaysToRunItAgain(_ read: String, _ trouble: String) async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let site = Site()
+        let bridge = Bridge(lens)
+        let client = site.client()
+        _ = try await LensLibraryRemote.push(Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+        site.calls.removeAll()
+        // A long body: no more of it is shown than of any other refusal's text.
+        let body = Data((#"{"detail": ""# + String(repeating: "the engine stopped ", count: 400) + #""}"#).utf8)
+        site.trouble[read] = trouble == "no answer" ? .noAnswer : .answer(500, body)
+        do {
+            _ = try await LensLibraryRemote.status(Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+            Issue.record("a read with no answer must not report a status")
+        } catch let stopped as LensLibrary.Refusal {
+            let fixture = try Self.fixture()
+            #expect(stopped.code == (try Self.text(fixture["statusUnanswered"], "code")) && stopped.state == .failed)
+            #expect(stopped.repairAction == (try Self.text(fixture["statusUnanswered"], "repairAction")))
+            #expect(stopped.reason.hasPrefix("The engine did not answer lens-status about lens custom-lens-example ("))
+            #expect(stopped.reason.hasSuffix("). Nothing was changed."))
+            #expect(!(stopped.reason + stopped.repairAction).lowercased().contains("job"))
+            #expect(stopped.reason.unicodeScalars.count < LensLibrary.refusalTextLimit + 300)
+        }
+        #expect(site.trouble.isEmpty, "the planned failure was reached")
+        #expect(site.calls.allSatisfy { $0.hasPrefix("GET ") })
+        // The repair, carried out: the same read answers.
+        let after = try await LensLibraryRemote.status(
+            Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+        #expect(after.held && after.siteRecord == "registered" && after.libraryAvailable)
+    }
+
+    /// A 404 and a 403 on the record read are answers and keep their own
+    /// meanings, and a missing token is the client's own error: none of
+    /// them is called a read with no answer.
+    @Test func aStatusReadThatIsAnsweredWithA4xxIsNotCalledUnanswered() async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let site = Site()
+        let bridge = Bridge(lens)
+        let client = site.client()
+        let absent = try await LensLibraryRemote.status(
+            Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+        #expect(absent.siteRecord == "absent")
+        site.servesRecords = false
+        let unknown = try await LensLibraryRemote.status(
+            Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+        #expect(unknown.siteRecord == "unknown")
+        site.trouble["status"] = .answer(401, Data(#"{"detail": "Unauthorized"}"#.utf8))
+        do {
+            _ = try await LensLibraryRemote.status(Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+            Issue.record("a read the server will not answer must stop the status")
+        } catch let error as ClusterClient.ClientError {
+            guard case .badResponse(let code, _) = error else { Issue.record("\(error)"); return }
+            #expect(code == 401)
+        }
+        // On the command line a read with no answer is a failure (70).
+        let stopped = ExperimentCLIRunner(sink: .discarding).outcome(
+            for: .init(
+                code: LensLibrary.statusUnansweredCode,
+                reason: LensLibrary.statusUnansweredReason(lensID: Self.lensID, cause: "the connection was lost"),
+                repairAction: LensLibrary.statusRetryRepair, state: .failed),
+            namespace: "remote", verb: "remote lens-status")
+        #expect(stopped.envelope.state == .failed && stopped.exitCode(json: true) == 70)
+        #expect(stopped.envelope.error?.code == "lensStatusUnanswered"
+            && stopped.envelope.error?.repairAction == "Run the command again: lens-status only reads.")
     }
 
     @Test func theCommandLineVerbsAreDeclaredAndReport() async throws {

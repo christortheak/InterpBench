@@ -90,6 +90,11 @@ PROTOCOL_CODE = 'lensLibraryProtocol'
 #: One of a push's calls to the engine did not get its answer.
 INTERRUPTED_CODE = 'lensUploadInterrupted'
 RESUME_REPAIR = 'Run the command again: it sends only what the site still lacks.'
+#: One of lens-status's reads of the engine did not get its answer. A
+#: failure, not a refusal. Swift twins: ``LensLibrary.statusUnansweredCode``
+#: and ``LensLibrary.statusRetryRepair``.
+STATUS_UNANSWERED_CODE = 'lensStatusUnanswered'
+STATUS_RETRY_REPAIR = 'Run the command again: lens-status only reads.'
 #: The lens file is not the one that was planned.
 CHANGED_CODE = 'lensRefused'
 CHANGED_REASON = 'The converted lens file changed after it was checked. Nothing more was sent.'
@@ -162,6 +167,15 @@ def interrupted_reason(lens_id, cause):
     cause = str(cause).strip().rstrip('.')
     return (f'Sending lens {lens_id} to the site was interrupted before the site confirmed that it holds '
             f'the whole lens and has its record ({cause}).')
+
+
+def status_unanswered_reason(lens_id, cause):
+    """One of lens-status's reads of the engine got no answer to what it
+    asked (a lost connection, a timeout, or a failure on the engine): its
+    capabilities, what its lens library holds, or its record of the lens.
+    Swift twin ``LensLibrary.statusUnansweredReason``."""
+    cause = str(cause).strip().rstrip('.')
+    return f'The engine did not answer lens-status about lens {lens_id} ({cause}). Nothing was changed.'
 
 
 def library_available(capabilities):
@@ -598,21 +612,37 @@ def push_message(result):
     return sent + '; the site has its record' + nulls + '.'
 
 
+def _read(lens_id, call):
+    """One of lens-status's reads of the engine. When it gets no answer (the
+    connection, a timeout, or a failure on the engine), say so and say to
+    run the command again: nothing was changed, and no job is involved. Any
+    4xx is an answer, and is raised as it is."""
+    from .runner import RunnerError, RunnerHTTPError, RunnerUnreachable
+    try:
+        return call()
+    except (RunnerUnreachable, RunnerHTTPError) as exc:
+        if isinstance(exc, RunnerHTTPError) and exc.status < 500:
+            raise
+        raise RunnerError(status_unanswered_reason(lens_id, exc.reason), repair_action=STATUS_RETRY_REPAIR,
+                          code=STATUS_UNANSWERED_CODE, detail=exc.detail) from exc
+
+
 def status(client, root, lens_id):
     """Whether the site holds a workspace lens's bytes, and whether it has the
-    lens's record. Reads only."""
+    lens's record. Reads only: the engine's capabilities, what its lens
+    library holds, and its record of the lens."""
     from .runner import RunnerHTTPError
     local = lens_record(root, lens_id)
     sha = local['convertedSHA256']
     result = {'lensID': lens_id, 'convertedSHA256': sha, 'bytes': local['bytes'],
-              'libraryAvailable': library_available(client.capabilities()), 'held': False,
+              'libraryAvailable': library_available(_read(lens_id, client.capabilities)), 'held': False,
               'receivedParts': None, 'siteRecord': 'unknown', 'changed': False}
     if result['libraryAvailable']:
-        held = _answer(client.lens_library_status(sha), 'the lens status')
+        held = _answer(_read(lens_id, lambda: client.lens_library_status(sha)), 'the lens status')
         result['held'] = held.get('held') is True
         result['receivedParts'] = held.get('receivedParts')
     try:
-        site = client.lens_record(lens_id)
+        site = _read(lens_id, lambda: client.lens_record(lens_id))
     except RunnerHTTPError as exc:
         if exc.status == 404:
             result['siteRecord'] = 'absent'

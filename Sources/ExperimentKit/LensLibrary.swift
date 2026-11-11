@@ -170,6 +170,18 @@ public enum LensLibrary {
             + "holds the whole lens and has its record (\(trimmed))."
     }
 
+    /// One of lens-status's reads of the engine did not get its answer. A
+    /// failure, not a refusal. Python twins:
+    /// `lens_transfer.STATUS_UNANSWERED_CODE`, `STATUS_RETRY_REPAIR`, and
+    /// `status_unanswered_reason`.
+    public static let statusUnansweredCode = "lensStatusUnanswered"
+    public static let statusRetryRepair = "Run the command again: lens-status only reads."
+    public static func statusUnansweredReason(lensID: String, cause: String) -> String {
+        let said = cause.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = said.hasSuffix(".") ? String(said.dropLast()) : said
+        return "The engine did not answer lens-status about lens \(lensID) (\(trimmed)). Nothing was changed."
+    }
+
     /// The lens file is not the one that was planned. Python twins:
     /// `lens_transfer.CHANGED_CODE`, `CHANGED_REASON`, and `CHANGED_REPAIR`.
     public static let changedCode = "lensRefused"
@@ -600,21 +612,45 @@ public enum LensLibraryRemote {
     /// not an interruption and is thrown as it is. Python twin:
     /// `lens_transfer._send`.
     static func sending<T>(_ lensID: String, _ call: () async throws -> T) async throws -> T {
-        func interrupted(_ cause: String) -> LensLibrary.Refusal {
-            // The cause can be a whole response body; no more of it is shown
-            // than of any other refusal's text.
-            let shown = String(String.UnicodeScalarView(cause.unicodeScalars.prefix(LensLibrary.refusalTextLimit)))
-            return LensLibrary.Refusal(
+        try await answered(call) { cause in
+            LensLibrary.Refusal(
                 code: LensLibrary.interruptedCode,
-                reason: LensLibrary.interruptedReason(lensID: lensID, cause: shown),
+                reason: LensLibrary.interruptedReason(lensID: lensID, cause: cause),
                 repairAction: LensLibrary.resumeRepair, state: .failed)
+        }
+    }
+
+    /// One of lens-status's reads of the engine: its capabilities, what its
+    /// lens library holds, or its record of the lens. When it gets no answer
+    /// (the connection, a timeout, or a failure on the engine), say so and
+    /// say to run the command again: nothing was changed, and no job is
+    /// involved. Any 4xx is an answer, and is thrown as it is. Python twin:
+    /// `lens_transfer._read`.
+    static func reading<T>(_ lensID: String, _ call: () async throws -> T) async throws -> T {
+        try await answered(call) { cause in
+            LensLibrary.Refusal(
+                code: LensLibrary.statusUnansweredCode,
+                reason: LensLibrary.statusUnansweredReason(lensID: lensID, cause: cause),
+                repairAction: LensLibrary.statusRetryRepair, state: .failed)
+        }
+    }
+
+    /// Run one call to the engine. A lost connection, a timeout, or a 5xx
+    /// becomes what `unanswered` makes of its cause; anything else is thrown
+    /// as it is. The cause can be a whole response body, so no more of it is
+    /// shown than of any other refusal's text.
+    private static func answered<T>(
+        _ call: () async throws -> T, unanswered: (String) -> LensLibrary.Refusal
+    ) async throws -> T {
+        func shown(_ cause: String) -> String {
+            String(String.UnicodeScalarView(cause.unicodeScalars.prefix(LensLibrary.refusalTextLimit)))
         }
         do {
             return try await call()
         } catch let error as URLError {
-            throw interrupted(error.localizedDescription)
+            throw unanswered(shown(error.localizedDescription))
         } catch let error as ClusterClient.ClientError {
-            if case .badResponse(let status, _) = error, status >= 500 { throw interrupted(error.description) }
+            if case .badResponse(let status, _) = error, status >= 500 { throw unanswered(shown(error.description)) }
             throw error
         }
     }
@@ -708,7 +744,8 @@ public enum LensLibraryRemote {
     }
 
     /// Whether the site holds a workspace lens's bytes, and whether it has
-    /// the lens's record. Reads only.
+    /// the lens's record. Reads only: the engine's capabilities, what its
+    /// lens library holds, and its record of the lens.
     public static func status(
         _ lensID: String, client: ClusterClient, root: URL, bridge: Bridge = localBridge
     ) async throws -> StatusResult {
@@ -717,14 +754,14 @@ public enum LensLibraryRemote {
                 "lens-record", ["workspaceRoot": .string(root.path), "lensID": .string(lensID)]))
         var result = StatusResult(
             lensID: lensID, convertedSHA256: plan.convertedSHA256, bytes: plan.bytes,
-            libraryAvailable: try await client.capabilities().lensLibraryAvailable, held: false,
-            receivedParts: nil, siteRecord: "unknown")
+            libraryAvailable: try await reading(lensID) { try await client.capabilities() }.lensLibraryAvailable,
+            held: false, receivedParts: nil, siteRecord: "unknown")
         if result.libraryAvailable {
-            let held = try await client.lensLibraryStatus(plan.convertedSHA256)
+            let held = try await reading(lensID) { try await client.lensLibraryStatus(plan.convertedSHA256) }
             result.held = held.held
             result.receivedParts = held.receivedParts
         }
-        let site = try await client.siteLensRecord(lensID)
+        let site = try await reading(lensID) { try await client.siteLensRecord(lensID) }
         if site.known {
             if let hashes = site.hashes {
                 let same = hashes.converted == plan.convertedSHA256 && hashes.tensor == plan.tensorSHA256

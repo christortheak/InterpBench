@@ -204,7 +204,9 @@ stays its source. Two verbs take it elsewhere without minting another lens:
   missing. A number in the record that is not finite (a
   qualification's value that could not be scored) is sent as null, and the
   result counts them (`recordNonFiniteNumbers`). `lens-status
-  <lensID>` says what the site holds. A request packaged with `science package
+  <lensID>` says what the site holds; it only reads, and when the engine does
+  not answer one of its reads it says so and to run it again. A request
+  packaged with `science package
   --lens-reference` then refers to the site's copy and leaves the converted file
   out. On a site that forbids HTTP transfer, copy the converted file there with
   the site's own tool and run `lens-push` with `--adopt <path on the site>`.

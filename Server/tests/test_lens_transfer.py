@@ -117,6 +117,8 @@ class Site:
         self.timeouts[path] = request.extensions.get('timeout')
         body = request.read()
         if path == '/api/capabilities':
+            if (failed := self.trouble('capabilities', request)) is not None:
+                return failed
             document = {'remoteStudy': {'httpTransfer': not self.external, 'externalTransferRequired': self.external}}
             if self.library is not None:
                 document['lensLibrary'] = {'schemaVersion': 1, 'available': self.library, 'partMaxBytes': self.part_max}
@@ -125,6 +127,8 @@ class Site:
             return httpx.Response(200, json={'path': '/staged/x.tar.gz', 'filename': 'x.tar.gz', 'bytes': len(body),
                                              'sha256': hashlib.sha256(body).hexdigest(), 'bundle': {}})
         if path.startswith('/api/jlens/lenses/'):
+            if (failed := self.trouble('record', request)) is not None:
+                return failed
             if not self.records:
                 return httpx.Response(403, json={'detail': {'code': 'workbench_required', 'message': 'runner only'}})
             lens_id = path.rsplit('/', 1)[1]
@@ -629,6 +633,61 @@ def test_status_says_what_the_site_holds_and_changes_nothing(tmp_path):
     assert (old['libraryAvailable'], old['held']) == (False, False)
     for case in FIXTURE['statusMessages']:
         assert lens_transfer.status_message(case) == case['message']
+
+
+@pytest.mark.parametrize('read', ['capabilities', 'status', 'record'])
+@pytest.mark.parametrize('trouble', ['a 500', 'a 503', 'no answer'])
+def test_a_status_read_that_gets_no_answer_says_to_run_it_again(tmp_path, read, trouble):
+    """lens-status reads three things from the engine: its capabilities, what
+    its lens library holds, and its record of the lens. A failure on the
+    engine, or a lost connection, on any of them says the engine did not
+    answer and to run the command again. Nothing about jobs, which
+    lens-status never makes."""
+    root, lens_id = make_lens(tmp_path)
+    site = Site(part_max=100)
+    with site.client() as client:
+        lens_transfer.push(client, root, lens_id)
+        site.calls.clear()
+        site.fail[read] = NO_ANSWER if trouble == 'no answer' else (int(trouble.split()[1]), {'detail': 'the engine stopped'})
+        with pytest.raises(runner_api.RunnerError) as caught:
+            lens_transfer.status(client, root, lens_id)
+        error = caught.value
+        assert not site.fail, 'the planned failure was reached'
+        block = FIXTURE['statusUnanswered']
+        assert (error.code, error.state) == (block['code'], 'failed') == ('lensStatusUnanswered', 'failed')
+        assert error.repair_action == block['repairAction'] == lens_transfer.STATUS_RETRY_REPAIR
+        assert error.reason.startswith(f'The engine did not answer lens-status about lens {lens_id} (')
+        assert error.reason.endswith('). Nothing was changed.')
+        assert 'job' not in (error.reason + error.repair_action).lower()
+        assert all(method == 'GET' for method, _ in site.calls)
+        # The repair, carried out: the same read answers.
+        after = lens_transfer.status(client, root, lens_id)
+    assert (after['held'], after['siteRecord'], after['libraryAvailable']) == (True, 'registered', True)
+    assert lens_transfer.status_unanswered_reason(block['lensID'], block['cause']) == block['reason']
+
+
+def test_a_status_read_that_is_answered_with_a_4xx_is_not_called_unanswered(tmp_path, wire, capsys):
+    """A 404 and a 403 on the record read are answers, and keep their own
+    meanings; a missing token is said as that. On the command line a read
+    with no answer is a failure (70)."""
+    root, lens_id = make_lens(tmp_path)
+    site = Site()
+    with site.client() as client:
+        assert lens_transfer.status(client, root, lens_id)['siteRecord'] == 'absent'
+        site.records = False
+        assert lens_transfer.status(client, root, lens_id)['siteRecord'] == 'unknown'
+        site.fail['status'] = (401, {'detail': 'Unauthorized'})
+        with pytest.raises(runner_api.RunnerHTTPError) as caught:
+            lens_transfer.status(client, root, lens_id)
+        assert (caught.value.code, caught.value.state) == ('runnerUnauthorized', 'blocked')
+    broken = Site()
+    broken.fail['record'] = (500, {'detail': 'the engine stopped'})
+    wire(broken)
+    code, document = cli(capsys, '--root', str(root), 'runner', 'lens-status', lens_id, '--runner', SERVER)
+    assert (code, document['state'], document['error']['code']) == (70, 'failed', 'lensStatusUnanswered')
+    assert document['error']['repairAction'] == FIXTURE['statusUnanswered']['repairAction']
+    assert document['error']['reason'].startswith(f'The engine did not answer lens-status about lens {lens_id} (')
+    assert 'job' not in json.dumps(document['error']).lower()
 
 
 def test_the_command_line_pushes_and_reports(tmp_path, wire, capsys):
