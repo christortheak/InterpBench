@@ -5902,6 +5902,9 @@ extension ClusterClient {
         var held: Bool
         var bytes: Int?
         var receivedParts: [Int]?
+        /// True, beside `held: false`, when the library has an entry under
+        /// this hash that a newer engine wrote and this one does not read.
+        var newerEntry: Bool?
     }
     /// `POST /api/lens-library/{sha}/begin`.
     struct LensLibraryBegin: Decodable, Sendable {

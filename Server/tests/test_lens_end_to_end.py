@@ -828,6 +828,13 @@ def test_an_entry_a_newer_engine_wrote_is_reported_by_status_and_refused_by_name
                                                              'newerEntry': True}
     code, answered = status(world, engine, root, lens_id)
     assert code == 0 and answered['result']['response']['held'] is False
+    # lens-status says what is there, where "does not hold" alone would hide why the push below is refused.
+    assert answered['result']['response']['newerEntry'] is True
+    assert answered['message'] == (
+        f"The site's lens library has an entry under the hash of lens {lens_id} that a newer SteerLab wrote and "
+        'this engine cannot use; the site does not have its record.')
+    assert answered['message'] == FIXTURE['statusMessages'][5]['message'].replace('custom-lens-example', lens_id).replace(
+        'the site has its record', 'the site does not have its record')
     code, refused = push(world, engine, root, lens_id)
     assert (code, refused['state'], refused['error']['code']) == (65, 'refused', 'lensLibraryEntryNewer')
     assert refused['error']['reason'] == (

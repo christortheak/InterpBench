@@ -242,13 +242,16 @@ public enum LensLibrary {
 
     /// Python twin: `lens_transfer.status_message`.
     public static func statusMessage(
-        lensID: String, libraryAvailable: Bool, held: Bool, siteRecord: String
+        lensID: String, libraryAvailable: Bool, held: Bool, newerEntry: Bool = false, siteRecord: String
     ) -> String {
         let lead: String
         if !libraryAvailable {
             lead = "The engine does not offer a lens library, so lens \(lensID) is not held in one"
         } else if held {
             lead = "The site's lens library holds lens \(lensID)"
+        } else if newerEntry {
+            lead = "The site's lens library has an entry under the hash of lens \(lensID) that a newer "
+                + "SteerLab wrote and this engine cannot use"
         } else {
             lead = "The site's lens library does not hold lens \(lensID)"
         }
@@ -595,20 +598,27 @@ public enum LensLibraryRemote {
         public var receivedParts: [Int]?
         /// `registered`, `absent`, `different`, or `unknown`.
         public var siteRecord: String
+        /// The library has an entry under this lens's hash that a newer
+        /// SteerLab wrote, which this engine cannot use. In the answer only
+        /// when true, as on the Python client.
+        public var newerEntry = false
 
         public var json: JSONValue {
-            .object([
+            var object: [String: JSONValue] = [
                 "lensID": .string(lensID), "convertedSHA256": .string(convertedSHA256),
                 "bytes": .number(Double(bytes)), "libraryAvailable": .bool(libraryAvailable),
                 "held": .bool(held),
                 "receivedParts": receivedParts.map { .array($0.map { .number(Double($0)) }) } ?? .null,
                 "siteRecord": .string(siteRecord), "changed": .bool(false),
-            ])
+            ]
+            if newerEntry { object["newerEntry"] = .bool(true) }
+            return .object(object)
         }
 
         public var message: String {
             LensLibrary.statusMessage(
-                lensID: lensID, libraryAvailable: libraryAvailable, held: held, siteRecord: siteRecord)
+                lensID: lensID, libraryAvailable: libraryAvailable, held: held, newerEntry: newerEntry,
+                siteRecord: siteRecord)
         }
     }
 
@@ -767,6 +777,7 @@ public enum LensLibraryRemote {
             let held = try await reading(lensID) { try await client.lensLibraryStatus(plan.convertedSHA256) }
             result.held = held.held
             result.receivedParts = held.receivedParts
+            result.newerEntry = held.newerEntry == true
         }
         let site = try await reading(lensID) { try await client.siteLensRecord(lensID) }
         if site.known {

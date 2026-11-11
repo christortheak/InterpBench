@@ -533,7 +533,7 @@ import Testing
         let statuses = try Self.rows(fixture, "statusMessages")
         let copies = try Self.rows(fixture, "copyMessages")
         let imports = try Self.rows(fixture, "importMessages")
-        #expect(pushes.count == 6 && statuses.count == 5 && copies.count == 10 && imports.count == 2)
+        #expect(pushes.count == 6 && statuses.count == 6 && copies.count == 10 && imports.count == 2)
         for row in pushes {
             guard case .string(let lens)? = row["lensID"], let parts = LensLibrary.whole(row["uploadedParts"]),
                 let bytes = LensLibrary.whole(row["uploadedBytes"]), case .bool(let adopted)? = row["adopted"],
@@ -548,8 +548,18 @@ import Testing
                 case .bool(let held)? = row["held"], case .string(let record)? = row["siteRecord"]
             else { Issue.record("malformed status row"); continue }
             #expect(.string(LensLibrary.statusMessage(
-                lensID: lens, libraryAvailable: available, held: held, siteRecord: record)) == row["message"])
+                lensID: lens, libraryAvailable: available, held: held, newerEntry: row["newerEntry"] == .bool(true),
+                siteRecord: record)) == row["message"])
         }
+        // An entry a newer SteerLab wrote is said only where the library
+        // would otherwise be said not to hold the lens.
+        #expect(statuses.filter { $0["newerEntry"] == .bool(true) }.count == 1)
+        #expect(LensLibrary.statusMessage(
+            lensID: "x", libraryAvailable: true, held: true, newerEntry: true, siteRecord: "absent")
+            == "The site's lens library holds lens x; the site does not have its record.")
+        #expect(LensLibrary.statusMessage(
+            lensID: "x", libraryAvailable: false, held: false, newerEntry: true, siteRecord: "absent")
+            .hasPrefix("The engine does not offer a lens library"))
         for row in copies {
             guard case .string(let lens)? = row["lensID"], case .string(let action)? = row["action"],
                 case .bool(let existing)? = row["existing"], case .bool(let changed)? = row["changed"],
@@ -1106,6 +1116,15 @@ import Testing
         let answered = try await LensLibraryRemote.status(
             Self.lensID, client: client, root: lens.root, bridge: bridge.run)
         #expect(!answered.held && answered.libraryAvailable && answered.receivedParts == nil)
+        // lens-status says what is there, where "does not hold" alone would
+        // hide why the push below is refused. The field is in the answer
+        // only when true.
+        #expect(answered.newerEntry)
+        #expect(answered.message == "The site's lens library has an entry under the hash of lens "
+            + "custom-lens-example that a newer SteerLab wrote and this engine cannot use; the site does not "
+            + "have its record.")
+        guard case .object(let fields) = answered.json else { Issue.record("no status object"); return }
+        #expect(fields["newerEntry"] == .bool(true) && fields["held"] == .bool(false))
         let decoded = try JSONDecoder().decode(
             ClusterClient.LensLibraryStatus.self,
             from: Data(#"{"held": false, "bytes": null, "receivedParts": null, "newerEntry": true}"#.utf8))
@@ -1119,6 +1138,13 @@ import Testing
             #expect(refusal.repairAction == Self.newerEntryRepair)
         }
         #expect(site.sent("PUT").isEmpty && site.registered.isEmpty)
+        // Any other answer carries no such field, and reads as it always did.
+        let usual = try await LensLibraryRemote.status(
+            Self.lensID, client: Site().client(), root: lens.root, bridge: bridge.run)
+        guard case .object(let plain) = usual.json else { Issue.record("no status object"); return }
+        #expect(!usual.newerEntry && plain["newerEntry"] == nil)
+        #expect(usual.message == "The site's lens library does not hold lens custom-lens-example; the site "
+            + "does not have its record.")
     }
 
     @Test func anEntryOfAnotherSizeAndAnAnswerTheContractDoesNotAllow() async throws {

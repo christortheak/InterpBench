@@ -638,7 +638,10 @@ def _read(lens_id, call):
 def status(client, root, lens_id):
     """Whether the site holds a workspace lens's bytes, and whether it has the
     lens's record. Reads only: the engine's capabilities, what its lens
-    library holds, and its record of the lens."""
+    library holds, and its record of the lens. ``newerEntry`` is in the
+    result, and true, only when the library has an entry under the lens's
+    hash that a newer SteerLab wrote, which this engine cannot use. Swift
+    twin: ``LensLibraryRemote.status``."""
     from .runner import RunnerHTTPError
     local = lens_record(root, lens_id)
     sha = local['convertedSHA256']
@@ -649,6 +652,11 @@ def status(client, root, lens_id):
         held = _answer(_read(lens_id, lambda: client.lens_library_status(sha)), 'the lens status')
         result['held'] = held.get('held') is True
         result['receivedParts'] = held.get('receivedParts')
+        if held.get('newerEntry') is True:
+            # The library has an entry under this hash that a newer SteerLab
+            # wrote. This engine does not read it, so the lens is not held,
+            # and "does not hold" alone would hide why a push is refused.
+            result['newerEntry'] = True
     try:
         site = _read(lens_id, lambda: client.lens_record(lens_id))
     except RunnerHTTPError as exc:
@@ -681,6 +689,9 @@ def status_message(result):
         lead = f'The engine does not offer a lens library, so lens {lens} is not held in one'
     elif result['held']:
         lead = f"The site's lens library holds lens {lens}"
+    elif result.get('newerEntry') is True:
+        lead = (f"The site's lens library has an entry under the hash of lens {lens} that a newer SteerLab wrote "
+                'and this engine cannot use')
     else:
         lead = f"The site's lens library does not hold lens {lens}"
     return lead + '; ' + _RECORD_CLAUSES[result['siteRecord']] + '.'

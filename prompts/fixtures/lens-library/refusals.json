@@ -304,6 +304,14 @@
       "held": false,
       "siteRecord": "absent",
       "message": "The engine does not offer a lens library, so lens custom-lens-example is not held in one; the site does not have its record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "libraryAvailable": true,
+      "held": false,
+      "newerEntry": true,
+      "siteRecord": "registered",
+      "message": "The site's lens library has an entry under the hash of lens custom-lens-example that a newer SteerLab wrote and this engine cannot use; the site has its record."
     }
   ],
   "copyMessages": [

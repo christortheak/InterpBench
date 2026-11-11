@@ -96,6 +96,7 @@ class Site:
         self.fail_complete = False
         self.answers = {}                             # an answer the contract does not allow, by route name
         self.fail = {}                                # one failed answer for a call, by name: (status, body) or NO_ANSWER
+        self.newer = False                            # the library's entry for this lens is a newer engine's
 
     def trouble(self, call, request):
         """The failure planned for this call, given once: a status and a body,
@@ -168,6 +169,8 @@ class Site:
         if (failed := self.trouble(call, request)) is not None:
             return failed
         if action is None:
+            if self.newer:                                # as the engine answers: not held, and why
+                return httpx.Response(200, json={'held': False, 'bytes': None, 'receivedParts': None, 'newerEntry': True})
             upload = self.uploads.get(sha)
             return httpx.Response(200, json={
                 'held': sha in self.entries, 'bytes': len(self.entries[sha]) if sha in self.entries else None,
@@ -632,8 +635,39 @@ def test_status_says_what_the_site_holds_and_changes_nothing(tmp_path):
     with Site(library=None).client() as client:
         old = lens_transfer.status(client, root, lens_id)
     assert (old['libraryAvailable'], old['held']) == (False, False)
+    assert len(FIXTURE['statusMessages']) == 6
     for case in FIXTURE['statusMessages']:
         assert lens_transfer.status_message(case) == case['message']
+    # An entry a newer SteerLab wrote is said only where the library would otherwise be said not to hold it.
+    newer = next(case for case in FIXTURE['statusMessages'] if case.get('newerEntry'))
+    assert 'a newer SteerLab wrote' in newer['message'] and 'does not hold' not in newer['message']
+    assert lens_transfer.status_message({**newer, 'held': True}).startswith("The site's lens library holds lens ")
+    assert lens_transfer.status_message({**newer, 'libraryAvailable': False}).startswith('The engine does not offer')
+    assert lens_transfer.status_message({**newer, 'newerEntry': False}).startswith("The site's lens library does not hold")
+
+
+def test_status_says_when_the_sites_entry_was_written_by_a_newer_steerlab(tmp_path):
+    """The engine answers `newerEntry: true` beside `held: false` for an entry
+    whose record names a later schema than its own. "Does not hold" alone
+    would hide why a push is then refused, so the result carries the field
+    and the sentence says what is there."""
+    root, lens_id = make_lens(tmp_path)
+    site = Site()
+    site.newer = True
+    with site.client() as client:
+        answered = lens_transfer.status(client, root, lens_id)
+    assert answered['newerEntry'] is True and answered['held'] is False and answered['libraryAvailable'] is True
+    assert lens_transfer.status_message(answered) == (
+        f"The site's lens library has an entry under the hash of lens {lens_id} that a newer SteerLab wrote and "
+        'this engine cannot use; the site does not have its record.')
+    assert site.sent('GET', '/api/lens-library/') and not site.sent('POST', '') and not site.sent('PUT', '')
+    # Any other answer carries no such field, so the result is the one it always was.
+    site.newer = False
+    with site.client() as client:
+        usual = lens_transfer.status(client, root, lens_id)
+    assert 'newerEntry' not in usual
+    assert lens_transfer.status_message(usual) == (
+        f"The site's lens library does not hold lens {lens_id}; the site does not have its record.")
 
 
 @pytest.mark.parametrize('read', ['capabilities', 'status', 'record'])
