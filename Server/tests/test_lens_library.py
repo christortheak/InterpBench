@@ -845,6 +845,27 @@ def test_an_unfinished_folder_that_is_still_changing_is_refused_before_a_byte_is
     assert lens_library.STALE_ENTRY_SECONDS == 15 * 60
 
 
+def test_an_entry_that_cannot_be_read_just_now_is_never_taken_for_an_unfinished_one(site):
+    sha = push(site.client, site.source)[0]
+    entry = site.library / sha
+    (entry / 'entry.json').chmod(0)                        # the storage will not let it be read at this moment
+    idle(entry, lens_library.STALE_ENTRY_SECONDS + 1)
+    try:
+        for response in (site.client.post(f'/api/lens-library/{sha}/begin', json=part_plan(site.source, 64)),
+                         site.client.get(f'/api/lens-library/{sha}')):
+            assert response.status_code == 409, response.text
+            detail = refusal(response)
+            assert detail['code'] == 'lensLibraryStorage' and 'Permission denied' in detail['reason']
+            assert str(site.root) not in response.text and 'Errno' not in response.text
+        assert lens_library.held_file(sha) is None          # a reader is simply not answered
+    finally:
+        (entry / 'entry.json').chmod(0o644)
+    # Nothing was set aside: the entry is whole, and held again once it can be read.
+    assert sorted(path.name for path in entry.iterdir()) == ['entry.json', 'jacobians.safetensors']
+    assert not list((site.library / '.incoming').iterdir())
+    assert site.client.get(f'/api/lens-library/{sha}').json()['held'] is True
+
+
 # --- fix round 1: a run root reached through a link -------------------------------
 
 def test_adopt_takes_the_sites_own_spelling_of_its_run_root(site, monkeypatch, tmp_path):

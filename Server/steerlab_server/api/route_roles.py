@@ -61,7 +61,7 @@ CENSUS: tuple[RouteRole, ...] = (
     _r("PUT", "/api/lens-library/{sha}/parts/{index}", B, "Receive one part of a converted lens file, checked against the upload's plan before it is kept."),
     _r("POST", "/api/lens-library/{sha}/complete", B, "Check an uploaded lens file whole against its SHA-256 and publish it to the lens library, create-only."),
     _r("POST", "/api/lens-library/adopt", B, "Add a converted lens file already beneath the run root to the lens library after hashing it; the source is left alone."),
-    _r("POST", "/api/lens-library/register", B, "Put a lens record in the serving workspace for bytes the lens library holds, so a study, a request, or a lens list resolves it by name."),
+    _r("POST", "/api/lens-library/register", B, "Put a lens record in the engine's own lens store for bytes the lens library holds, so a study run or a lens list resolves it by name."),
     _r("POST", "/api/science/plan", B, "Inspect staged scientific inputs and execution resources without execution or authorship."),
     _r("POST", "/api/science/submit", B, "Execute a reviewed scientific operation and retain its scientific output type."),
     _r("GET", "/api/jobs/{job_id}/recovery", B, "Read controller ownership evidence and its external review token."),

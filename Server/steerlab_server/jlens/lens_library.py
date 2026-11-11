@@ -128,17 +128,20 @@ def gone(lens_id, sha):
 
 
 def storage_refusal(exc):
-    """An operating-system failure in the library, said without an error
-    number or any of the engine's paths."""
+    """An operating-system failure while the library was at work, said
+    without an error number or any of the engine's paths. The storage that
+    failed may be the library's folder, the run root a file is adopted from,
+    or the lens store a record is written to, so the sentence names none."""
     if getattr(exc, 'errno', None) in (errno.ENOSPC, getattr(errno, 'EDQUOT', None)):
         return LensLibraryRefusal(
-            'lensLibraryNoSpace', "The lens library's storage is full, so the request was not finished.",
-            "Free space on the lens library's storage, or ask the site's operator to, then try again.")
+            'lensLibraryNoSpace', "The engine's storage is full, so the request was not finished.",
+            "Free space on the engine's storage (the lens library's folder, or its run root), or ask the site's "
+            'operator to, then try again.')
     reason = getattr(exc, 'strerror', None) or type(exc).__name__
     return LensLibraryRefusal(
-        'lensLibraryStorage', f"The lens library's storage refused the request ({reason}).",
-        "Try again. If it is refused the same way, ask the site's operator to check the lens library's folder "
-        'and who may write to it.')
+        'lensLibraryStorage', f"The engine's storage refused the request ({reason}).",
+        "Try again. If it is refused the same way, ask the site's operator to check the lens library's folder, "
+        'the file named, and who may read and write them.')
 
 
 # --- where the library is, and what it holds ------------------------------------
@@ -208,12 +211,25 @@ def _entry(base, sha):
     try:
         document = json.loads(record.read_bytes())
         size = file.stat().st_size
-    except (OSError, ValueError):
+    except (FileNotFoundError, ValueError):
+        # Gone in this instant, or not a record: not an entry. Any other
+        # failure to read is the storage's, and is raised, never taken for
+        # "not held": an entry is set aside only when it can be SEEN to be
+        # incomplete (`_make_way`).
         return None
     if (not isinstance(document, dict) or document.get('schemaVersion') != SCHEMA_VERSION
             or document.get('convertedSHA256') != sha or document.get('bytes') != size):
         return None
     return {'path': file, 'bytes': size, 'entry': document}
+
+
+def _read_entry(base, sha):
+    """:func:`_entry` for a caller outside the routes (a plan, a staging): a
+    failure of the storage is said as a refusal, without the engine's paths."""
+    try:
+        return _entry(base, sha)
+    except OSError as exc:
+        raise storage_refusal(exc) from exc
 
 
 def _reading():
@@ -253,7 +269,7 @@ def reference(lens_id, sha, *, verify=False):
     base = root()
     if base is None or not isinstance(sha, str) or not _KEY.fullmatch(sha):
         return None
-    found = _entry(base.resolve(), sha)
+    found = _read_entry(base.resolve(), sha)
     if found is None:
         return None
     if verify and archives.file_hash(found['path']) != sha:
@@ -273,7 +289,7 @@ def require_held(lenses):
         raise unavailable()
     base = base.resolve()
     for lens in lenses:
-        found = _entry(base, _key(lens['convertedSHA256']))
+        found = _read_entry(base, _key(lens['convertedSHA256']))
         if found is None or found['bytes'] != lens['bytes']:
             raise not_held(lens['lensID'], lens['convertedSHA256'])
 
