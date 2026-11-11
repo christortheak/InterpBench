@@ -3250,7 +3250,13 @@ public struct ClusterClient: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         let (data, response) = try await session.data(for: request)
-        try validate(response: response, data: data)
+        do {
+            try validate(response: response, data: data)
+        } catch let error as ClientError {
+            // A science route's refusal is the engine's own (`relayingEngineRefusal`).
+            if resolved.path.hasPrefix("/api/science/"), let refusal = Self.engineRefusal(in: error) { throw refusal }
+            throw error
+        }
         struct MutationStatus: Decodable { let changed: Bool? }
         let reported = (try? JSONDecoder().decode(MutationStatus.self, from: data))?.changed
         return .object(["operation": .string(operation), "action": .string(actionID),
@@ -5974,28 +5980,73 @@ extension ClusterClient {
             repairAction: detail.repair ?? LensLibrary.refusalFallbackRepair)
     }
 
-    /// One of the science calls (stage, plan, submit), with one kind of
-    /// answer reported as the engine gave it: a refusal about a LENS, which
-    /// is a refusal whose `detail.code` begins with `lens`. The one a
-    /// researcher meets is `lensNotInLibrary`: the request refers to a lens
-    /// that was never sent to this site. It is thrown with the engine's
-    /// code, its sentence, and its repair, as a refusal on a lens-library
-    /// route is, and not as a bare bad response that quotes the engine's
-    /// whole answer. Every other answer on those calls, a refusal with any
-    /// other code among them, is thrown exactly as it was. Python twin:
+    /// A refusal the engine wrote itself on one of its science routes
+    /// (`/api/science/…`): its code, its sentence, and its repair. On the
+    /// command line it is `refused` (65) with the engine's code as the
+    /// envelope's `error.code`. The app shows the sentence and the repair
+    /// together. Python twin: the `RunnerRefusal` that
+    /// `RunnerClient._raise_for_science` raises.
+    public struct EngineRefusal: Error, Sendable, Equatable, CustomStringConvertible, LocalizedError {
+        /// The HTTP status of the answer that carried the refusal.
+        public let status: Int
+        public let code: String
+        public let reason: String
+        public let repairAction: String
+
+        public init(status: Int, code: String, reason: String, repairAction: String) {
+            self.status = status
+            self.code = code
+            self.reason = reason
+            self.repairAction = repairAction
+        }
+
+        public var description: String { repairAction.isEmpty ? reason : reason + " " + repairAction }
+        public var errorDescription: String? { description }
+
+        /// What a refusal says when the engine gave a code and no sentence.
+        /// Python twin: `runner.engine_refusal_fallback_reason`.
+        public static func fallbackReason(status: Int) -> String {
+            "The engine refused this request (\(status)) without saying why."
+        }
+    }
+
+    /// The engine's own typed refusal in an answer from a science route, or
+    /// nil when the answer is not one. It is one when the status is a 4xx
+    /// other than 401 and the body's `detail` is an object that names a
+    /// `code` in text. Those routes write `{"code", "reason",
+    /// "repairAction"}` with no `message`. What the engine leaves out is
+    /// filled with one sentence and one repair, the same on both clients.
+    /// A refusal that names no code, a 401, and a failure (5xx) are not
+    /// refusals of this kind, whatever their bodies say. Python twin:
     /// `RunnerClient._raise_for_science`.
-    func relayingLensRefusal<T>(_ call: () async throws -> T) async throws -> T {
+    static func engineRefusal(status: Int, data: Data) -> EngineRefusal? {
+        guard (400..<500).contains(status), status != 401 else { return nil }
+        let detail = refusalDetail(data)
+        guard let code = detail.code else { return nil }
+        return EngineRefusal(
+            status: status, code: code,
+            reason: detail.message ?? EngineRefusal.fallbackReason(status: status),
+            repairAction: detail.repair ?? LensLibrary.refusalFallbackRepair)
+    }
+
+    /// The same, read from the error a call threw.
+    static func engineRefusal(in error: ClientError) -> EngineRefusal? {
+        guard case .badResponse(let status, let body) = error else { return nil }
+        return engineRefusal(status: status, data: Data(body.utf8))
+    }
+
+    /// One call to a science route (the stage, plan, and submit calls, the
+    /// diagnostic transport calls, and a catalogued action that one of
+    /// those routes owns). A refusal the engine wrote itself is thrown as
+    /// an `EngineRefusal`, with the engine's code, its sentence, and its
+    /// repair, and not as a bare bad response that quotes the engine's
+    /// whole answer. Every other answer is thrown exactly as it was.
+    /// Python twin: `RunnerClient._raise_for_science`.
+    func relayingEngineRefusal<T>(_ call: () async throws -> T) async throws -> T {
         do {
             return try await call()
         } catch let error as ClientError {
-            if case .badResponse(let status, let body) = error {
-                let data = Data(body.utf8)
-                if Self.refusalDetail(data).code?.hasPrefix("lens") == true,
-                    let refusal = Self.lensLibraryRefusal(status: status, data: data)
-                {
-                    throw refusal
-                }
-            }
+            if let refusal = Self.engineRefusal(in: error) { throw refusal }
             throw error
         }
     }

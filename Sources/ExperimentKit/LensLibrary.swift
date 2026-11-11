@@ -140,7 +140,9 @@ public enum LensLibrary {
     /// An engine's refusal on a lens-library route that names no code, gives
     /// no sentence, or names no repair gets these, on both clients. Python
     /// twins: `lens_transfer.REFUSAL_FALLBACK_CODE`,
-    /// `refusal_fallback_reason`, and `REFUSAL_FALLBACK_REPAIR`.
+    /// `refusal_fallback_reason`, and `REFUSAL_FALLBACK_REPAIR`. The repair
+    /// is also what a coded refusal on a science route gets when the engine
+    /// names none (`ClusterClient.engineRefusal`).
     public static let refusalFallbackCode = "lensLibraryRefused"
     public static func refusalFallbackReason(status: Int) -> String {
         "The engine refused the lens library request (\(status)) without saying why."

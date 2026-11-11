@@ -449,7 +449,9 @@ struct ScientificExecutionSheet: View {
             .font(.caption)
             .foregroundStyle(.orange)
             .textSelection(.enabled)
-            .lineLimit(2)
+            // Room for an engine's sentence, its repair, and the advice
+            // that follows them: two lines cut a long repair short.
+            .lineLimit(4)
             .opacity(failure == nil ? 0 : 1)
             .accessibilityHidden(failure == nil)
             .frame(maxWidth: .infinity, alignment: .leading)

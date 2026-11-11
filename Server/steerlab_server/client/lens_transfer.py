@@ -78,7 +78,9 @@ ENTRY_DIFFERS_REPAIR = ("Ask the site's operator to inspect that library entry; 
 #: An engine's refusal on a lens-library route that names no code, gives no
 #: sentence, or names no repair gets these, on both clients. Swift twins:
 #: ``LensLibrary.refusalFallbackCode``, ``refusalFallbackReason``, and
-#: ``refusalFallbackRepair``.
+#: ``refusalFallbackRepair``. The repair is also what a coded refusal on a
+#: science route gets when the engine names none
+#: (``RunnerClient._raise_for_science``).
 REFUSAL_FALLBACK_CODE = 'lensLibraryRefused'
 REFUSAL_FALLBACK_REPAIR = ('The engine named no repair. If its reason does not say what to change, look in the '
                            "engine's log for this request.")

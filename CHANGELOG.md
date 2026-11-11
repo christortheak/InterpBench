@@ -12,6 +12,43 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **An engine's refusal of a managed request reads as the engine wrote it.**
+  The engine's science routes (`/api/science/…`) stage, plan, and submit a
+  managed request, export its evidence, clean up after it, and coordinate a
+  fitting round or a campaign. They refuse with a code, a sentence, and a
+  repair. Both clients now report such a refusal as `refused`, with the
+  engine's code as `error.code`, the engine's sentence as `error.reason`, and
+  the engine's repair as `error.repairAction`. The exit code is 65 on the
+  Python client and on the Mac with `--json`; the Mac without `--json` exits
+  1, as it did. 0.9.24 did this only for a refusal about a lens. For any
+  other code, the Python client reported `runnerRefused` (exit 65) with the
+  engine's whole answer quoted as JSON text inside the reason, and the Mac
+  reported a failed command (`verbFailed`, exit 70 with `--json`) that quoted
+  the raw answer and did not carry the engine's repair. In the Mac app, the
+  sheets that make these requests now show the engine's sentence and its
+  repair.
+  - **A refusal the engine sends as 403.** An engine in the runner role
+    answers a workbench-only science action with 403 and a code
+    (`workbench_required`). The Python client took every 403 for a token
+    problem and reported this one as `runnerUnauthorized` (exit 64) with a
+    repair about the token, not as `runnerRefused`. A 403 that names a code
+    on these routes is now the engine's refusal, as above: exit 65, with the
+    engine's own repair. A 403 that names no code is still about the token.
+  - **If a script matches on the code.** This applies to `science-stage`,
+    `science-plan`, `science-submit`, `science-export`, `science-fetch`,
+    `cleanup-plan`, `cleanup-apply`, and a `science-call` to one of these
+    routes. Where a script matched `runnerRefused` on the Python client or
+    `verbFailed` on the Mac, match the engine's code as well
+    (`diagnosticTransportRefused`, `scientificExecutionRefused`, or the more
+    specific code the engine gives). An answer that names no code keeps the
+    code it had. On the Python client a coded refusal no longer has
+    `result.runnerDetail`: what it held is now `error.code`, `error.reason`,
+    and `error.repairAction`, and `result.status` and `result.url` say which
+    answer of which engine it was.
+  - **What reads as it did.** An answer that names no code, a missing or
+    stale token (401), and an engine failure (5xx) are reported as before, on
+    both clients. So is every route outside `/api/science/`.
+
 ## [0.9.24] — 2026-11-11
 
 - **A site keeps each lens once, and a request can refer to it** (public

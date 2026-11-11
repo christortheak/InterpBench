@@ -842,7 +842,11 @@ def test_a_refusal_about_a_lens_on_a_science_call_is_the_engines_own(call):
     site was never sent: the engine refuses with `lensNotInLibrary`, as the
     science routes write a refusal (a `reason`, and no `message`). The
     client reports the engine's code, sentence, and repair, and exits 65.
-    Every other answer on those routes reads exactly as it did."""
+
+    A lens code is not a special case: every refusal on those routes that
+    names a code is reported this way (`test_science_refusals.py` holds the
+    rule, for every science call). An answer that names no code, a 401, and
+    a failure read exactly as they did."""
     path, invoke = SCIENCE_CALLS[call]
     sentence = "This engine's lens library does not hold the lens 'custom-lens-example' (converted SHA-256 " + 'c' * 64 + ').'
     repair = 'Send the lens once with `remote lens-push custom-lens-example` (or `runner lens-push`), then stage the request again.'
@@ -866,13 +870,24 @@ def test_a_refusal_about_a_lens_on_a_science_call_is_the_engines_own(call):
         assert isinstance(error, runner_api.RunnerRefusal)
         assert (error.code, error.state, error.reason, error.repair_action) == ('lensNotInLibrary', 'refused', sentence, repair)
         assert error.detail == {'status': 409, 'url': SERVER + path}
-    # Any code that begins with `lens`, on any refusal status but 401, and with what it leaves out filled in.
+    # On any refusal status but 401, and with what it leaves out filled in.
     error = refused(400, {'detail': {'code': 'lensNotReferable', 'reason': 'It cannot be referred to.'}})
     assert (error.code, error.reason, error.repair_action) == (
         'lensNotReferable', 'It cannot be referred to.', lens_transfer.REFUSAL_FALLBACK_REPAIR)
 
-    # Everything else is the adapter's usual answer, word for word: another code, no code, a code that only
-    # contains the word, a missing token, and a failure.
+    # In 0.9.24 only a code that begins with `lens` was relayed, and these three were quoted whole, as
+    # JSON text, inside a `runnerRefused` reason. Each is now the engine's own refusal too.
+    for code, detail in (('diagnosticTransportRefused', {'code': 'diagnosticTransportRefused', 'reason': 'The archive is damaged.',
+                                                         'repairAction': 'Package it again.'}),
+                         ('scientificExecutionRefused', {'code': 'scientificExecutionRefused', 'reason': 'Inputs changed.'}),
+                         ('notALensCode', {'code': 'notALensCode', 'reason': sentence})):
+        error = refused(409, {'detail': detail})
+        assert type(error) is runner_api.RunnerRefusal, code
+        assert (error.code, error.state, error.reason) == (code, 'refused', detail['reason'])
+        assert error.repair_action == detail.get('repairAction', lens_transfer.REFUSAL_FALLBACK_REPAIR)
+        assert error.detail == {'status': 409, 'url': SERVER + path}
+
+    # Everything else is the adapter's usual answer, word for word: no code, a missing token, and a failure.
     def usual(status, body):
         answers['now'] = (status, body)
         response = httpx.Response(status, json=body, request=httpx.Request('POST', SERVER + path))
@@ -880,11 +895,7 @@ def test_a_refusal_about_a_lens_on_a_science_call_is_the_engines_own(call):
             client_for(handler)._raise_for_status(response, url=SERVER + path)
         return expected.value
 
-    for status, body in ((409, {'detail': {'code': 'diagnosticTransportRefused', 'reason': 'The archive is damaged.',
-                                           'repairAction': 'Package it again.'}}),
-                         (409, {'detail': {'code': 'scientificExecutionRefused', 'reason': 'Inputs changed.'}}),
-                         (409, {'detail': {'code': 'notALensCode', 'reason': sentence}}),
-                         (409, {'detail': {'reason': sentence, 'repairAction': repair}}),
+    for status, body in ((409, {'detail': {'reason': sentence, 'repairAction': repair}}),
                          (409, {'detail': sentence}),
                          (401, {'detail': {'code': 'lensNotInLibrary', 'reason': sentence}}),
                          (500, {'detail': {'code': 'lensNotInLibrary', 'reason': sentence}})):

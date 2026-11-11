@@ -371,6 +371,9 @@ public struct ExperimentCLIRunner: Sendable {
         } catch let refusal as LensLibrary.Refusal {
             return outcome(for: refusal, namespace: namespace, verb: verb)
 
+        } catch let refusal as ClusterClient.EngineRefusal {
+            return outcome(for: refusal, namespace: namespace, verb: verb)
+
         } catch let refusal as CommandLineUpdate.Refusal {
             // New verbs, so both modes exit with the state's own code.
             var refused = outcome(
@@ -845,6 +848,19 @@ public struct ExperimentCLIRunner: Sendable {
     ) -> ExperimentCLIOutcome {
         outcome(
             namespace: namespace, verb: verb, state: refusal.state, exitCode: 1,
+            failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
+            code: refusal.code, repairAction: refusal.repairAction)
+    }
+
+    /// A refusal the engine wrote itself on one of its science routes:
+    /// `refused` (65) with the engine's code as `error.code`, the engine's
+    /// sentence, and the engine's repair, as the Python client reports the
+    /// same answer. Human mode keeps exit 1, like every other refusal.
+    func outcome(
+        for refusal: ClusterClient.EngineRefusal, namespace: String, verb: String
+    ) -> ExperimentCLIOutcome {
+        outcome(
+            namespace: namespace, verb: verb, state: .refused, exitCode: 1,
             failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
             code: refusal.code, repairAction: refusal.repairAction)
     }

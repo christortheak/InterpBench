@@ -430,6 +430,12 @@ class RunnerHTTPError(RunnerError):
         self.status = status
 
 
+def engine_refusal_fallback_reason(status: int) -> str:
+    """What a coded refusal on a science route says when the engine gave a
+    code and no sentence. Swift twin: ``ClusterClient.EngineRefusal.fallbackReason``."""
+    return f"The engine refused this request ({status}) without saying why."
+
+
 class RunnerUnreachable(RunnerError):
     """The request never got an answer — connect refused, DNS, TLS, timeout.
 
@@ -982,26 +988,39 @@ class RunnerClient:
             detail={"status": status, "url": url})
 
     def _raise_for_science(self, response, *, url: str) -> None:
-        """Status handling for the science stage, plan, and submit calls.
+        """Status handling for the engine's science routes (``/api/science/…``:
+        the stage, plan, and submit calls, the diagnostic transport calls,
+        and a catalogued action that one of those routes owns).
 
-        One kind of answer is reported as the engine gave it: a refusal about
-        a LENS, which is a refusal whose ``detail.code`` begins with ``lens``.
-        The one a researcher meets is ``lensNotInLibrary``: the request
-        refers to a lens that was never sent to this site. It arrives with
-        the engine's code, its sentence, and its repair, as a refusal on a
-        lens-library route does, and not as this adapter's general
-        ``runnerRefused`` with the engine's whole answer quoted inside the
-        reason. Swift twin: ``ClusterClient.relayingLensRefusal``.
+        A refusal there that names a ``code`` is the engine's own typed
+        refusal, and it is reported as the engine gave it: ``refused`` (65),
+        with the engine's code as the envelope's ``error.code``, the engine's
+        sentence (its ``message``, else its ``reason``), and the engine's
+        repair. That is every 4xx but 401 whose ``detail`` is an object with
+        a ``code`` in text. These routes write ``{"code", "reason",
+        "repairAction"}`` with no ``message``, which this adapter's general
+        handling would quote whole, as JSON text, inside a ``runnerRefused``
+        reason. What the engine leaves out is filled with one sentence and
+        one repair, the same on both clients. ``result.status`` and
+        ``result.url`` say which answer of which engine it was; there is no
+        ``result.runnerDetail``, because the detail is now the error itself.
 
-        Every other answer on these routes, a refusal with any other code
-        among them, is this adapter's usual handling, unchanged."""
+        The engine's code is the envelope's code, as on a lens-library route
+        (``_raise_for_lens_library``). A coded 403 is among these (the role
+        gate's ``workbench_required``, say): it is the engine declining, and
+        not the token problem a 403 with no code is taken for. Swift twin:
+        ``ClusterClient.relayingEngineRefusal``.
+
+        Every other answer is this adapter's usual handling, unchanged: a
+        refusal that names no code, a 401, and a failure (5xx) whatever its
+        body says."""
         status = response.status_code
         if 400 <= status < 500 and status != 401:
             code, sentence, repair = self._refusal_of(response)
-            if code and code.startswith("lens"):
+            if code:
                 from . import lens_transfer
                 raise RunnerRefusal(
-                    sentence or lens_transfer.refusal_fallback_reason(status), code=code,
+                    sentence or engine_refusal_fallback_reason(status), code=code,
                     repair_action=repair or lens_transfer.REFUSAL_FALLBACK_REPAIR,
                     detail={"status": status, "url": url})
         self._raise_for_status(response, url=url)
@@ -1437,7 +1456,10 @@ class RunnerClient:
         action, path, query, body = request(operation, action_id, document)
         # No proxy endpoint: the existing role/auth/gate owner receives the call.
         kwargs = {"params": query}
-        if path.startswith("/api/science/"): kwargs["timeout"] = self.diagnostic_timeout
+        if path.startswith("/api/science/"):
+            # A science route's refusal is the engine's own (`_raise_for_science`).
+            kwargs["timeout"] = self.diagnostic_timeout
+            kwargs["raise_for_status"] = self._raise_for_science
         if action["method"] != "GET": kwargs["json_body"] = body
         return self._json(action["method"], path, **kwargs)
 
@@ -1537,16 +1559,19 @@ class RunnerClient:
 
     def export_diagnostic(self, job_id: str) -> dict:
         try:
-            return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/export", json_body={}, timeout=self.diagnostic_timeout)
+            return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/export", json_body={}, timeout=self.diagnostic_timeout,
+                              raise_for_status=self._raise_for_science)
         except RunnerUnreachable as exc:
             raise RunnerUnreachable(str(exc), repair_action='Export may still be preparing on the controller. Restore the connection, then request science-export for the same job again; export is idempotent. Do not resubmit the fit. For site-required direct transfer, use the returned complete archive and SHA-256 with local science import.') from exc
 
     def diagnostic_cleanup_plan(self, job_id: str, custody: dict) -> dict:
-        return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/cleanup-plan", json_body={"custody": custody})
+        return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/cleanup-plan", json_body={"custody": custody},
+                          raise_for_status=self._raise_for_science)
 
     def diagnostic_cleanup_apply(self, job_id: str, custody: dict, plan_sha256: str) -> dict:
         return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/cleanup-apply",
-            json_body={"custody": custody, "planSHA256": plan_sha256, "confirmRemoval": True})
+            json_body={"custody": custody, "planSHA256": plan_sha256, "confirmRemoval": True},
+            raise_for_status=self._raise_for_science)
 
     def scientific_plan(self, request: dict, gpu_type: str | None = None, walltime: str | None = None) -> dict:
         # Planning a staged bundle re-verifies every staged file; a multi-gigabyte

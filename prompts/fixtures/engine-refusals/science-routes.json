@@ -1,0 +1,230 @@
+{
+  "comment": "What both clients make of an answer from one of the engine's science routes (/api/science/...), held to the same bytes: the Python client (steerlab_server.client.runner, Server/tests/test_science_refusals.py) and the Mac (ClusterClient.swift, EngineRefusalTests.swift). A refusal that names a code is the engine's own typed refusal: refused (65), with the engine's code as the envelope's error.code, the engine's sentence (its message, else its reason), and the engine's repair. Every other answer reads as it did. Every value is fictional.",
+  "server": "http://runner.example.invalid:8080",
+  "jobID": "job-1",
+  "calls": [
+    {
+      "name": "stage",
+      "path": "/api/science/stage"
+    },
+    {
+      "name": "plan",
+      "path": "/api/science/plan"
+    },
+    {
+      "name": "submit",
+      "path": "/api/science/submit"
+    },
+    {
+      "name": "export",
+      "path": "/api/science/jobs/job-1/export"
+    },
+    {
+      "name": "cleanup-plan",
+      "path": "/api/science/jobs/job-1/cleanup-plan"
+    },
+    {
+      "name": "cleanup-apply",
+      "path": "/api/science/jobs/job-1/cleanup-apply"
+    },
+    {
+      "name": "fitting-round",
+      "path": "/api/science/fitting-round/job-1/status",
+      "operation": "jlens-fit-round",
+      "action": "post-fitting-round"
+    },
+    {
+      "name": "campaign",
+      "path": "/api/science/campaign/job-1/status",
+      "operation": "optvec-campaign",
+      "action": "post-science-campaign"
+    }
+  ],
+  "anotherRoute": {
+    "note": "a catalogued action that a route outside /api/science/ owns keeps the answer it had",
+    "path": "/api/jlens/report",
+    "operation": "jlens",
+    "action": "post-jlens-report",
+    "status": 409,
+    "body": "{\"detail\": {\"code\": \"scientificExecutionRefused\", \"reason\": \"The staged inputs changed.\", \"repairAction\": \"Review the plan again.\"}}"
+  },
+  "fallback": {
+    "status": 409,
+    "reason": "The engine refused this request (409) without saying why.",
+    "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request.",
+    "textLimit": 2000
+  },
+  "bodies": [
+    {
+      "note": "as the science routes write one: a code, a reason, and a repair, with no message",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"diagnosticTransportRefused\", \"reason\": \"The diagnostic archive is empty or exceeds transport bounds.\", \"repairAction\": \"Package the request again, then upload and stage the new archive.\"}}",
+      "engineRefusal": true,
+      "code": "diagnosticTransportRefused",
+      "reason": "The diagnostic archive is empty or exceeds transport bounds.",
+      "repairAction": "Package the request again, then upload and stage the new archive."
+    },
+    {
+      "note": "a code and a reason; no repair",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"scientificExecutionRefused\", \"reason\": \"The staged inputs changed after the plan was reviewed.\"}}",
+      "engineRefusal": true,
+      "code": "scientificExecutionRefused",
+      "reason": "The staged inputs changed after the plan was reviewed.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "a message and a reason: the message is the sentence",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"lensNotInLibrary\", \"reason\": \"The library does not hold the lens.\", \"message\": \"This engine's lens library does not hold the lens 'custom-lens-example'.\", \"repairAction\": \"Send the lens once with lens-push, then stage the request again.\"}}",
+      "engineRefusal": true,
+      "code": "lensNotInLibrary",
+      "reason": "This engine's lens library does not hold the lens 'custom-lens-example'.",
+      "repairAction": "Send the lens once with lens-push, then stage the request again."
+    },
+    {
+      "note": "another refusal status",
+      "status": 400,
+      "body": "{\"detail\": {\"code\": \"scientificSurfaceRestricted\", \"reason\": \"This operation/action has no supported HTTP path.\", \"repairAction\": \"Read science operation for the supported substrate and actions.\"}}",
+      "engineRefusal": true,
+      "code": "scientificSurfaceRestricted",
+      "reason": "This operation/action has no supported HTTP path.",
+      "repairAction": "Read science operation for the supported substrate and actions."
+    },
+    {
+      "note": "a code and nothing else",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"scientificExecutionRefused\"}}",
+      "engineRefusal": true,
+      "code": "scientificExecutionRefused",
+      "reason": "The engine refused this request (409) without saying why.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "a repair beside a detail object that names none",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"diagnosticTransportRefused\", \"reason\": \"Receipt belongs to another job.\"}, \"repairAction\": \"Use the receipt this job's import wrote.\"}",
+      "engineRefusal": true,
+      "code": "diagnosticTransportRefused",
+      "reason": "Receipt belongs to another job.",
+      "repairAction": "Use the receipt this job's import wrote."
+    },
+    {
+      "note": "space around a code, a sentence, and a repair is dropped",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \" scientificExecutionRefused \", \"reason\": \"  Padded on both sides.  \", \"repairAction\": \"  Review the plan again.  \"}}",
+      "engineRefusal": true,
+      "code": "scientificExecutionRefused",
+      "reason": "Padded on both sides.",
+      "repairAction": "Review the plan again."
+    },
+    {
+      "note": "a 403 that names a code is the engine refusing, not a missing token",
+      "status": 403,
+      "body": "{\"detail\": {\"code\": \"workbench_required\", \"message\": \"This runner does not serve interactive workbench operations.\", \"repairAction\": \"Author in the client workspace or connect a workbench service.\"}}",
+      "engineRefusal": true,
+      "code": "workbench_required",
+      "reason": "This runner does not serve interactive workbench operations.",
+      "repairAction": "Author in the client workspace or connect a workbench service."
+    },
+    {
+      "note": "a 404 that names a code is the engine refusing",
+      "status": 404,
+      "body": "{\"detail\": {\"code\": \"diagnosticTransportRefused\", \"reason\": \"This engine holds no such job.\"}}",
+      "engineRefusal": true,
+      "code": "diagnosticTransportRefused",
+      "reason": "This engine holds no such job.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "a reason and a repair with no code",
+      "status": 409,
+      "body": "{\"detail\": {\"reason\": \"The staged inputs changed.\", \"repairAction\": \"Review the plan again.\"}}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a sentence for a detail",
+      "status": 409,
+      "body": "{\"detail\": \"This worker has no durable job queue; use its controller.\"}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a sentence for a detail, and a repair beside it",
+      "status": 409,
+      "body": "{\"detail\": \"The plan is stale.\", \"repairAction\": \"Review the plan again.\"}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a message with no code",
+      "status": 409,
+      "body": "{\"detail\": {\"message\": \"The preflight rejected this request.\"}}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a code that is not text",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": 409, \"reason\": \"The staged inputs changed.\"}}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a code that is only space",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"  \", \"reason\": \"The staged inputs changed.\"}}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a code beside the detail, not in it",
+      "status": 409,
+      "body": "{\"code\": \"scientificExecutionRefused\", \"detail\": \"The staged inputs changed.\"}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a list for a detail",
+      "status": 422,
+      "body": "{\"detail\": [{\"loc\": [\"body\", \"planSHA256\"], \"msg\": \"field required\"}]}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a body that is not JSON",
+      "status": 409,
+      "body": "<html>Conflict</html>",
+      "engineRefusal": false
+    },
+    {
+      "note": "no body",
+      "status": 409,
+      "body": "",
+      "engineRefusal": false
+    },
+    {
+      "note": "a 404 that names no code",
+      "status": 404,
+      "body": "{\"detail\": \"Not Found\"}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a 403 that names no code is about the token",
+      "status": 403,
+      "body": "{\"detail\": \"invalid token\"}",
+      "engineRefusal": false
+    },
+    {
+      "note": "every 401 is about the token, whatever its body",
+      "status": 401,
+      "body": "{\"detail\": {\"code\": \"scientificExecutionRefused\", \"reason\": \"The staged inputs changed.\", \"repairAction\": \"Review the plan again.\"}}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a failure is not a refusal, whatever its body",
+      "status": 500,
+      "body": "{\"detail\": {\"code\": \"scientificExecutionRefused\", \"reason\": \"The staged inputs changed.\", \"repairAction\": \"Review the plan again.\"}}",
+      "engineRefusal": false
+    },
+    {
+      "note": "an engine that cannot serve the route is not refusing the request",
+      "status": 503,
+      "body": "{\"detail\": {\"code\": \"diagnosticTransportRefused\", \"reason\": \"The engine is starting.\"}}",
+      "engineRefusal": false
+    }
+  ]
+}

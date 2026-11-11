@@ -984,8 +984,12 @@ import Testing
     /// submission with `lensNotInLibrary`, as the science routes write a
     /// refusal (a `reason`, and no `message`). The Mac throws the engine's
     /// own code, sentence, and repair, and the command line reports them as
-    /// a refusal (65). Every other answer on those calls is thrown exactly
-    /// as it was. Python twin:
+    /// a refusal (65).
+    ///
+    /// A lens code is not a special case: every refusal on those routes that
+    /// names a code is thrown this way (`EngineRefusalTests` holds the rule,
+    /// for every science call). An answer that names no code, a 401, and a
+    /// failure are thrown exactly as they were. Python twin:
     /// `test_a_refusal_about_a_lens_on_a_science_call_is_the_engines_own`.
     @Test(arguments: ["stage", "plan", "submit"])
     func aRefusalAboutALensOnAScienceCallIsTheEnginesOwn(_ call: String) async throws {
@@ -1017,27 +1021,43 @@ import Testing
             do {
                 try await invoke()
                 Issue.record("a request that refers to a lens the site lacks must be refused")
-            } catch let refusal as LensLibrary.Refusal {
-                #expect(refusal.code == "lensNotInLibrary" && refusal.state == .refused)
+            } catch let refusal as ClusterClient.EngineRefusal {
+                #expect(refusal.code == "lensNotInLibrary" && refusal.status == 409)
                 #expect(refusal.reason == sentence && refusal.repairAction == repair)
             }
         }
-        // Any code that begins with `lens`, with what it leaves out filled in.
+        // On any refusal status but 401, with what it leaves out filled in.
         site.science = (400, ["detail": ["code": "lensNotReferable", "reason": "It cannot be referred to."]])
         do {
             try await invoke()
             Issue.record("a lens refusal must be thrown")
-        } catch let refusal as LensLibrary.Refusal {
+        } catch let refusal as ClusterClient.EngineRefusal {
             #expect(refusal.code == "lensNotReferable" && refusal.reason == "It cannot be referred to.")
             #expect(refusal.repairAction == LensLibrary.refusalFallbackRepair)
         }
 
-        // Everything else is thrown as it always was: another code, no code,
-        // a code that only contains the word, a missing token, and a failure.
+        // In 0.9.24 only a code that begins with `lens` was relayed,
+        // and these three were thrown as a bad response that quoted the
+        // engine's whole answer. Each is now the engine's own refusal too.
+        let coded: [(String, String)] = [
+            ("diagnosticTransportRefused", "The archive is damaged."),
+            ("scientificExecutionRefused", "Inputs changed."),
+            ("notALensCode", sentence),
+        ]
+        for (code, reason) in coded {
+            site.science = (409, ["detail": ["code": code, "reason": reason]])
+            do {
+                try await invoke()
+                Issue.record("a refused science call must throw")
+            } catch let refusal as ClusterClient.EngineRefusal {
+                #expect(refusal.code == code && refusal.reason == reason && refusal.status == 409)
+                #expect(refusal.repairAction == LensLibrary.refusalFallbackRepair)
+            }
+        }
+
+        // Everything else is thrown as it always was: no code, a missing
+        // token, and a failure.
         let others: [(Int, [String: Any], String)] = [
-            (409, ["detail": ["code": "diagnosticTransportRefused", "reason": "The archive is damaged."]], "damaged"),
-            (409, ["detail": ["code": "scientificExecutionRefused", "reason": "Inputs changed."]], "Inputs changed"),
-            (409, ["detail": ["code": "notALensCode", "reason": sentence]], "notALensCode"),
             (409, ["detail": ["reason": sentence, "repairAction": repair]], "does not hold"),
             (409, ["detail": sentence], "does not hold"),
             (401, ["detail": ["code": "lensNotInLibrary", "reason": sentence]], "lensNotInLibrary"),
@@ -1083,7 +1103,7 @@ import Testing
             }
             Issue.record("science-\(call) must be refused")
             return
-        } catch let refusal as LensLibrary.Refusal {
+        } catch let refusal as ClusterClient.EngineRefusal {
             outcome = runner.outcome(for: refusal, namespace: "remote", verb: "remote science-\(call)")
         }
         #expect(outcome.envelope.state == .refused)

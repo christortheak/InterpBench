@@ -214,6 +214,7 @@ On these refusals, `error.code` names the problem directly.
 | `runnerUnreachable` | The runner did not answer | Check that it is running and reachable; a dropped SSH tunnel looks like this. `steerlab runner capabilities --runner <url>` is the smallest test |
 | `runnerUnauthorized` | The runner wants a token the client did not send | Put the token in a file and pass `--token-file <path>`, or set `STEERLAB_RUNNER_TOKEN`; never type it on the command line |
 | `notARunner` | The address answered, but it is not a SteerLab engine | Check the address and port |
+| `diagnosticTransportRefused`, `scientificExecutionRefused`, or another code the engine gives | A managed scientific request was declined: staging, planning, or submitting it, exporting its evidence, or cleaning up after it. When the engine declines, both clients report the engine's own code, sentence, and repair | Follow `error.repairAction` |
 | `needsHumanAuthentication` (exit `10`) | A person must sign in at their own terminal | Sign in yourself; your assistant cannot do it for you |
 | `pending` (exit `12`) or `degraded` (exit `13`) | Work is still in progress, or something could not be read for now | Repeat the command later |
 | `verbFailed` | Not a typed refusal: something failed | Read the reason. It usually names a file to fix |

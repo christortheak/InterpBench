@@ -2,9 +2,9 @@ import Foundation
 
 extension ClusterClient {
     public func stageDiagnostic(path: String, sha256: String) async throws -> JSONValue {
-        // A request that refers to a lens this site was never sent is refused
-        // here, and that refusal is the engine's own (`relayingLensRefusal`).
-        try await relayingLensRefusal {
+        // A refusal here (a damaged archive, a lens this site was never
+        // sent) is the engine's own (`relayingEngineRefusal`).
+        try await relayingEngineRefusal {
             try await post("/api/science/stage", body: JSONValue.object(["bundlePath": .string(path), "bundleSHA256": .string(sha256)]), timeout: 3600)
         }
     }
@@ -17,17 +17,19 @@ extension ClusterClient {
     }
 
     private func postExport(_ jobID: String) async throws -> JSONValue {
-        do { return try await post(diagnosticPath(jobID, "export"), body: JSONValue.object([:]), timeout: 3600) }
+        do { return try await relayingEngineRefusal { try await post(diagnosticPath(jobID, "export"), body: JSONValue.object([:]), timeout: 3600) } }
         catch let error as URLError where error.code == .timedOut {
             throw ExperimentError.malformed("Evidence export timed out; preparation may still be running.", repair: "Restore the connection and request export for the same job again. Do not resubmit the fit. Direct transfer must use the complete exported archive and its SHA-256.")
         }
     }
     public func planDiagnosticCleanup(_ jobID: String, custody: JSONValue) async throws -> JSONValue {
-        try await post(diagnosticPath(jobID, "cleanup-plan"), body: JSONValue.object(["custody": custody]))
+        try await relayingEngineRefusal { try await post(diagnosticPath(jobID, "cleanup-plan"), body: JSONValue.object(["custody": custody])) }
     }
     public func applyDiagnosticCleanup(_ jobID: String, custody: JSONValue, planSHA256: String) async throws -> JSONValue {
-        try await post(diagnosticPath(jobID, "cleanup-apply"), body: JSONValue.object([
-            "custody": custody, "planSHA256": .string(planSHA256), "confirmRemoval": .bool(true)]))
+        try await relayingEngineRefusal {
+            try await post(diagnosticPath(jobID, "cleanup-apply"), body: JSONValue.object([
+                "custody": custody, "planSHA256": .string(planSHA256), "confirmRemoval": .bool(true)]))
+        }
     }
     private func diagnosticPath(_ jobID: String, _ verb: String) -> String {
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")

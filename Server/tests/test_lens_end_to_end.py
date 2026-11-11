@@ -468,10 +468,16 @@ def test_a_request_that_refers_to_its_lens_is_small_and_runs_on_the_librarys_byt
         assert (code, refused['state']) == (65, 'refused'), refused
         assert (refused['error']['code'], refused['error']['reason'], refused['error']['repairAction']) == (
             'lensNotInLibrary', not_held, push_first), arguments[0]
-    # A refusal on those calls that is not about a lens reads as it always did: the adapter's own code.
+    # A refusal on those calls that is not about a lens is the engine's own too, with its code, its sentence,
+    # and its repair. (In 0.9.24 it was `runnerRefused`, with the engine's whole answer quoted as JSON text
+    # inside the reason.)
     code, refused = world.cli(engine, '--root', str(root), 'runner', 'science-stage', uploaded['result']['runnerPath'],
                               '--sha256', 'f' * 64, '--runner', SERVER)
-    assert (code, refused['error']['code']) == (65, 'runnerRefused') and 'diagnosticTransportRefused' in refused['error']['reason']
+    assert (code, refused['state']) == (65, 'refused'), refused
+    assert refused['error'] == {'code': 'diagnosticTransportRefused',
+                                'reason': 'Archive SHA-256 mismatch; nothing is imported.',
+                                'repairAction': archives.Refusal.repair_action}
+    assert (refused['result']['status'], refused['result']['url']) == (409, SERVER + '/api/science/stage')
 
 
 # --- 3. a request packaged without the flag is the request it always was ---------
