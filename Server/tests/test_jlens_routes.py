@@ -125,6 +125,41 @@ def test_detail_returns_the_record_and_404s_for_an_unknown_lens(client, tmp_path
     assert client.get("/api/jlens/lenses/nope").status_code == 404
 
 
+def test_a_record_that_holds_a_number_that_is_not_finite_is_read_with_null_there(client, tmp_path):
+    """A qualification stores every check's measured values, and a check that
+    could not be scored records NaN. The engine writes that as it is. Both
+    lens reads answer it as strict JSON, with null where the NaN is, as a
+    record is sent to a site; they used to answer 500."""
+    import json
+    from steerlab_server.jlens import lens_store, qualification, schemas
+    rec = _import_a_lens(tmp_path)
+    unscored = schemas.Qualification(
+        qualificationID="q-unscored", modelID="google/gemma-3-4b-it", revision="a" * 40, dtype="bfloat16",
+        checks={"results": {"agreement": {"score": float("nan"), "margin": float("inf"), "threshold": 0.5}}},
+        qualifiedAt="2026-11-02T00:00:00Z")
+    qualification.append_qualification(lens_store.resolve(rec.lensID), unscored)
+    stored = (tmp_path / "ws" / "runs" / "jlens-lenses" / rec.lensID / "lens.json").read_text()
+    assert "NaN" in stored and "Infinity" in stored
+
+    def strict_json(response):
+        def refuse(constant):
+            raise ValueError("not JSON: " + constant)
+        assert response.status_code == 200, response.text
+        return json.loads(response.text, parse_constant=refuse)
+
+    expected = {"results": {"agreement": {"score": None, "margin": None, "threshold": 0.5}}}
+    detail = strict_json(client.get(f"/api/jlens/lenses/{rec.lensID}"))
+    assert detail["qualifications"][0]["checks"] == expected
+    listed = strict_json(client.get("/api/jlens/lenses"))["lenses"]
+    assert [r["lensID"] for r in listed] == [rec.lensID]
+    assert listed[0]["qualifications"][0]["checks"] == expected
+    # Everything else is the record as stored, and the stored record is not touched.
+    plain = json.loads(stored)
+    plain["qualifications"][0]["checks"] = expected
+    assert detail == plain == listed[0]
+    assert (tmp_path / "ws" / "runs" / "jlens-lenses" / rec.lensID / "lens.json").read_text() == stored
+
+
 def test_a_lens_never_appears_in_the_model_catalog(client, tmp_path):
     """Reuse the install mechanism, never the taxonomy: a lens acquired as a
     model would be advertised as one, which is the picker defect of

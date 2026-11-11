@@ -126,7 +126,9 @@ class Engine:
                     raise httpx.ReadError('the connection was lost')
                 return response
 
-        self.http = Boundary(app)
+        # An engine failure reaches the client as the 5xx it is, as it does over a network: the test client
+        # would otherwise raise the engine's own exception inside the client's call.
+        self.http = Boundary(app, raise_server_exceptions=False)
 
     def sent(self, method, pattern=''):
         return [path for verb, path in self.calls if verb == method and re.search(pattern, path)]
@@ -708,6 +710,14 @@ def test_a_record_with_a_nan_in_a_qualification_is_sent_and_the_sites_record_hol
     code, same = push(world, engine, root, lens_id)
     assert code == 0 and same['result']['response']['recordChanged'] is False, same
     assert record_file(engine.root, lens_id).read_bytes() == record_file(root, lens_id).read_bytes()
+    # And lens-status, which reads that record back, is answered: the engine reads it out as strict JSON too.
+    code, answered = status(world, engine, root, lens_id)
+    assert code == 0, answered
+    assert answered['result']['response']['siteRecord'] == 'registered' and answered['result']['response']['held'] is True
+    assert answered['message'] == f"The site's lens library holds lens {lens_id}; the site has its record."
+    detail = engine.get(f'/api/jlens/lenses/{lens_id}')
+    assert detail.status_code == 200
+    assert strict_loads(detail.content)['qualifications'][0]['checks']['results']['agreement']['score'] is None
 
 
 # --- 8. the engine's refusals reach the researcher as the engine gave them -------

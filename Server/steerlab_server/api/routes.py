@@ -2339,21 +2339,29 @@ def build_router(state: ServiceState) -> APIRouter:
     # workspace lens store. Both are DURABLE JOBS — at 27B the fetch is 3.53 GB
     # and the conversion reads all of it, so neither belongs in a request.
 
+    # Both reads answer strict JSON. A lens record can hold a number that is
+    # not finite: a qualification stores every check's measured values, and a
+    # check that could not be scored records NaN. No JSON response can carry
+    # that, so the route used to fail for such a record. It is read as null,
+    # exactly as a record is sent to a site (``experiment/strict_json.py``).
+
     @router.get("/api/jlens/lenses")
     def jlens_lenses():
         """Imported lenses. Read-only and open, like the vector catalog."""
+        from ..experiment.strict_json import strict
         from ..jlens import lens_store
 
-        return {"lenses": [r.to_dict() for r in lens_store.list_lenses()],
+        return {"lenses": [strict(r.to_dict())[0] for r in lens_store.list_lenses()],
                 "supported": _jlens_supported()}
 
     @router.get("/api/jlens/lenses/{lens_id}")
     def jlens_lens_detail(lens_id: str):
+        from ..experiment.strict_json import strict
         from ..jlens import lens_store
         from ..jlens.schemas import JLensError
 
         try:
-            return lens_store.resolve(lens_id).to_dict()
+            return strict(lens_store.resolve(lens_id).to_dict())[0]
         except JLensError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
