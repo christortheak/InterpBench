@@ -569,10 +569,13 @@ def test_cli_roundtrip_uses_the_same_review_and_typed_refusal(source):
     assert repeated['result']['existing'] is True
     lens = publication['result']['lensID']
     assert repeated['result']['lensID'] == lens
+    assert repeated['message'] == f'This workspace already holds these files as lens {lens}, so nothing was imported.'
     # A missing converted file is put back, and the command line says so.
     (root / 'runs/jlens-lenses' / lens / 'jacobians.safetensors').unlink()
     code, restored = call('artifact-import', '--plan-sha256', review['result']['planSHA256'])
     assert code == 0 and restored['changed'] is True and restored['result']['restored'] is True, restored
+    assert restored['message'] == (f'This workspace already holds these files as lens {lens}; its converted file '
+                                   'was missing and was put back.')
     assert (root / 'runs/jlens-lenses' / lens / 'jacobians.safetensors').is_file()
     code, rejected = call('artifact-import', '--plan-sha256', '0' * 64)
     assert code == 65 and rejected['error']['code'] == 'artifactImportRefused', rejected

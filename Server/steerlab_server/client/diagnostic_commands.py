@@ -166,7 +166,10 @@ def _lens_action(action, payload):
     optional = {'planSHA256'} if action == 'lens-copy' else set()
     if (not isinstance(payload, dict) or not fields <= payload.keys() or payload.keys() - fields - optional
             or any(not isinstance(payload[k], str) or not payload[k] for k in payload.keys() - {'partMaxBytes'})):
-        raise archives.MalformedRequest('Supply exactly the declared lens action fields.')
+        malformed = archives.MalformedRequest('Supply exactly the declared lens action fields.')
+        malformed.repair_action = ('Use the lens verbs, which build this request: lens-push, lens-status, and '
+                                   'science lens-copy.')
+        raise malformed
     root = str(Path(payload['workspaceRoot']).resolve())
     if action == 'lens-push-plan':
         return lens_transfer.push_plan(root, payload['lensID'], payload['partMaxBytes'])
@@ -175,10 +178,28 @@ def _lens_action(action, payload):
     return lens_transfer.copy(root, payload['lensID'], payload['fromWorkspace'], payload.get('planSHA256'))
 
 
+def _lens_copy_arguments(invocation):
+    """``science lens-copy`` says what is missing in its own words, before the
+    family's one sentence for every malformed request. It also needs a named
+    workspace: the family runs without one, and this verb writes into it."""
+    from ..client_cli import ClientRefusal
+    from . import lens_transfer
+    usage = 'steerlab --root <workspace directory> science lens-copy <lensID> --from <workspace directory>'
+    if len(invocation.positionals) != 1:
+        raise ClientRefusal(code='usage', repair_action=usage, reason=lens_transfer.COPY_NEEDS_LENS)
+    if not invocation.one('--from'):
+        raise ClientRefusal(code='usage', repair_action=usage, reason=lens_transfer.COPY_NEEDS_FROM)
+    if invocation.workspace_root is None:
+        raise ClientRefusal(code='usage', repair_action=usage, reason=(
+            'science lens-copy copies the lens into a workspace, and none was named.'))
+
+
 def local(invocation):
     from ..client_cli import ClientRefusal
     from ..experiment.artifact_sources import ImportRefusal
     from ..experiment.corpus_sources import CorpusError
+    if invocation.spec.verb == 'lens-copy':
+        _lens_copy_arguments(invocation)
     try:
         verb = invocation.spec.verb; validate(invocation, 0 if verb in ('custody', 'probe-list', 'policy-list') else 1)
         value = invocation.positionals[0] if invocation.positionals else None
@@ -222,6 +243,13 @@ def local(invocation):
         if verb == 'lens-copy':
             from . import lens_transfer
             return CLIResult(message=lens_transfer.copy_message(result), changed=result['changed'], payload=result)
+        if verb == 'artifact-import':
+            # A lens the workspace already held: say so, and say when its
+            # converted file was put back.
+            from . import lens_transfer
+            found = lens_transfer.import_message(result)
+            if found:
+                return CLIResult(message=found, changed=result['changed'], payload=result)
         return CLIResult(message='Diagnostic workspace operation completed; custody is byte verification, not scientific qualification.',
                          changed=result.get('changed', verb in ('package', 'import')), payload=result)
     except CorpusError as exc:

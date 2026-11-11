@@ -11,11 +11,24 @@ REPORT_PURPOSE = ('Turn a stored J-lens assessment report into one self-containe
 LENS_REFERENCE_PURPOSE = ('With --lens-reference, a request that names a lens refers to the copy in the '
                           "site's lens library and leaves the lens file out; send the lens once with "
                           'lens-push first.')
+#: Swift twin: ``ExperimentCLIParser.artifactImportPurpose``.
+ARTIFACT_IMPORT_PURPOSE = ('Import the reviewed instrument into the workspace. A lens is named from its reviewed '
+                           'files, so importing the same files again finds the same lens, and puts its converted '
+                           'file back if it is missing.')
+#: Swift twin: ``ExperimentCLIParser.lensPushPurpose``.
+LENS_PUSH_PURPOSE = ("Send a workspace lens to the site's lens library once, in parts that follow its layers, "
+                     'each checked, and register its record there. Sends only what the site lacks, so it can be '
+                     'run again after an interruption. With --adopt, the site checks and keeps a copy already '
+                     'on it, and nothing is uploaded.')
+#: Swift twin: ``ExperimentCLIParser.lensStatusPurpose``.
+LENS_STATUS_PURPOSE = ("Report whether the site's lens library holds a workspace lens and whether the site has "
+                       'its record. Reads only.')
 #: Swift twin: ``ExperimentCLIParser.lensCopyPurpose``.
 LENS_COPY_PURPOSE = ('Copy a lens from another workspace on this machine into this one, under the same name '
                      'and record. Reviews by default and writes nothing; repeat with the --plan-sha256 the '
                      'review shows to copy it. Each file is checked before and after, and on macOS the copy '
-                     'is a clone that uses no extra disk space where the filesystem allows.')
+                     'is a clone that uses no extra disk space where the filesystem allows. A lens already '
+                     'here is not copied again; its converted file is put back if it is missing.')
 
 VERB_SPECS = (
     VerbSpec('science', 'evidence-analyze', positional='<path>', purpose='Compare retained probe readings and requested/applied policy actions in a run.'),
@@ -32,7 +45,7 @@ VERB_SPECS = (
     VerbSpec('science', 'corpus-preview', positional='<spec.json>', purpose='Read chosen data sources and capture a reproducible fitting corpus preview; public dataset files may download.'),
     VerbSpec('science', 'corpus-publish', positional='<preview-id>', purpose='Save the reviewed fitting corpus and provenance in a new directory.', value_flags=frozenset({'--plan-sha256', '--destination'}), required_flags=frozenset({'--plan-sha256', '--destination'})),
     VerbSpec('science', 'artifact-plan', positional='<description.json>', purpose='Inspect a custom lens or SAE decoder and hash its source files without publishing.'),
-    VerbSpec('science', 'artifact-import', positional='<description.json>', purpose='Import the reviewed instrument into the workspace library. A lens is named from its reviewed files, so importing the same files again finds the same lens.', value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
+    VerbSpec('science', 'artifact-import', positional='<description.json>', purpose=ARTIFACT_IMPORT_PURPOSE, value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
     VerbSpec('science', 'sae-check', positional='<roster-path>', purpose='Inspect the SAE roster and surface qualification warnings without a model.'),
     VerbSpec('science', 'sae-show', positional='<qualification-path>', purpose='Inspect an existing qualification record without changing its scientific status.'),
     VerbSpec('science', 'sae-pin-plan', positional='<roster-path>', purpose='Review roster and draft bytes before pinning.', value_flags=frozenset({'--experiment'}), required_flags=frozenset({'--experiment'})),
