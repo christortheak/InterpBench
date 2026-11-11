@@ -8,9 +8,9 @@ import Testing
 /// is sent once, in parts; a request can then refer to it; an upload is
 /// streamed from its file; and a lens can be copied into a second workspace.
 ///
-/// The server here is a small stand-in that speaks the contract's routes, so
-/// every expectation is about what this CLIENT sends and says. The sentences
-/// are held to the Python client's by one file,
+/// The server here is a small stand-in that speaks the lens-library routes as
+/// the engine does, so every expectation is about what this CLIENT sends and
+/// says. The sentences are held to the Python client's by one file,
 /// `prompts/fixtures/lens-library/refusals.json`. Python twin:
 /// `Server/tests/test_lens_transfer.py`.
 @Suite(.serialized) struct LensLibraryTests {
@@ -37,6 +37,13 @@ import Testing
         return text
     }
 
+    private static func rows(_ fixture: [String: JSONValue], _ key: String) throws -> [[String: JSONValue]] {
+        guard case .array(let items)? = fixture[key] else {
+            throw ExperimentError(reason: "the lens-library fixture has no \(key)")
+        }
+        return items.compactMap { if case .object(let row) = $0 { row } else { nil } }
+    }
+
     private static let server = "http://runner.example.invalid:8080"
     private static let lensID = "custom-lens-example"
 
@@ -53,7 +60,9 @@ import Testing
         var sha: String
         var parts: [LensLibrary.Part]
         var recordJSON: String
+        var nonFiniteNumbers = 0
         var file: String { "runs/jlens-lenses/\(LensLibraryTests.lensID)/jacobians.safetensors" }
+        var url: URL { root.appending(path: file) }
 
         init() throws {
             root = FileManager.default.temporaryDirectory
@@ -81,7 +90,8 @@ import Testing
                 "lensID": .string(LensLibraryTests.lensID), "convertedSHA256": .string(sha),
                 "tensorSHA256": .string(String(repeating: "b", count: 64)),
                 "bytes": .number(Double(data.count)), "file": .string(file),
-                "recordJSON": .string(recordJSON), "changed": .bool(false),
+                "recordJSON": .string(recordJSON), "nonFiniteNumbers": .number(Double(nonFiniteNumbers)),
+                "changed": .bool(false),
             ]
             if included {
                 object["parts"] = .array(parts.map {
@@ -115,14 +125,26 @@ import Testing
         }
     }
 
-    /// A server's lens library, in memory, speaking the contract's routes.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var total = 0
+        func bump() { lock.lock(); total += 1; lock.unlock() }
+        var count: Int { lock.lock(); defer { lock.unlock() }; return total }
+    }
+
+    /// A server's lens library, in memory, speaking its routes as the engine does.
     private final class Site: @unchecked Sendable {
         private let lock = NSLock()
         var library: Bool? = true
         var partMax = 100
         var external = false
         var servesRecords = true
+        /// Answer one part with a 500, or with no answer at all.
         var failPart: Int?
+        var dropPart: Int?
+        var failComplete = false
+        /// An answer the contract does not allow, by route name.
+        var answers: [String: [String: Any]] = [:]
         var entries: [String: Data] = [:]
         var manifests: [String: [[String: Any]]] = [:]
         var received: [String: [Int: Data]] = [:]
@@ -140,6 +162,15 @@ import Testing
 
         private func json(_ object: Any, _ status: Int = 200) throws -> (Data, Int) {
             (try JSONSerialization.data(withJSONObject: object), status)
+        }
+
+        /// A refusal as the engine's lens-library routes write one.
+        private func refusal(_ status: Int, _ code: String, _ sentence: String, _ repair: String) throws
+            -> (Data, Int)
+        {
+            try json(
+                ["detail": ["code": code, "reason": sentence, "message": sentence, "repairAction": repair]],
+                status)
         }
 
         func respond(_ request: URLRequest) throws -> (Data, Int) {
@@ -184,12 +215,17 @@ import Testing
                 }
                 return try json(record)
             }
+            guard library == true else {
+                return try refusal(409, "lensLibraryUnavailable", "This engine has no lens library.", "Configure one.")
+            }
             let body = LensLibraryTests.body(request)
             if path == "/api/lens-library/register" {
                 registerBodies.append(body)
-                let document = try JSONSerialization.jsonObject(with: body) as! [String: Any]
-                let record = document["record"] as! [String: Any]
-                let lensID = record["lensID"] as! String
+                // Strict JSON, as the engine reads it: a bare NaN is not JSON.
+                guard let document = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                    let record = document["record"] as? [String: Any], let lensID = record["lensID"] as? String
+                else { return try refusal(400, "lensRecordMalformed", "The record is not JSON.", "Send strict JSON.") }
+                if let answer = answers["register"] { return try json(answer) }
                 let known = registered[lensID].map { NSDictionary(dictionary: $0).isEqual(to: record) } ?? false
                 registered[lensID] = record
                 return try json(["lensID": lensID, "registered": true, "changed": !known])
@@ -197,7 +233,9 @@ import Testing
             if path == "/api/lens-library/adopt" {
                 let document = try JSONSerialization.jsonObject(with: body) as! [String: Any]
                 adoptions.append(document)
-                let data = adoptable[document["path"] as! String]!
+                guard let data = adoptable[document["path"] as! String] else {
+                    return try refusal(409, "lensAdoptMissing", "No file is at that path.", "Copy the file there first.")
+                }
                 entries[document["sha256"] as! String] = data
                 return try json(["held": true, "bytes": data.count])
             }
@@ -222,18 +260,27 @@ import Testing
                     // Whole numbers on the wire, in order, and tiling the file.
                     guard part["index"] as? Int == position, part["offset"] as? Int == offset,
                         let bytes = part["bytes"] as? Int, bytes > 0, bytes <= partMax
-                    else { return try json(["detail": ["code": "lensUploadManifest", "message": "the parts do not tile the file", "repairAction": "plan it again"]], 400) }
+                    else {
+                        return try refusal(
+                            400, "lensUploadPlanMalformed", "The parts do not tile the file.", "Plan it again.")
+                    }
                     offset += bytes
                 }
                 guard offset == manifest["bytes"] as? Int else {
-                    return try json(["detail": ["code": "lensUploadManifest", "message": "the parts do not tile the file", "repairAction": "plan it again"]], 400)
+                    return try refusal(
+                        400, "lensUploadPlanMalformed", "The parts do not tile the file.", "Plan it again.")
                 }
+                if let answer = answers["begin"] { return try json(answer) }
                 manifests[sha] = parts
                 if received[sha] == nil { received[sha] = [:] }
                 let missing = parts.compactMap { $0["index"] as? Int }.filter { received[sha]![$0] == nil }
                 return try json(["held": false, "missingParts": missing])
             case "parts":
                 let index = Int(pieces[4])!
+                if dropPart == index {
+                    dropPart = nil
+                    throw URLError(.timedOut)
+                }
                 if failPart == index {
                     failPart = nil
                     return try json(["detail": "the connection dropped"], 500)
@@ -241,14 +288,22 @@ import Testing
                 let part = manifests[sha]![index]
                 guard request.value(forHTTPHeaderField: "X-Content-SHA256") == part["sha256"] as? String,
                     LensLibraryTests.sha256(body) == part["sha256"] as? String, body.count == part["bytes"] as? Int
-                else { return try json(["detail": ["code": "lensPartDiffers", "message": "the part differs from its manifest", "repairAction": "send it again"]], 409) }
+                else {
+                    return try refusal(409, "lensUploadPartCorrupt", "The part differs from its plan.", "Send it again.")
+                }
                 received[sha]![index] = body
                 return try json(["received": true])
             case "complete":
+                if failComplete {
+                    failComplete = false
+                    return try json(["detail": "the engine stopped"], 500)
+                }
+                if let answer = answers["complete"] { return try json(answer) }
+                if let held = entries[sha] { return try json(["held": true, "bytes": held.count]) }
                 let parts = manifests[sha]!
                 let data = parts.reduce(into: Data()) { $0.append(received[sha]![$1["index"] as! Int]!) }
                 guard LensLibraryTests.sha256(data) == sha else {
-                    return try json(["detail": ["code": "lensUploadDiffers", "message": "the whole file differs", "repairAction": "send it again"]], 409)
+                    return try refusal(409, "lensUploadCorrupt", "The whole file differs.", "Send it again.")
                 }
                 entries[sha] = data
                 manifests[sha] = nil
@@ -259,13 +314,16 @@ import Testing
             }
         }
 
-        func client() -> ClusterClient {
+        func session() -> URLSession {
             LensStubURLProtocol.handler = { [self] request in try respond(request) }
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [LensStubURLProtocol.self]
-            return ClusterClient(
-                profile: .init(baseURL: URL(string: LensLibraryTests.server)!),
-                session: URLSession(configuration: configuration))
+            return URLSession(configuration: configuration)
+        }
+
+        func client() -> ClusterClient {
+            ClusterClient(
+                profile: .init(baseURL: URL(string: LensLibraryTests.server)!), session: session())
         }
     }
 
@@ -354,9 +412,11 @@ import Testing
         #expect(LensLibrary.unavailableCode == (try Self.text(fixture["unavailable"], "code")))
         #expect(LensLibrary.unavailableReason(server: server)
             == (try Self.text(fixture["unavailable"], "pushReason")))
+        #expect(LensLibrary.pushUnavailableRepair == (try Self.text(fixture["unavailable"], "pushRepairAction")))
         #expect(LensLibrary.unavailableReason(server: server, archive: true)
             == (try Self.text(fixture["unavailable"], "archiveReason")))
-        #expect(LensLibrary.unavailableRepair == (try Self.text(fixture["unavailable"], "repairAction")))
+        #expect(LensLibrary.archiveUnavailableRepair
+            == (try Self.text(fixture["unavailable"], "archiveRepairAction")))
         #expect(LensLibrary.externalTransferCode == (try Self.text(fixture["externalTransfer"], "code")))
         #expect(LensLibrary.externalTransferReason(server: server)
             == (try Self.text(fixture["externalTransfer"], "reason")))
@@ -365,44 +425,114 @@ import Testing
         #expect(LensLibrary.oversizeAdvice == (try Self.text(fixture["oversize"], "advice")))
         #expect(LensLibrary.oversizeRepair == (try Self.text(fixture["oversize"], "macRepair")))
 
-        guard case .array(let pushes)? = fixture["pushMessages"],
-            case .array(let statuses)? = fixture["statusMessages"],
-            case .array(let copies)? = fixture["copyMessages"]
-        else { Issue.record("the fixture has no messages"); return }
-        #expect(pushes.count == 3 && statuses.count == 5 && copies.count == 4)
-        for item in pushes {
-            guard case .object(let row) = item, case .string(let lens)? = row["lensID"],
-                let parts = LensLibrary.whole(row["uploadedParts"]),
-                let bytes = LensLibrary.whole(row["uploadedBytes"]), case .bool(let adopted)? = row["adopted"]
+        // The site holds something else under the lens's hash.
+        guard case .object(let entry)? = fixture["entryDiffers"], let held = LensLibrary.whole(entry["heldBytes"]),
+            let workspace = LensLibrary.whole(entry["workspaceBytes"])
+        else { Issue.record("the fixture has no entryDiffers"); return }
+        #expect(LensLibrary.entryDiffersCode == (try Self.text(fixture["entryDiffers"], "code")))
+        #expect(LensLibrary.entryDiffersReason(held: held, workspace: workspace)
+            == (try Self.text(fixture["entryDiffers"], "reason")))
+        #expect(LensLibrary.entryDiffersRepair == (try Self.text(fixture["entryDiffers"], "repairAction")))
+
+        // The four answers an engine should never give: one sentence and one repair each.
+        #expect(LensLibrary.protocolCode == (try Self.text(fixture["protocol"], "code")))
+        guard case .object(let protocolBlock)? = fixture["protocol"], case .array(let cases)? = protocolBlock["cases"]
+        else { Issue.record("the fixture has no protocol cases"); return }
+        #expect(cases.count == LensLibrary.ProtocolProblem.allCases.count)
+        for item in cases {
+            guard let name = try? Self.text(item, "kind"), let kind = LensLibrary.ProtocolProblem(rawValue: name)
+            else { Issue.record("an unknown protocol case"); continue }
+            let problem = LensLibrary.protocolProblem(kind, server: server)
+            #expect(problem.reason == (try Self.text(item, "reason")), "\(kind)")
+            #expect(problem.repair == (try Self.text(item, "repairAction")), "\(kind)")
+            let failure = LensLibrary.protocolFailure(kind, server: server)
+            #expect(failure.state == .failed && failure.code == LensLibrary.protocolCode)
+        }
+
+        // An upload that did not finish, and a file that is not the plan's.
+        #expect(LensLibrary.interruptedCode == (try Self.text(fixture["interrupted"], "code")))
+        #expect(LensLibrary.interruptedReason(
+            lensID: try Self.text(fixture["interrupted"], "lensID"), cause: try Self.text(fixture["interrupted"], "cause"))
+            == (try Self.text(fixture["interrupted"], "reason")))
+        #expect(LensLibrary.resumeRepair == (try Self.text(fixture["interrupted"], "repairAction")))
+        #expect(LensLibrary.changedCode == (try Self.text(fixture["changed"], "code")))
+        #expect(LensLibrary.changedReason == (try Self.text(fixture["changed"], "reason")))
+        #expect(LensLibrary.changedRepair == (try Self.text(fixture["changed"], "repairAction")))
+
+        // The verbs' purposes are the Python client's.
+        #expect(ExperimentCLIParser.lensReferencePurpose == (try Self.text(fixture["purposes"], "lensReference")))
+        #expect(ExperimentCLIParser.lensCopyPurpose == (try Self.text(fixture["purposes"], "lensCopy")))
+        #expect(ExperimentCLIParser.lensPushPurpose == (try Self.text(fixture["purposes"], "lensPush")))
+        #expect(ExperimentCLIParser.lensStatusPurpose == (try Self.text(fixture["purposes"], "lensStatus")))
+        #expect(ExperimentCLIParser.artifactImportPurpose == (try Self.text(fixture["purposes"], "artifactImport")))
+        func purpose(_ namespace: String, _ verb: String) -> String? {
+            ExperimentCLIParser.spec(namespace: namespace, verb: verb)?.purpose
+        }
+        #expect(purpose("remote", "lens-push") == ExperimentCLIParser.lensPushPurpose)
+        #expect(purpose("remote", "lens-status") == ExperimentCLIParser.lensStatusPurpose)
+        #expect(purpose("science", "lens-copy") == ExperimentCLIParser.lensCopyPurpose)
+        #expect(purpose("science", "artifact-import") == ExperimentCLIParser.artifactImportPurpose)
+        for verb in ["input-plan", "package"] {
+            #expect(purpose("science", verb)?.hasSuffix(ExperimentCLIParser.lensReferencePurpose) == true)
+        }
+    }
+
+    @Test func theMessagesAreThePythonClientsWordForWord() throws {
+        let fixture = try Self.fixture()
+        let pushes = try Self.rows(fixture, "pushMessages")
+        let statuses = try Self.rows(fixture, "statusMessages")
+        let copies = try Self.rows(fixture, "copyMessages")
+        let imports = try Self.rows(fixture, "importMessages")
+        #expect(pushes.count == 6 && statuses.count == 5 && copies.count == 8 && imports.count == 2)
+        for row in pushes {
+            guard case .string(let lens)? = row["lensID"], let parts = LensLibrary.whole(row["uploadedParts"]),
+                let bytes = LensLibrary.whole(row["uploadedBytes"]), case .bool(let adopted)? = row["adopted"],
+                case .bool(let already)? = row["alreadyHeld"], let nulls = LensLibrary.whole(row["recordNonFiniteNumbers"])
             else { Issue.record("malformed push row"); continue }
             #expect(.string(LensLibrary.pushMessage(
-                lensID: lens, uploadedParts: parts, uploadedBytes: bytes, adopted: adopted)) == row["message"])
+                lensID: lens, uploadedParts: parts, uploadedBytes: bytes, adopted: adopted, alreadyHeld: already,
+                recordNonFiniteNumbers: nulls)) == row["message"])
         }
-        for item in statuses {
-            guard case .object(let row) = item, case .string(let lens)? = row["lensID"],
-                case .bool(let available)? = row["libraryAvailable"], case .bool(let held)? = row["held"],
-                case .string(let record)? = row["siteRecord"]
+        for row in statuses {
+            guard case .string(let lens)? = row["lensID"], case .bool(let available)? = row["libraryAvailable"],
+                case .bool(let held)? = row["held"], case .string(let record)? = row["siteRecord"]
             else { Issue.record("malformed status row"); continue }
             #expect(.string(LensLibrary.statusMessage(
                 lensID: lens, libraryAvailable: available, held: held, siteRecord: record)) == row["message"])
         }
-        for item in copies {
-            guard case .object(let row) = item, case .string(let lens)? = row["lensID"],
+        for row in copies {
+            guard case .string(let lens)? = row["lensID"], case .string(let action)? = row["action"],
                 case .bool(let existing)? = row["existing"], case .bool(let changed)? = row["changed"],
-                let files = LensLibrary.whole(row["fileCount"]), let bytes = LensLibrary.whole(row["bytes"]),
-                case .string(let digest)? = row["planSHA256"]
+                case .bool(let restored)? = row["restored"], let files = LensLibrary.whole(row["fileCount"]),
+                let bytes = LensLibrary.whole(row["bytes"]), case .string(let digest)? = row["planSHA256"]
             else { Issue.record("malformed copy row"); continue }
             var method: String?
             if case .string(let named)? = row["copyMethod"] { method = named }
+            var other: String?
+            if case .string(let named)? = row["existingLensID"] { other = named }
             #expect(.string(LensLibrary.copyMessage(
-                lensID: lens, existing: existing, changed: changed, fileCount: files, bytes: bytes,
-                planSHA256: digest, copyMethod: method)) == row["message"])
-            // …and from the answer the Python client gives the command line.
-            var answer = row
+                lensID: lens, action: action, existing: existing, changed: changed, restored: restored,
+                existingLensID: other, fileCount: files, bytes: bytes, planSHA256: digest, copyMethod: method))
+                == row["message"])
+            // …and from the answer the Python client gives the command line,
+            // where a field that does not apply is absent.
+            var answer = row.filter { $0.value != .null }
             answer["files"] = .array(Array(repeating: .null, count: files))
-            if method == nil { answer["copyMethod"] = nil }
+            if !restored { answer["restored"] = nil }
             #expect(LensLibrary.copyMessage(for: .object(answer)).map(JSONValue.string) == row["message"])
         }
+        for row in imports {
+            guard case .string(let lens)? = row["lensID"], case .bool(let restored)? = row["restored"]
+            else { Issue.record("malformed import row"); continue }
+            #expect(.string(LensLibrary.importMessage(lensID: lens, restored: restored)) == row["message"])
+            var answer: [String: JSONValue] = ["kind": .string("jlens"), "existing": .bool(true), "lensID": .string(lens)]
+            if restored { answer["restored"] = .bool(true) }
+            #expect(LensLibrary.importMessage(for: answer).map(JSONValue.string) == row["message"])
+        }
+        // A new lens, and any other instrument, keep the family's sentence.
+        #expect(LensLibrary.importMessage(for: ["kind": .string("jlens"), "lensID": .string("x"), "changed": .bool(true)]) == nil)
+        #expect(LensLibrary.importMessage(for: ["kind": .string("sae-decoder"), "existing": .bool(true)]) == nil)
+        #expect(LensLibrary.importMessage(for: nil) == nil)
     }
 
     @Test func theCapabilityIsReadAndAnEngineWithoutItHasNoLibrary() throws {
@@ -461,31 +591,50 @@ import Testing
             "lensID": .string(Self.lensID), "convertedSHA256": .string(lens.sha), "bytes": .number(250),
             "held": .bool(true), "alreadyHeld": .bool(false), "adopted": .bool(false),
             "uploadedParts": .number(3), "uploadedBytes": .number(250), "registered": .bool(true),
-            "recordChanged": .bool(true), "changed": .bool(true),
+            "recordChanged": .bool(true), "recordNonFiniteNumbers": .number(0), "changed": .bool(true),
         ]))
     }
 
-    @Test func aPushRunAgainAfterAnInterruptionSendsOnlyWhatIsMissing() async throws {
+    /// A part or the whole-file check that gets no answer: one sentence, the
+    /// Python client's, saying that running the command again sends only
+    /// what the site still lacks. Then it does.
+    @Test(arguments: ["a 500 on a part", "no answer to a part", "a 500 on the whole-file check"])
+    func anInterruptedPushSaysToRunItAgainAndThenSendsOnlyWhatIsMissing(_ failure: String) async throws {
         let lens = try Lens()
         defer { lens.remove() }
         let site = Site()
-        site.failPart = 1
+        switch failure {
+        case "a 500 on a part": site.failPart = 1
+        case "no answer to a part": site.dropPart = 1
+        default: site.failComplete = true
+        }
         let bridge = Bridge(lens)
         let client = site.client()
-        await #expect(throws: (any Error).self) {
+        do {
             _ = try await LensLibraryRemote.push(Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+            Issue.record("an interrupted push must not succeed")
+        } catch let stopped as LensLibrary.Refusal {
+            #expect(stopped.code == "lensUploadInterrupted" && stopped.state == .failed)
+            #expect(stopped.repairAction == (try Self.text(try Self.fixture()["interrupted"], "repairAction")))
+            #expect(stopped.reason.hasPrefix("Sending lens custom-lens-example to the site was interrupted "
+                + "before the site confirmed that it holds the whole lens ("))
+            #expect(!(stopped.reason + stopped.repairAction).contains("job"))
         }
         #expect(site.entries.isEmpty && site.registered.isEmpty)
-        #expect(site.received[lens.sha]?.keys.sorted() == [0])
+        let received = site.received[lens.sha]?.keys.sorted() ?? []
+        #expect(received == (failure == "a 500 on the whole-file check" ? [0, 1, 2] : [0]))
         site.calls.removeAll()
 
         let result = try await LensLibraryRemote.push(
             Self.lensID, client: client, root: lens.root, bridge: bridge.run)
-        #expect(site.sent("PUT") == [
-            "PUT /api/lens-library/\(lens.sha)/parts/1", "PUT /api/lens-library/\(lens.sha)/parts/2",
-        ])
-        #expect(result.uploadedParts == 2 && result.uploadedBytes == 150 && !result.alreadyHeld)
+        let missing = [0, 1, 2].filter { !received.contains($0) }
+        #expect(site.sent("PUT") == missing.map { "PUT /api/lens-library/\(lens.sha)/parts/\($0)" })
+        #expect(result.uploadedParts == missing.count && !result.alreadyHeld)
         #expect(site.entries == [lens.sha: lens.data] && site.registered[Self.lensID] != nil)
+        if missing.isEmpty {
+            #expect(result.message.hasPrefix("The site had already received every part of lens "
+                + "custom-lens-example and now holds it"))
+        }
     }
 
     @Test func aLensTheSiteHoldsUploadsNothingAndStillRegisters() async throws {
@@ -524,9 +673,11 @@ import Testing
             Issue.record("an engine with no lens library must be refused")
         } catch let refusal as LensLibrary.Refusal {
             let fixture = try Self.fixture()
-            #expect(refusal.code == "lensLibraryUnavailable")
+            #expect(refusal.code == "lensLibraryUnavailable" && refusal.state == .refused)
             #expect(refusal.reason == (try Self.text(fixture["unavailable"], "pushReason")))
-            #expect(refusal.repairAction == (try Self.text(fixture["unavailable"], "repairAction")))
+            // A push packages nothing, so its repair does not talk about packaging a request.
+            #expect(refusal.repairAction == (try Self.text(fixture["unavailable"], "pushRepairAction")))
+            #expect(!refusal.repairAction.contains("--lens-reference"))
         }
         #expect(site.calls == ["GET /api/capabilities"])
         #expect(bridge.calls.isEmpty, "nothing is hashed for an engine that cannot take it")
@@ -565,6 +716,9 @@ import Testing
             + "it in its lens library; the site has its record.")
     }
 
+    /// The engine's own code, sentence, and repair, as the Python client
+    /// reports them too: from `message`, or from `reason` where a route
+    /// gives only that.
     @Test func aServersRefusalArrivesWithItsOwnCodeAndRepair() async throws {
         let lens = try Lens()
         defer { lens.remove() }
@@ -575,11 +729,77 @@ import Testing
                 Self.lensID, client: site.client(), root: lens.root, bridge: Bridge(lens).run)
             Issue.record("a manifest the server refuses must be refused")
         } catch let refusal as LensLibrary.Refusal {
-            #expect(refusal.code == "lensUploadManifest")
-            #expect(refusal.reason == "the parts do not tile the file")
-            #expect(refusal.repairAction == "plan it again")
+            #expect(refusal.code == "lensUploadPlanMalformed" && refusal.state == .refused)
+            #expect(refusal.reason == "The parts do not tile the file.")
+            #expect(refusal.repairAction == "Plan it again.")
         }
         #expect(site.sent("PUT").isEmpty)
+
+        let onlyReason = ClusterClient.refusalDetail(Data(
+            #"{"detail": {"code": "lensRecordDiffers", "reason": "The site has another record.", "repairAction": "Compare the two records."}}"#.utf8))
+        #expect(onlyReason.code == "lensRecordDiffers" && onlyReason.message == "The site has another record."
+            && onlyReason.repair == "Compare the two records.")
+        let bare = ClusterClient.refusalDetail(Data(#"{"detail": "the body is too large"}"#.utf8))
+        #expect(bare.code == nil && bare.message == "the body is too large" && bare.repair == nil)
+    }
+
+    @Test func anEntryOfAnotherSizeAndAnAnswerTheContractDoesNotAllow() async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let other = Site()
+        other.entries[lens.sha] = lens.data + Data([33])
+        do {
+            _ = try await LensLibraryRemote.push(
+                Self.lensID, client: other.client(), root: lens.root, bridge: Bridge(lens).run)
+            Issue.record("an entry of another size must be refused")
+        } catch let refusal as LensLibrary.Refusal {
+            #expect(refusal.code == "lensLibraryEntryDiffers" && refusal.state == .refused)
+            #expect(refusal.reason == LensLibrary.entryDiffersReason(held: 251, workspace: 250))
+            #expect(refusal.repairAction == LensLibrary.entryDiffersRepair)
+        }
+        #expect(other.sent("POST").isEmpty && other.sent("PUT").isEmpty)
+
+        let broken: [(LensLibrary.ProtocolProblem, (Site) -> Void)] = [
+            (.partLimit, { $0.partMax = 0 }),
+            (.missingParts, { $0.answers["begin"] = ["held": false, "missingParts": [99]] }),
+            (.notConfirmed, { $0.answers["complete"] = ["held": false, "bytes": NSNull()] }),
+            (.otherLens, { $0.answers["register"] = ["lensID": "another-lens", "registered": true, "changed": true] }),
+        ]
+        for (kind, change) in broken {
+            let site = Site()
+            change(site)
+            do {
+                _ = try await LensLibraryRemote.push(
+                    Self.lensID, client: site.client(), root: lens.root, bridge: Bridge(lens).run)
+                Issue.record("\(kind) must not succeed")
+            } catch let failure as LensLibrary.Refusal {
+                // A failure (70), not a refusal: nothing declined, the engine misbehaved.
+                #expect(failure == LensLibrary.protocolFailure(kind, server: Self.server), "\(kind)")
+                #expect(failure.state == .failed)
+            }
+        }
+    }
+
+    /// The record the site receives is strict JSON, and the result says how
+    /// many numbers in it were not finite.
+    @Test func aRecordWithNumbersThatAreNotFiniteIsCountedInTheResult() async throws {
+        var lens = try Lens()
+        defer { lens.remove() }
+        lens.nonFiniteNumbers = 2
+        lens.recordJSON = lens.recordJSON.replacingOccurrences(of: #""tolerance": 0.1"#, with: #""score": null, "margin": null"#)
+        let site = Site()
+        let result = try await LensLibraryRemote.push(
+            Self.lensID, client: site.client(), root: lens.root, bridge: Bridge(lens).run)
+        #expect(result.recordNonFiniteNumbers == 2 && result.registered == true)
+        #expect(result.json == .object([
+            "lensID": .string(Self.lensID), "convertedSHA256": .string(lens.sha), "bytes": .number(250),
+            "held": .bool(true), "alreadyHeld": .bool(false), "adopted": .bool(false),
+            "uploadedParts": .number(3), "uploadedBytes": .number(250), "registered": .bool(true),
+            "recordChanged": .bool(true), "recordNonFiniteNumbers": .number(2), "changed": .bool(true),
+        ]))
+        #expect(result.message.hasSuffix("; the site has its record, with 2 numbers in the record that are "
+            + "not finite stored as null."))
+        #expect(site.registered[Self.lensID] != nil)
     }
 
     @Test func statusSaysWhatTheSiteHoldsAndChangesNothing() async throws {
@@ -656,6 +876,98 @@ import Testing
                 ["lens-push", "--url", Self.server], client: client, root: lens.root,
                 sink: .discarding, bridge: bridge.run)
         }
+
+        // What the command line makes of each kind of stop: a refusal is 65,
+        // an interrupted upload or a misbehaving engine is a failure, 70.
+        let runner = ExperimentCLIRunner(sink: .discarding)
+        let refused = runner.outcome(
+            for: .init(code: "lensLibraryUnavailable", reason: "no library", repairAction: "configure one"),
+            namespace: "remote", verb: "remote lens-push")
+        #expect(refused.envelope.state == .refused && refused.exitCode(json: true) == 65
+            && refused.exitCode(json: false) == 1)
+        #expect(refused.envelope.error?.code == "lensLibraryUnavailable"
+            && refused.envelope.error?.repairAction == "configure one")
+        let stopped = runner.outcome(
+            for: .init(
+                code: LensLibrary.interruptedCode, reason: "interrupted", repairAction: LensLibrary.resumeRepair,
+                state: .failed),
+            namespace: "remote", verb: "remote lens-push")
+        #expect(stopped.envelope.state == .failed && stopped.exitCode(json: true) == 70
+            && stopped.exitCode(json: false) == 1)
+        #expect(stopped.envelope.error?.code == "lensUploadInterrupted"
+            && stopped.envelope.error?.repairAction == LensLibrary.resumeRepair)
+    }
+
+    // MARK: - One part of a lens file
+
+    /// Every read a part upload makes of the lens file, recorded.
+    private final class RecordingSource: LensLibrary.PartSource {
+        let handle: FileHandle
+        var position: UInt64 = 0
+        var seeks: [UInt64] = []
+        var reads: [(position: UInt64, asked: Int, got: Int)] = []
+        init(_ url: URL) throws { handle = try FileHandle(forReadingFrom: url) }
+        func seek(to offset: UInt64) throws {
+            seeks.append(offset)
+            position = offset
+            try handle.seek(toOffset: offset)
+        }
+        func read(upTo count: Int) throws -> Data? {
+            let data = try handle.read(upToCount: count)
+            reads.append((position, count, data?.count ?? 0))
+            position += UInt64(data?.count ?? 0)
+            return data
+        }
+    }
+
+    /// Never the whole lens, and never the whole part: every read is at most
+    /// one block, and stays inside the part being sent.
+    @Test func aPartIsReadABlockAtATimeAndNeverBeyondItself() throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        #expect(LensLibrary.blockSize == 1 << 20)
+        for part in lens.parts {
+            let source = try RecordingSource(lens.url)
+            let piece = lens.root.appending(component: "part-\(part.index)")
+            try LensLibrary.copyPart(part, from: source, to: piece, blockSize: 16)
+            #expect(source.seeks == [UInt64(part.offset)], "read from the part's own first byte")
+            #expect(source.reads.count == (part.bytes + 15) / 16)
+            for read in source.reads {
+                #expect(read.asked > 0 && read.asked <= 16, "never more than one block at once")
+                #expect(Int(read.position) >= part.offset
+                    && Int(read.position) + read.asked <= part.offset + part.bytes, "never beyond the part")
+                #expect(read.got == read.asked)
+            }
+            #expect(source.reads.map(\.got).reduce(0, +) == part.bytes)
+            #expect(try Data(contentsOf: piece) == lens.data.subdata(in: part.offset..<(part.offset + part.bytes)))
+        }
+    }
+
+    /// A lens file that is not the plan's is refused here, with the sentence
+    /// the Python client says, and the part is never uploaded.
+    @Test func aLensFileThatChangedAfterThePlanStopsTheUpload() async throws {
+        let fixture = try Self.fixture()
+        for change in ["altered", "shortened"] {
+            let lens = try Lens()
+            defer { lens.remove() }
+            var bytes = lens.data
+            if change == "altered" { bytes[249] ^= 1 } else { bytes = bytes.prefix(240) }
+            try bytes.write(to: lens.url)      // after the plan (the bridge's answer) was made
+            let site = Site()
+            do {
+                _ = try await LensLibraryRemote.push(
+                    Self.lensID, client: site.client(), root: lens.root, bridge: Bridge(lens).run)
+                Issue.record("a changed lens file must stop the upload")
+            } catch let refusal as LensLibrary.Refusal {
+                #expect(refusal.code == (try Self.text(fixture["changed"], "code")) && refusal.state == .refused)
+                #expect(refusal.reason == (try Self.text(fixture["changed"], "reason")))
+                #expect(refusal.repairAction == (try Self.text(fixture["changed"], "repairAction")))
+            }
+            // The parts before the changed one arrived; that one was never sent.
+            #expect(site.sent("PUT") == [0, 1].map { "PUT /api/lens-library/\(lens.sha)/parts/\($0)" }, "\(change)")
+            #expect(site.entries.isEmpty && site.registered.isEmpty)
+            #expect(site.sent("POST", containing: "complete").isEmpty)
+        }
     }
 
     // MARK: - Uploading an archive
@@ -706,10 +1018,7 @@ import Testing
         }
 
         // On the command line: refused (65), with the code and the repair.
-        LensStubURLProtocol.handler = { request in try site.respond(request) }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [LensStubURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = site.session()
         ExperimentRootOverrideLock.acquire()
         ExperimentStore.rootOverride = directory
         defer {
@@ -754,7 +1063,7 @@ import Testing
                 let fixture = try Self.fixture()
                 #expect(refusal.code == "lensLibraryUnavailable")
                 #expect(refusal.reason == (try Self.text(fixture["unavailable"], "archiveReason")))
-                #expect(refusal.repairAction == (try Self.text(fixture["unavailable"], "repairAction")))
+                #expect(refusal.repairAction == (try Self.text(fixture["unavailable"], "archiveRepairAction")))
             }
             #expect(site.sent("POST").isEmpty, "nothing may be sent")
             // A request that carries its lens goes to any engine, as before.
@@ -764,6 +1073,28 @@ import Testing
         let site = Site()
         _ = try await site.client().uploadBundle(referring)
         #expect(site.sent("POST") == ["POST /api/bundles/upload"])
+    }
+
+    /// An up-to-date engine costs an upload nothing extra: one capability
+    /// read, and the archive is never opened to look for a lens reference.
+    @Test func theCapabilityIsAskedFirstAndTheArchiveIsOpenedOnlyWithoutALibrary() async throws {
+        let directory = try Self.temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let carrying = try Self.archive(in: directory, name: "carrying", context: ["request": [String: Any]()])
+        for (library, expected) in [(true, 0), (false, 1), (nil, 1)] as [(Bool?, Int)] {
+            let site = Site()
+            site.library = library
+            let opened = Counter()
+            let client = site.client()
+            _ = try await LensLibrary.$archiveInspectorOverride.withValue({ url in
+                opened.bump()
+                return LensLibrary.archiveRefersToLibrary(url)
+            }) {
+                try await client.uploadBundle(carrying)
+            }
+            #expect(opened.count == expected, "library \(String(describing: library))")
+            #expect(site.calls == ["GET /api/capabilities", "POST /api/bundles/upload"])
+        }
     }
 
     // MARK: - The command line's requests to the Python client
@@ -819,6 +1150,29 @@ import Testing
         #expect(throws: (any Error).self) {
             try DiagnosticArguments(["lens-copy", Self.lensID], namespace: "science", takesValue: true)
         }
+
+        // The verb says what is missing, in the Python client's words.
+        let fixture = try Self.fixture()
+        #expect(LensLibrary.copyNeedsLens == (try Self.text(fixture["copyArguments"], "lensID")))
+        #expect(LensLibrary.copyNeedsFrom == (try Self.text(fixture["copyArguments"], "from")))
+        let usage = "steerlab-cli science lens-copy <lensID> --from <workspace directory>"
+        let missing: [([String], String)] = [
+            (["lens-copy", Self.lensID], LensLibrary.copyNeedsFrom),
+            (["lens-copy", Self.lensID, "--from"], LensLibrary.copyNeedsFrom),
+            (["lens-copy", "--from", "/elsewhere/first"], LensLibrary.copyNeedsLens),
+            (["lens-copy", "one", "two", "--from", "/elsewhere/first"], LensLibrary.copyNeedsLens),
+        ]
+        for (args, sentence) in missing {
+            do {
+                try DiagnosticWorkspaceCLI.checkLensCopyArguments(args)
+                Issue.record("\(args) must be refused")
+            } catch let error as ExperimentError {
+                #expect(error.reason == sentence && error.malformedInvocation?.repairAction == usage)
+            }
+        }
+        try DiagnosticWorkspaceCLI.checkLensCopyArguments(["lens-copy", Self.lensID, "--from", "../first"])
+        try DiagnosticWorkspaceCLI.checkLensCopyArguments(
+            ["lens-copy", Self.lensID, "--plan-sha256", "abc", "--from", "/elsewhere/first"])
     }
 
     /// The local HTTP service serves `actions` only: a caller there cannot
@@ -840,7 +1194,9 @@ import Testing
     // MARK: - Through the real Python client
 
     /// A two-layer lens is imported, planned, and copied into a second
-    /// workspace through the real bridge.
+    /// workspace through the real bridge; its missing converted file is put
+    /// back by an import and by a copy; and a record that holds numbers that
+    /// are not finite still reaches this Mac.
     @Test func theRealBridgePlansAPushAndCopiesALens() async throws {
         let python = URL(filePath: try #require(
             ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"],
@@ -881,24 +1237,28 @@ import Testing
             else { throw ExperimentError(reason: "no answer") }
             return object
         }
-        let importing: [String: JSONValue] = [
+        var importing: [String: JSONValue] = [
             "workspaceRoot": .string(first.path), "descriptionFile": .string(description.path),
         ]
         let reviewed = try await perform("artifact-plan", importing)
-        let imported = try await perform(
-            "artifact-import", importing.merging(["planSHA256": reviewed["planSHA256"]!]) { _, new in new })
+        importing["planSHA256"] = reviewed["planSHA256"]
+        let imported = try await perform("artifact-import", importing)
         guard case .string(let lensID)? = imported["lensID"] else { Issue.record("no lens"); return }
         // One lens, one name: the same reviewed files find the lens they made.
-        let repeated = try await perform(
-            "artifact-import", importing.merging(["planSHA256": reviewed["planSHA256"]!]) { _, new in new })
+        let repeated = try await perform("artifact-import", importing)
         #expect(repeated["lensID"] == .string(lensID) && repeated["existing"] == .bool(true)
             && repeated["changed"] == .bool(false))
+        #expect(LensLibrary.importMessage(for: repeated)
+            == "This workspace already holds these files as lens \(lensID), so nothing was imported.")
 
-        let converted = try Data(contentsOf: first.appending(path: "runs/jlens-lenses/\(lensID)/jacobians.safetensors"))
+        let folder = first.appending(path: "runs/jlens-lenses/\(lensID)")
+        let convertedURL = folder.appending(component: "jacobians.safetensors")
+        let converted = try Data(contentsOf: convertedURL)
         let headerEnd = 8 + Int(converted.prefix(8).withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) })
-        let plan = try LensLibrary.Plan(.object(try await perform("lens-push-plan", [
+        let planning: [String: JSONValue] = [
             "workspaceRoot": .string(first.path), "lensID": .string(lensID), "partMaxBytes": .number(1_048_576),
-        ])))
+        ]
+        let plan = try LensLibrary.Plan(.object(try await perform("lens-push-plan", planning)))
         // The header, then one part per layer; they tile the file, each with its hash.
         #expect(plan.parts.map(\.offset) == [0, headerEnd, headerEnd + 16])
         #expect(plan.parts.map(\.bytes) == [headerEnd, 16, 16])
@@ -909,36 +1269,98 @@ import Testing
         #expect(plan.file == "runs/jlens-lenses/\(lensID)/jacobians.safetensors")
         #expect(plan.recordJSON.contains(#""lensID": ""# + lensID + "\""))
         #expect(!plan.recordJSON.contains(first.path), "no path on this Mac goes to a site")
+        #expect(plan.nonFiniteNumbers == 0)
         let record = try LensLibrary.Plan(.object(try await perform(
             "lens-record", ["workspaceRoot": .string(first.path), "lensID": .string(lensID)])))
         #expect(record.parts.isEmpty && record.convertedSHA256 == plan.convertedSHA256
             && record.recordJSON == plan.recordJSON)
 
+        // The repair every lens refusal names: import again. A missing
+        // converted file is put back from the reviewed sources.
+        try FileManager.default.removeItem(at: convertedURL)
+        do {
+            _ = try await perform("lens-push-plan", planning)
+            Issue.record("a lens with no converted file must be refused")
+        } catch let refusal as DiagnosticWorkspace.Refusal {
+            #expect(refusal.code == "lensFileMissing")
+            #expect(refusal.repairAction.hasPrefix("Import the lens again from its source files"))
+        }
+        let restored = try await perform("artifact-import", importing)
+        #expect(restored["existing"] == .bool(true) && restored["changed"] == .bool(true)
+            && restored["restored"] == .bool(true))
+        #expect(try Data(contentsOf: convertedURL) == converted)
+        #expect(LensLibrary.importMessage(for: restored)
+            == "This workspace already holds these files as lens \(lensID); its converted file was missing "
+            + "and was put back.")
+
         // The same lens in a second workspace: reviewed, then copied as a clone.
-        let copying: [String: JSONValue] = [
+        var copying: [String: JSONValue] = [
             "workspaceRoot": .string(second.path), "lensID": .string(lensID), "fromWorkspace": .string(first.path),
         ]
         let preview = try await perform("lens-copy", copying)
         #expect(preview["changed"] == .bool(false) && preview["action"] == .string("copy"))
         #expect(!FileManager.default.fileExists(atPath: second.appending(component: "runs").path))
-        let copied = try await perform(
-            "lens-copy", copying.merging(["planSHA256": preview["planSHA256"]!]) { _, new in new })
+        copying["planSHA256"] = preview["planSHA256"]
+        let copied = try await perform("lens-copy", copying)
         #expect(copied["changed"] == .bool(true) && copied["copyMethod"] == .string("clone"))
         for name in ["lens.json", "jacobians.safetensors", "import-receipt.json"] {
             let relative = "runs/jlens-lenses/\(lensID)/\(name)"
             #expect(try Data(contentsOf: second.appending(path: relative))
                 == Data(contentsOf: first.appending(path: relative)))
         }
+        copying["planSHA256"] = nil
         let again = try await perform("lens-copy", copying)
         #expect(again["existing"] == .bool(true) && again["action"] == .string("none"))
         #expect(LensLibrary.copyMessage(for: .object(again))
             == "This workspace already holds lens \(lensID); nothing was copied.")
+        // A lens already here whose converted file is missing gets that file back.
+        let copy = second.appending(path: "runs/jlens-lenses/\(lensID)/jacobians.safetensors")
+        try FileManager.default.removeItem(at: copy)
+        let missing = try await perform("lens-copy", copying)
+        #expect(missing["action"] == .string("restore") && missing["changed"] == .bool(false))
+        copying["planSHA256"] = missing["planSHA256"]
+        let putBack = try await perform("lens-copy", copying)
+        #expect(putBack["restored"] == .bool(true) && putBack["changed"] == .bool(true))
+        #expect(try Data(contentsOf: copy) == converted)
+        #expect(LensLibrary.copyMessage(for: .object(putBack))
+            == "Lens \(lensID) was already in this workspace; its missing converted file was put back as a "
+            + "clone that uses no extra disk space.")
+        copying["planSHA256"] = nil
         do {
             _ = try await perform("lens-copy", copying.merging(["lensID": .string("absent")]) { _, new in new })
             Issue.record("a lens the other workspace does not hold must be refused")
         } catch let refusal as DiagnosticWorkspace.Refusal {
             #expect(refusal.code == "lensNotFound")
         }
+
+        // A record that holds numbers that are not finite (a qualification's
+        // measured values): the bridge's answer is strict JSON, so it decodes
+        // here, where a bare NaN used to read as no answer at all.
+        let recordURL = folder.appending(component: "lens.json")
+        var stored = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
+        stored["qualifications"] = [[
+            "qualificationID": "q1", "modelID": "example/model", "revision": "r", "dtype": "float32",
+            "checks": ["causal": ["score": 12345.5, "margin": 54321.5]],
+        ]]
+        let text = String(decoding: try JSONSerialization.data(withJSONObject: stored), as: UTF8.self)
+            .replacingOccurrences(of: "12345.5", with: "NaN").replacingOccurrences(of: "54321.5", with: "Infinity")
+        #expect(text.contains("NaN") && text.contains("Infinity"))
+        try Data(text.utf8).write(to: recordURL)
+        for (action, payload) in [("lens-record", ["workspaceRoot": .string(first.path), "lensID": .string(lensID)]),
+                                  ("lens-push-plan", planning)] as [(String, [String: JSONValue])] {
+            let described = try LensLibrary.Plan(.object(try await perform(action, payload)))
+            #expect(described.nonFiniteNumbers == 2, "\(action)")
+            #expect(!described.recordJSON.contains("NaN") && !described.recordJSON.contains("Infinity"))
+            #expect(described.recordJSON.contains(#""score": null"#) && described.recordJSON.contains(#""margin": null"#))
+        }
+        // A repeated import answers with the record, qualifications and all.
+        let found = try await perform("artifact-import", importing)
+        #expect(found["existing"] == .bool(true))
+        guard case .object(let answered)? = found["record"], case .array(let qualifications)? = answered["qualifications"],
+            case .object(let qualification)? = qualifications.first, case .object(let checks)? = qualification["checks"],
+            case .object(let causal)? = checks["causal"]
+        else { Issue.record("the record's qualification did not arrive"); return }
+        #expect(causal["score"] == .null && causal["margin"] == .null)
     }
 }
 

@@ -5,7 +5,9 @@ import Testing
 @Suite(.serialized) struct ArtifactImportTests {
     /// The dialog's last line is true whether the lens was imported or found.
     @Test func theDialogNamesALensTheWorkspaceAlreadyHolds() {
-        let imported: [String: JSONValue] = ["lensID": .string("custom-lens-example"), "changed": .bool(true)]
+        let imported: [String: JSONValue] = [
+            "kind": .string("jlens"), "lensID": .string("custom-lens-example"), "changed": .bool(true),
+        ]
         #expect(ArtifactImportSelection.completionStatus(
             result: imported, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
             == "Imported into /workspace. Refresh the J-lens library for example/model and select the new lens.")
@@ -13,7 +15,13 @@ import Testing
         #expect(ArtifactImportSelection.completionStatus(
             result: found, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
             == "This workspace already holds these files as lens custom-lens-example, so nothing was "
-            + "imported. Refresh the J-lens library for example/model and select that lens.")
+            + "imported. Refresh the lenses for example/model and select that lens.")
+        // Its converted file was missing, and the import put it back.
+        let restored = found.merging(["kind": .string("jlens"), "restored": .bool(true), "changed": .bool(true)]) { _, new in new }
+        #expect(ArtifactImportSelection.completionStatus(
+            result: restored, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            == "This workspace already holds these files as lens custom-lens-example; its converted file was "
+            + "missing and was put back. Refresh the lenses for example/model and select that lens.")
         // An SAE decoder import is always new, and a job with no result reads as before.
         for result in [found, nil] as [[String: JSONValue]?] {
             #expect(ArtifactImportSelection.completionStatus(

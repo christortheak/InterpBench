@@ -3225,8 +3225,12 @@ public struct ClusterClient: Sendable {
         return error
     }
 
-    func requireHTTPTransfer() async throws {
-        let remote = try await capabilities().remoteStudy
+    /// Refuse when the server forbids HTTP transfer. `known` is a capability
+    /// snapshot the caller already read; absent, it is read here.
+    func requireHTTPTransfer(_ known: ClusterCapabilities? = nil) async throws {
+        let snapshot: ClusterCapabilities
+        if let known { snapshot = known } else { snapshot = try await capabilities() }
+        let remote = snapshot.remoteStudy
         guard remote?.externalTransferRequired != true, remote?.httpTransfer != false else {
             throw ChatServiceError(reason: "This server requires external artifact transfer. "
                 + "Use the site's configured transport to stage the bundle, then inspect and "
@@ -3281,20 +3285,29 @@ public struct ClusterClient: Sendable {
     /// client uses (`LensLibrary.unavailableReason`). And a file that is not
     /// there fails as a missing file, as it always has.
     ///
+    /// The capability is asked first, once, and the archive is opened to look
+    /// for a lens reference only when the engine reports no lens library: an
+    /// engine with one takes any archive, so an upload to it costs nothing
+    /// extra. (The reference is in the archive's last member, so looking for
+    /// it reads the whole archive.)
+    ///
     /// An upload the server refuses as too large (413) is answered with the
     /// repair, not with the bare status.
     public func uploadBundle(_ url: URL) async throws -> UploadedBundle {
-        try await requireHTTPTransfer()
+        let capabilities = try await capabilities()
+        try await requireHTTPTransfer(capabilities)
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: url.path])
         }
-        let refersToLibrary = await Task.detached { LensLibrary.archiveRefersToLibrary(url) }.value
-        if refersToLibrary, try await capabilities().lensLibraryAvailable != true {
-            throw LensLibrary.Refusal(
-                code: LensLibrary.unavailableCode,
-                reason: LensLibrary.unavailableReason(
-                    server: profile.baseURL.absoluteString, archive: true),
-                repairAction: LensLibrary.unavailableRepair)
+        if !capabilities.lensLibraryAvailable {
+            let inspect = LensLibrary.archiveInspectorOverride ?? LensLibrary.archiveRefersToLibrary
+            if await Task.detached(operation: { inspect(url) }).value {
+                throw LensLibrary.Refusal(
+                    code: LensLibrary.unavailableCode,
+                    reason: LensLibrary.unavailableReason(
+                        server: profile.baseURL.absoluteString, archive: true),
+                    repairAction: LensLibrary.archiveUnavailableRepair)
+            }
         }
         var request = try makeRequest(path: "/api/bundles/upload", method: "POST")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")

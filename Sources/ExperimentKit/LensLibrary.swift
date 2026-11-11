@@ -15,6 +15,9 @@ import Foundation
 /// the sentences. Every sentence has a Python twin in
 /// `steerlab_server.client.lens_transfer`, and the two are held to the same
 /// bytes by `prompts/fixtures/lens-library/refusals.json`.
+///
+/// "Lens library" here always means the site's. A workspace's own lenses are
+/// the folders under `runs/jlens-lenses/`.
 public enum LensLibrary {
 
     // MARK: An engine with no lens library
@@ -22,11 +25,20 @@ public enum LensLibrary {
     /// The engine's own refusal of a staged request carries the same code.
     public static let unavailableCode = "lensLibraryUnavailable"
 
-    /// Python twin: `lens_transfer.LIBRARY_UNAVAILABLE_REPAIR`.
-    public static let unavailableRepair =
-        "Package the request without --lens-reference so it carries its lens, or set the site "
-        + "profile's lensLibrary folder to one the engine can write and run the command again. "
-        + "An engine from before the lens library must be updated first."
+    /// The repair for the upload of a request that refers to its lens. Python
+    /// twin: `lens_transfer.LIBRARY_UNAVAILABLE_REPAIR`.
+    public static let archiveUnavailableRepair =
+        "Package the request without --lens-reference so it carries its lens, or give the engine a "
+        + "lens library folder it can write (on a cluster, the site profile's lensLibrary folder; on "
+        + "any other engine, STEERLAB_LENS_LIBRARY_ROOT) and upload the request again. An engine from "
+        + "before the lens library must be updated first."
+
+    /// The repair for `lens-push`, which packages nothing. Python twin:
+    /// `lens_transfer.PUSH_UNAVAILABLE_REPAIR`.
+    public static let pushUnavailableRepair =
+        "Give the engine a lens library folder it can write (on a cluster, the site profile's "
+        + "lensLibrary folder; on any other engine, STEERLAB_LENS_LIBRARY_ROOT), then run the command "
+        + "again. An engine from before the lens library must be updated first."
 
     /// Why this client sends nothing to an engine with no usable lens
     /// library. `archive` is the upload of a request that refers to its lens.
@@ -75,11 +87,93 @@ public enum LensLibrary {
             : "The server refused the upload as larger than its limit: \(said)."
     }
 
+    // MARK: What a site holds, and an engine that does not keep the contract
+
+    /// The site holds something else under the lens's hash.
+    public static let entryDiffersCode = "lensLibraryEntryDiffers"
+    /// Python twin: `lens_transfer.ENTRY_DIFFERS_REPAIR`.
+    public static let entryDiffersRepair =
+        "Ask the site's operator to inspect that library entry; the workspace copy is the one its "
+        + "record describes."
+
+    /// Python twin: `lens_transfer.entry_differs_reason`.
+    public static func entryDiffersReason(held: Int, workspace: Int) -> String {
+        "The site holds \(held) bytes under this lens's hash, and the workspace file is \(workspace) "
+            + "bytes. Nothing was sent."
+    }
+
+    /// The engine answered a lens-library route with something the contract
+    /// does not allow. A failure, not a refusal.
+    public static let protocolCode = "lensLibraryProtocol"
+
+    public enum ProtocolProblem: String, CaseIterable, Sendable {
+        case partLimit, missingParts, notConfirmed, otherLens
+    }
+
+    /// The sentence and repair for an answer the engine should never give.
+    /// Python twin: `lens_transfer.protocol_problem`.
+    public static func protocolProblem(_ kind: ProtocolProblem, server: String = "")
+        -> (reason: String, repair: String)
+    {
+        switch kind {
+        case .partLimit:
+            ("The engine at \(server) reports a lens library with no usable partMaxBytes.",
+             "Update the engine; its capabilities must state the largest part it accepts.")
+        case .missingParts:
+            ("The engine named parts to send that are not in the manifest it was given.",
+             "Run the command again; if it repeats, update the engine.")
+        case .notConfirmed:
+            ("The engine did not confirm that it holds the whole lens after the upload.", resumeRepair)
+        case .otherLens:
+            ("The engine registered a record under another lens name than the one sent.",
+             "Run lens-status for this lens, and update the engine if it repeats.")
+        }
+    }
+
+    static func protocolFailure(_ kind: ProtocolProblem, server: String = "") -> Refusal {
+        let problem = protocolProblem(kind, server: server)
+        return Refusal(code: protocolCode, reason: problem.reason, repairAction: problem.repair, state: .failed)
+    }
+
+    // MARK: An upload that did not finish, and a file that is not the plan's
+
+    /// A part, or the whole-file check, did not get its answer.
+    public static let interruptedCode = "lensUploadInterrupted"
+    /// Python twin: `lens_transfer.RESUME_REPAIR`.
+    public static let resumeRepair = "Run the command again: it sends only what the site still lacks."
+
+    /// Python twin: `lens_transfer.interrupted_reason`.
+    public static func interruptedReason(lensID: String, cause: String) -> String {
+        let said = cause.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = said.hasSuffix(".") ? String(said.dropLast()) : said
+        return "Sending lens \(lensID) to the site was interrupted before the site confirmed that it "
+            + "holds the whole lens (\(trimmed))."
+    }
+
+    /// The lens file is not the one that was planned. Python twins:
+    /// `lens_transfer.CHANGED_CODE`, `CHANGED_REASON`, and `CHANGED_REPAIR`.
+    public static let changedCode = "lensRefused"
+    public static let changedReason =
+        "The converted lens file changed after it was checked. Nothing more was sent."
+    public static let changedRepair =
+        "Run lens-push again once nothing else is writing the lens folder: it sends only what the "
+        + "site still lacks."
+
+    // MARK: A lens copy asked for without its arguments
+
+    /// Python twins: `lens_transfer.COPY_NEEDS_LENS` and `COPY_NEEDS_FROM`.
+    public static let copyNeedsLens =
+        "science lens-copy takes one lens ID: the name of the lens's folder under "
+        + "runs/jlens-lenses/ in the workspace that holds it."
+    public static let copyNeedsFrom =
+        "science lens-copy needs --from <workspace directory>: the workspace that holds the lens."
+
     // MARK: What happened, in one sentence
 
     /// Python twin: `lens_transfer.push_message`.
     public static func pushMessage(
-        lensID: String, uploadedParts: Int, uploadedBytes: Int, adopted: Bool
+        lensID: String, uploadedParts: Int, uploadedBytes: Int, adopted: Bool, alreadyHeld: Bool,
+        recordNonFiniteNumbers: Int = 0
     ) -> String {
         let sent: String
         if uploadedParts > 0 {
@@ -87,10 +181,20 @@ public enum LensLibrary {
                 + "\(uploadedBytes) bytes)"
         } else if adopted {
             sent = "The site checked its copy of lens \(lensID) and keeps it in its lens library"
-        } else {
+        } else if alreadyHeld {
             sent = "The site's lens library already holds lens \(lensID), so nothing was uploaded"
+        } else {
+            // An earlier run sent every part and never got the whole-file check.
+            sent = "The site had already received every part of lens \(lensID) and now holds it in its "
+                + "lens library, so nothing was uploaded"
         }
-        return sent + "; the site has its record."
+        var nulls = ""
+        if recordNonFiniteNumbers == 1 {
+            nulls = ", with 1 number in the record that is not finite stored as null"
+        } else if recordNonFiniteNumbers > 1 {
+            nulls = ", with \(recordNonFiniteNumbers) numbers in the record that are not finite stored as null"
+        }
+        return sent + "; the site has its record" + nulls + "."
     }
 
     /// What `siteRecord` says in a sentence. Python twin:
@@ -120,46 +224,84 @@ public enum LensLibrary {
 
     /// Python twin: `lens_transfer.copy_message`.
     public static func copyMessage(
-        lensID: String, existing: Bool, changed: Bool, fileCount: Int, bytes: Int,
-        planSHA256: String, copyMethod: String?
+        lensID: String, action: String, existing: Bool, changed: Bool, restored: Bool = false,
+        existingLensID: String? = nil, fileCount: Int, bytes: Int, planSHA256: String,
+        copyMethod: String?
     ) -> String {
+        let again = "Repeat the command with --plan-sha256 \(planSHA256)"
+        let how = copyMethod == "clone" ? "as a clone that uses no extra disk space" : "as a full copy"
+        if let existingLensID {
+            return "This workspace already holds this lens as \(existingLensID); nothing was copied."
+        }
+        if restored {
+            return "Lens \(lensID) was already in this workspace; its missing converted file was put back \(how)."
+        }
+        if action == "restore" {
+            return "Lens \(lensID) is already in this workspace, but its converted file is missing; "
+                + "nothing was written. \(again) to put that file back."
+        }
         if existing { return "This workspace already holds lens \(lensID); nothing was copied." }
         if !changed {
             return "Reviewed a copy of lens \(lensID) (\(fileCount) files, \(bytes) bytes); "
-                + "nothing was written. Repeat the command with --plan-sha256 \(planSHA256) to copy it."
+                + "nothing was written. \(again) to copy it."
         }
-        let how = copyMethod == "clone" ? "as a clone that uses no extra disk space" : "as a full copy"
         return "Copied lens \(lensID) into this workspace \(how), under the same name and record."
     }
 
     /// The sentence for a `science lens-copy` answer from the Python client.
     static func copyMessage(for result: JSONValue) -> String? {
         guard case .object(let object) = result, case .string(let lensID)? = object["lensID"],
+            case .string(let action)? = object["action"],
             case .bool(let existing)? = object["existing"], case .bool(let changed)? = object["changed"],
             case .array(let files)? = object["files"], let bytes = LensLibrary.whole(object["bytes"]),
             case .string(let digest)? = object["planSHA256"]
         else { return nil }
         var method: String?
         if case .string(let named)? = object["copyMethod"] { method = named }
+        var other: String?
+        if case .string(let named)? = object["existingLensID"] { other = named }
         return copyMessage(
-            lensID: lensID, existing: existing, changed: changed, fileCount: files.count,
+            lensID: lensID, action: action, existing: existing, changed: changed,
+            restored: object["restored"] == .bool(true), existingLensID: other, fileCount: files.count,
             bytes: bytes, planSHA256: digest, copyMethod: method)
+    }
+
+    /// What an import says when the workspace already held the lens. Python
+    /// twin: `lens_transfer.import_message`.
+    public static func importMessage(lensID: String, restored: Bool) -> String {
+        restored
+            ? "This workspace already holds these files as lens \(lensID); its converted file was "
+                + "missing and was put back."
+            : "This workspace already holds these files as lens \(lensID), so nothing was imported."
+    }
+
+    /// The sentence for a `science artifact-import` answer, or nil for a new
+    /// lens or any other instrument.
+    static func importMessage(for result: [String: JSONValue]?) -> String? {
+        guard let result, result["kind"] == .string("jlens"), result["existing"] == .bool(true),
+            case .string(let lensID)? = result["lensID"]
+        else { return nil }
+        return importMessage(lensID: lensID, restored: result["restored"] == .bool(true))
     }
 
     // MARK: Types
 
-    /// A lens, a request, or an upload this client will not send as asked:
-    /// `refused` (65) on the command line, with its code and repair. The app
-    /// shows the reason and the repair together.
+    /// A lens, a request, or an upload this client will not send as asked, or
+    /// could not finish sending. On the command line it is `refused` (65)
+    /// unless `state` says it is a failure (70): an interrupted upload and an
+    /// engine that broke the contract declined nothing. The app shows the
+    /// reason and the repair together.
     public struct Refusal: Error, Sendable, Equatable, CustomStringConvertible, LocalizedError {
         public let code: String
         public let reason: String
         public let repairAction: String
+        public let state: SteerLabCLIState
 
-        public init(code: String, reason: String, repairAction: String) {
+        public init(code: String, reason: String, repairAction: String, state: SteerLabCLIState = .refused) {
             self.code = code
             self.reason = reason
             self.repairAction = repairAction
+            self.state = state
         }
 
         public var description: String { repairAction.isEmpty ? reason : reason + " " + repairAction }
@@ -184,8 +326,11 @@ public enum LensLibrary {
         /// The converted file, relative to the workspace.
         var file: String
         var parts: [Part]
-        /// The lens record as exact JSON text (see `lensLibraryRegister`).
+        /// The lens record as exact, strict JSON text (see `lensLibraryRegister`).
         var recordJSON: String
+        /// How many numbers in the record were not finite, and are null in
+        /// `recordJSON`.
+        var nonFiniteNumbers: Int
 
         init(_ value: JSONValue) throws {
             guard case .object(let object) = value, case .string(let lensID)? = object["lensID"],
@@ -210,6 +355,7 @@ public enum LensLibrary {
             self.file = file
             self.parts = parts
             self.recordJSON = record
+            self.nonFiniteNumbers = LensLibrary.whole(object["nonFiniteNumbers"]) ?? 0
         }
     }
 
@@ -224,10 +370,17 @@ public enum LensLibrary {
     /// `diagnostic_archives.MAX_METADATA`.
     static let metadataLimit = 8 * 1024 * 1024
 
+    /// Replaces `archiveRefersToLibrary` for the tasks under it, so a test can
+    /// see whether an upload opened its archive at all.
+    @TaskLocal static var archiveInspectorOverride: (@Sendable (URL) -> Bool)?
+
     /// Whether a file is a request archive whose metadata says it refers to
     /// its lens instead of carrying it (`context.lensReference`). Any other
     /// file, and any archive this cannot read, is not judged here: the server
     /// inspects every upload. Python twin: `lens_transfer.archive_library_lenses`.
+    ///
+    /// The metadata is the archive's last member, so this reads the whole
+    /// archive. An upload asks it only of an engine with no lens library.
     static func archiveRefersToLibrary(_ url: URL) -> Bool {
         guard let data = archiveMetadata(url),
             case .object(let metadata)? = try? JSONDecoder().decode(JSONValue.self, from: data),
@@ -262,35 +415,62 @@ public enum LensLibrary {
 
     // MARK: One part of a lens file
 
-    /// Copy one part out of the lens file, a megabyte at a time, checking it
-    /// against the hash the plan recorded.
-    static func copyPart(_ part: Part, of file: URL, to piece: URL) throws {
-        let changed = Refusal(
-            code: "lensRefused",
-            reason: "The converted lens file changed after it was checked. Nothing more was sent.",
-            repairAction: "Run lens-push again once nothing else is writing the lens folder: it sends "
-                + "only what the site still lacks.")
-        let source = try FileHandle(forReadingFrom: file)
-        defer { try? source.close() }
+    /// Where a part's bytes are read from: a place in a file, read forward.
+    /// A protocol so a test can see every read.
+    protocol PartSource {
+        func seek(to offset: UInt64) throws
+        func read(upTo count: Int) throws -> Data?
+    }
+
+    struct FileSource: PartSource {
+        let handle: FileHandle
+        func seek(to offset: UInt64) throws { try handle.seek(toOffset: offset) }
+        func read(upTo count: Int) throws -> Data? { try handle.read(upToCount: count) }
+    }
+
+    /// The most a part upload reads from the lens file at once.
+    static let blockSize = 1 << 20
+
+    /// The refusal for a lens file that is not the one that was planned.
+    static var changedAfterCheck: Refusal {
+        Refusal(code: changedCode, reason: changedReason, repairAction: changedRepair)
+    }
+
+    /// Copy one part out of the lens file into `piece`, checking it against
+    /// the hash the plan recorded.
+    ///
+    /// The file is read a block at a time, from the part's first byte to its
+    /// last and no further: never the whole lens, and never the whole part.
+    /// A file that changed since the plan, or that ends early, is refused
+    /// here, so no part of other bytes is ever uploaded.
+    static func copyPart(
+        _ part: Part, from source: any PartSource, to piece: URL, blockSize: Int = LensLibrary.blockSize
+    ) throws {
         guard FileManager.default.createFile(
             atPath: piece.path, contents: nil, attributes: [.posixPermissions: 0o600])
         else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: piece.path]) }
         let target = try FileHandle(forWritingTo: piece)
         defer { try? target.close() }
-        try source.seek(toOffset: UInt64(part.offset))
+        try source.seek(to: UInt64(part.offset))
         var hasher = SHA256()
         var remaining = part.bytes
         while remaining > 0 {
-            guard let block = try source.read(upToCount: min(1 << 20, remaining)), !block.isEmpty else {
-                throw changed
+            guard let block = try source.read(upTo: min(blockSize, remaining)), !block.isEmpty else {
+                throw changedAfterCheck
             }
             hasher.update(data: block)
             try target.write(contentsOf: block)
             remaining -= block.count
         }
         guard hasher.finalize().map({ String(format: "%02x", $0) }).joined() == part.sha256 else {
-            throw changed
+            throw changedAfterCheck
         }
+    }
+
+    static func copyPart(_ part: Part, of file: URL, to piece: URL) throws {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        try copyPart(part, from: FileSource(handle: handle), to: piece)
     }
 }
 
@@ -317,6 +497,9 @@ public enum LensLibraryRemote {
         /// The server's answers to the registration, as it gave them.
         public var registered: Bool?
         public var recordChanged: Bool?
+        /// How many numbers in the record were not finite. They are null in
+        /// the record the site has.
+        public var recordNonFiniteNumbers: Int = 0
 
         public var changed: Bool { uploadedParts > 0 || adopted || recordChanged == true }
 
@@ -329,6 +512,7 @@ public enum LensLibraryRemote {
                 "uploadedBytes": .number(Double(uploadedBytes)),
                 "registered": registered.map(JSONValue.bool) ?? .null,
                 "recordChanged": recordChanged.map(JSONValue.bool) ?? .null,
+                "recordNonFiniteNumbers": .number(Double(recordNonFiniteNumbers)),
                 "changed": .bool(changed),
             ])
         }
@@ -336,7 +520,7 @@ public enum LensLibraryRemote {
         public var message: String {
             LensLibrary.pushMessage(
                 lensID: lensID, uploadedParts: uploadedParts, uploadedBytes: uploadedBytes,
-                adopted: adopted)
+                adopted: adopted, alreadyHeld: alreadyHeld, recordNonFiniteNumbers: recordNonFiniteNumbers)
         }
     }
 
@@ -369,6 +553,27 @@ public enum LensLibraryRemote {
         }
     }
 
+    /// Send one part, or ask for the whole-file check. When that gets no
+    /// answer (the connection, a timeout, or a failure on the engine), say
+    /// that running the command again resumes: what the site received, it
+    /// keeps. Python twin: `lens_transfer._send`.
+    static func sending<T>(_ lensID: String, _ call: () async throws -> T) async throws -> T {
+        func interrupted(_ cause: String) -> LensLibrary.Refusal {
+            LensLibrary.Refusal(
+                code: LensLibrary.interruptedCode,
+                reason: LensLibrary.interruptedReason(lensID: lensID, cause: cause),
+                repairAction: LensLibrary.resumeRepair, state: .failed)
+        }
+        do {
+            return try await call()
+        } catch let error as URLError {
+            throw interrupted(error.localizedDescription)
+        } catch let error as ClusterClient.ClientError {
+            if case .badResponse(let status, _) = error, status >= 500 { throw interrupted(error.description) }
+            throw error
+        }
+    }
+
     /// Send one lens to the site's library and register its record there.
     ///
     /// In order: the capability, what the site holds, the part manifest, only
@@ -387,7 +592,7 @@ public enum LensLibraryRemote {
             throw LensLibrary.Refusal(
                 code: LensLibrary.unavailableCode,
                 reason: LensLibrary.unavailableReason(server: server),
-                repairAction: LensLibrary.unavailableRepair)
+                repairAction: LensLibrary.pushUnavailableRepair)
         }
         var payload: [String: JSONValue] = [
             "workspaceRoot": .string(root.path), "lensID": .string(lensID),
@@ -397,8 +602,7 @@ public enum LensLibraryRemote {
             plan = try LensLibrary.Plan(try await bridge("lens-record", payload))
         } else {
             guard let limit = capabilities.lensLibrary?.partMaxBytes, limit >= 1 else {
-                throw ExperimentError(
-                    reason: "The engine at \(server) reports a lens library with no usable partMaxBytes.")
+                throw LensLibrary.protocolFailure(.partLimit, server: server)
             }
             payload["partMaxBytes"] = .number(Double(limit))
             plan = try LensLibrary.Plan(try await bridge("lens-push-plan", payload))
@@ -407,14 +611,13 @@ public enum LensLibraryRemote {
         let status = try await client.lensLibraryStatus(sha)
         var result = PushResult(
             lensID: lensID, convertedSHA256: sha, bytes: plan.bytes, alreadyHeld: status.held,
-            adopted: false, uploadedParts: 0, uploadedBytes: 0)
+            adopted: false, uploadedParts: 0, uploadedBytes: 0,
+            recordNonFiniteNumbers: plan.nonFiniteNumbers)
         if status.held, let held = status.bytes, held != plan.bytes {
             throw LensLibrary.Refusal(
-                code: "lensLibraryEntryDiffers",
-                reason: "The site holds \(held) bytes under this lens's hash, and the workspace file "
-                    + "is \(plan.bytes) bytes. Nothing was sent.",
-                repairAction: "Ask the site's operator to inspect that library entry; the workspace "
-                    + "copy is the one its record describes.")
+                code: LensLibrary.entryDiffersCode,
+                reason: LensLibrary.entryDiffersReason(held: held, workspace: plan.bytes),
+                repairAction: LensLibrary.entryDiffersRepair)
         }
         if !status.held, let adopt {
             _ = try await client.lensLibraryAdopt(path: adopt, sha256: sha)
@@ -433,29 +636,23 @@ public enum LensLibraryRemote {
             } else {
                 let indices = Set(plan.parts.map(\.index))
                 guard let missing = begun.missingParts, Set(missing).isSubset(of: indices) else {
-                    throw ExperimentError(
-                        reason: "The engine named parts to send that are not in the manifest it was given.")
+                    throw LensLibrary.protocolFailure(.missingParts)
                 }
                 let wanted = Set(missing)
                 let file = root.appending(path: plan.file)
                 for part in plan.parts where wanted.contains(part.index) {
-                    try await client.lensLibraryPutPart(sha, part: part, of: file)
+                    try await sending(lensID) { try await client.lensLibraryPutPart(sha, part: part, of: file) }
                     result.uploadedParts += 1
                     result.uploadedBytes += part.bytes
                 }
-                let done = try await client.lensLibraryComplete(sha)
+                let done = try await sending(lensID) { try await client.lensLibraryComplete(sha) }
                 guard done.held, done.bytes == plan.bytes else {
-                    throw ExperimentError(
-                        reason: "The engine did not confirm that it holds the whole lens after the "
-                            + "upload. Run the command again: it sends only what the site still lacks.")
+                    throw LensLibrary.protocolFailure(.notConfirmed)
                 }
             }
         }
         let registration = try await client.lensLibraryRegister(recordJSON: plan.recordJSON)
-        guard registration.lensID == lensID else {
-            throw ExperimentError(
-                reason: "The engine registered a record under another lens name than the one sent.")
-        }
+        guard registration.lensID == lensID else { throw LensLibrary.protocolFailure(.otherLens) }
         result.registered = registration.registered
         result.recordChanged = registration.changed
         return result

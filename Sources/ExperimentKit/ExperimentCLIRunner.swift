@@ -369,13 +369,7 @@ public struct ExperimentCLIRunner: Sendable {
             return outcome(for: refusal, namespace: namespace, verb: verb)
 
         } catch let refusal as LensLibrary.Refusal {
-            // A lens, a request that refers to one, or an upload this client
-            // or the server would not take: `refused` (65) with its code and
-            // repair. Human mode keeps exit 1, like every other refusal.
-            return outcome(
-                namespace: namespace, verb: verb, state: .refused, exitCode: 1,
-                failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
-                code: refusal.code, repairAction: refusal.repairAction)
+            return outcome(for: refusal, namespace: namespace, verb: verb)
 
         } catch let refusal as CommandLineUpdate.Refusal {
             // New verbs, so both modes exit with the state's own code.
@@ -837,6 +831,20 @@ public struct ExperimentCLIRunner: Sendable {
     ) -> ExperimentCLIOutcome {
         outcome(
             namespace: namespace, verb: verb, state: .refused, exitCode: 1,
+            failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
+            code: refusal.code, repairAction: refusal.repairAction)
+    }
+
+    /// A lens, a request that refers to one, or an upload this client or the
+    /// server would not take: `refused` (65) with its code and repair. An
+    /// upload that was interrupted, or an engine that broke the contract,
+    /// declined nothing and says so in its state: `failed` (70). Human mode
+    /// keeps exit 1 either way.
+    func outcome(
+        for refusal: LensLibrary.Refusal, namespace: String, verb: String
+    ) -> ExperimentCLIOutcome {
+        outcome(
+            namespace: namespace, verb: verb, state: refusal.state, exitCode: 1,
             failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
             code: refusal.code, repairAction: refusal.repairAction)
     }

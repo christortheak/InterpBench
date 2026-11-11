@@ -60,14 +60,17 @@ public struct ArtifactImportSelection: Sendable {
 
     /// What the import dialog says once the import job has succeeded. A lens
     /// is named from its reviewed files, so importing files the workspace
-    /// already holds as a lens finds that lens and imports nothing (the job's
-    /// result says `existing`): the dialog names it, and does not call it new.
+    /// already holds as a lens finds that lens (the job's result says
+    /// `existing`), and puts its converted file back if it was missing
+    /// (`restored`): the dialog names the lens, and does not call it new.
     public static func completionStatus(
         result: [String: JSONValue]?, workspaceRoot: String, modelID: String, isLens: Bool
     ) -> String {
-        if isLens, result?["existing"] == .bool(true), case .string(let lensID)? = result?["lensID"] {
-            return "This workspace already holds these files as lens \(lensID), so nothing was "
-                + "imported. Refresh the J-lens library for \(modelID) and select that lens."
+        if isLens, let found = LensLibrary.importMessage(for: result) {
+            // The command line's sentence (`LensLibrary.importMessage`): the
+            // lens was already here, and its converted file was put back if
+            // it was missing.
+            return found + " Refresh the lenses for \(modelID) and select that lens."
         }
         return "Imported into \(workspaceRoot). "
             + (isLens

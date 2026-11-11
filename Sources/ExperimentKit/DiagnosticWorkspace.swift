@@ -233,6 +233,30 @@ enum DiagnosticWorkspaceCLI {
         return payload
     }
 
+    /// `science lens-copy` says what is missing in its own words, before the
+    /// family's one sentence for every malformed request. Python twin:
+    /// `diagnostic_commands._lens_copy_arguments`.
+    static func checkLensCopyArguments(_ args: [String]) throws {
+        let usage = "steerlab-cli science lens-copy <lensID> --from <workspace directory>"
+        var positionals = 0
+        var from: String?
+        var index = 1
+        while index < args.count {
+            let word = args[index]
+            if word == "--from" || word == "--plan-sha256" {
+                let value = args.indices.contains(index + 1) && !args[index + 1].hasPrefix("--")
+                    ? args[index + 1] : nil
+                if word == "--from" { from = value }
+                index += value == nil ? 1 : 2
+            } else {
+                if !word.hasPrefix("--") { positionals += 1 }
+                index += 1
+            }
+        }
+        guard positionals == 1 else { throw ExperimentError.malformed(LensLibrary.copyNeedsLens, repair: usage) }
+        guard from?.isEmpty == false else { throw ExperimentError.malformed(LensLibrary.copyNeedsFrom, repair: usage) }
+    }
+
     /// The request the Python action receives for one `science` verb: its
     /// positional under the action's own field name, the value flags of
     /// `flagFields`, and `lensReference` only when `--lens-reference` was
@@ -255,6 +279,7 @@ enum DiagnosticWorkspaceCLI {
     }
 
     static func run(_ invocation: ExperimentCLIInvocation, sink: ExperimentCLISink) async throws -> ExperimentCLIResult {
+        if invocation.verb == "lens-copy" { try checkLensCopyArguments(invocation.args) }
         let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: !["custody", "probe-list", "policy-list"].contains(invocation.verb ?? ""))
         // `science report` owns its `--out` (the page) and its own result sentence.
         if arguments.verb == ScienceReport.action { return try await ScienceReport.run(arguments, root: ExperimentStore.workspaceRoot, sink: sink) }
@@ -275,7 +300,15 @@ enum DiagnosticWorkspaceCLI {
             arguments.verb, payload: try Self.payload(arguments, root: ExperimentStore.workspaceRoot))
         sink.out(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
         var changed = ["package", "import"].contains(arguments.verb)
-        if case .object(let object) = result, case .bool(let value) = object["changed"] { changed = value }
-        return .init(message: "Diagnostic workspace operation completed.", changed: changed, payload: ["response": result])
+        var message = "Diagnostic workspace operation completed."
+        if case .object(let object) = result {
+            if case .bool(let value) = object["changed"] { changed = value }
+            // A lens the workspace already held: say so, and say when its
+            // converted file was put back.
+            if arguments.verb == "artifact-import", let found = LensLibrary.importMessage(for: object) {
+                message = found
+            }
+        }
+        return .init(message: message, changed: changed, payload: ["response": result])
     }
 }
