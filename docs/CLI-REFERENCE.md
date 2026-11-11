@@ -824,7 +824,7 @@ reached.
 | `STEERLAB_SESSION_PROBE_LAPSE_SECONDS` | `180` | |
 | `STEERLAB_SESSION_STARTING_DIAGNOSIS_SECONDS` | `180` | |
 | `STEERLAB_SSE_HEARTBEAT_SECONDS` | `15` | |
-| `STEERLAB_MAX_UPLOAD_BYTES` | 4 GiB | Read per request, so it is tunable without a restart. Also the most one part of a lens sent with `lens-push` may hold, up to 256 MiB (`lensLibrary.partMaxBytes`), so a lens of any size can be sent whatever this limit is. |
+| `STEERLAB_MAX_UPLOAD_BYTES` | 4 GiB | Read per request, so it is tunable without a restart. Also the most one part of a lens sent with `lens-push` may hold, up to 256 MiB (`lensLibrary.partMaxBytes`). An upload has at most 65,536 parts, so the limit must be at least the lens's size divided by 65,536: about 100 KiB for a 6.6 GB lens. |
 
 ### 2.6 Slurm
 

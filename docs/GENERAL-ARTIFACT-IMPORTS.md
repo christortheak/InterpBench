@@ -133,7 +133,10 @@ files in that engine's workspace still finds that lens. A folder under the name
 these files give a lens (the name is a hash over every reviewed file), whose
 record names that lens and agrees with the plan as above, is the lens even with
 no receipt. Under any other name a lens needs its receipt, and a receipt that
-is there must list these files whatever the folder is called.
+is there must list these files whatever the folder is called. So a lens that
+kept an older name (one imported before names followed the files) is not found
+this way: importing its files on the engine makes a second lens there, under
+the name the files give, with its own copy of the bytes.
 
 The lens that is found is checked before the import answers:
 
@@ -149,6 +152,20 @@ The lens that is found is checked before the import answers:
   queued request each hash what they read, as they do a file in the workspace.
   A machine with no lens library, which is every researcher's own machine
   unless one was declared, never takes this path.
+
+  When the lens that is found is one the site was sent (a record with no
+  receipt), the engine does not convert the reviewed files again for this
+  answer. It answers on the record that was sent: that the bytes filed under
+  the record's `converted.sha256` are what these files convert to rests on the
+  sender, whose client verified its own converted file against that record
+  before it sent either. A lens that was imported on the engine has a receipt,
+  and its record is the engine's own conversion.
+
+  One consequence, on a machine whose environment names a lens library that
+  holds a lens's bytes (a site engine's own workspace): a repeated import
+  leaves the file in the library, so `lens-push`, `lens-status`, `lens-copy
+  --from`, and packaging run from that workspace still report the file
+  missing. Work from the researcher's workspace.
 - Its converted file is missing, and no lens library on this machine holds it:
   the import converts the reviewed sources again and puts the file back when it
   has the SHA-256 the record names (`existing: true`, `changed: true`,
@@ -225,10 +242,19 @@ stays its source. Two verbs take it elsewhere without minting another lens:
   qualification's value that could not be scored) is sent as null, and the
   result counts them (`recordNonFiniteNumbers`). `lens-status
   <lensID>` says what the site holds; it only reads, and when the engine does
-  not answer one of its reads it says so and to run it again. A request
+  not answer one of its reads it says so and to run it again. It says whether
+  the site has the lens's record on a runner as on a workbench, and it says
+  when the site's library has an entry under the lens's hash that a newer
+  SteerLab wrote, which this engine cannot use (`newerEntry`). A request
   packaged with `science package
   --lens-reference` then refers to the site's copy and leaves the converted file
-  out. On a site that forbids HTTP transfer, copy the converted file beneath the
+  out. A lens can be referred to only when its record names its converted file
+  in its own lens folder and names the lens as its folder does; otherwise
+  packaging refuses (`lensNotReferable`), and the repair is to import the lens
+  again or restore its record. When the site does not hold a lens that a
+  request refers to, staging is refused as `lensNotInLibrary`, and both clients
+  report the engine's own code, sentence, and repair. On a site that forbids
+  HTTP transfer, copy the converted file beneath the
   engine's run root with the site's own tool and run `lens-push` with `--adopt
   <the path of that copy on the site>`: the site checks the copy against the
   lens's hash, keeps it, and leaves the copy as it is.
