@@ -119,9 +119,12 @@ therefore gives the same lens ID in any workspace and on any machine.
 
 Importing files that a workspace already holds as a lens finds that lens. The
 match is on the lens's `import-receipt.json`: the same files, role for role, with
-the same SHA-256. It therefore also finds a lens imported before this rule, which
-keeps the random ID it was given. A different description (a different intended
-use, say) or a different config file is a different lens with its own name.
+the same SHA-256. The lens's record must agree with it: `source.tensorSHA256` is
+the tensor file's hash and `source.configSHA256` the description's. A receipt
+that lists these files beside a record of other bytes is not this lens. The match
+therefore also finds a lens imported before this rule, which keeps the random ID
+it was given. A different description (a different intended use, say) or a
+different config file is a different lens with its own name.
 
 The lens that is found is checked before the import answers:
 
@@ -135,9 +138,20 @@ The lens that is found is checked before the import answers:
 - Its converted file is there with other bytes, or its record names no converted
   file: the import refuses, names the lens, and says what to move aside. It never
   overwrites a file.
+- The disk cannot take a single file into the lens folder (the file is put back
+  with a hard link, which ExFAT, for one, does not have): the import refuses in
+  the same words, changes nothing, and says to move the lens folder aside and
+  import again. A whole lens folder is published another way, so that works on
+  the same disk.
+
+Both command lines show a refusal with its repair, and so does the app's import
+dialog. The record in the answer is strict JSON: a number in it that is not
+finite is null, and `recordNonFiniteNumbers` counts them.
 
 A folder under the lens's name that holds no such lens is refused at once, before
-anything is copied or converted. One unreadable record elsewhere in
+anything is copied or converted. A symbolic link under that name is refused as a
+link, even when it leads to the lens's folder: a lens is read only from an
+ordinary folder inside the workspace. One unreadable record elsewhere in
 `runs/jlens-lenses/` does not stop an import.
 
 An SAE decoder import still gets a fresh ID every time. No old lens or vector is
@@ -170,19 +184,24 @@ stays its source. Two verbs take it elsewhere without minting another lens:
   copy, and the result's `copyMethod` says which. A lens already present under
   that name is checked, not copied again: intact, nothing changes; its
   converted file missing, that file is put back (`restored: true`); its
-  converted file different, the copy is refused and the file is left alone. A
+  converted file different, the copy is refused and the file is left alone. On
+  a disk that cannot take a single file into the lens folder, the copy refuses
+  and says to move the lens folder aside and copy the whole lens again. A
   different lens under that name is refused. A study names a lens by its ID, so
   when the workspace holds the same lens under another name (the same reviewed
   files), the copy is still made under the origin's name. The review and the
   copy both list those other names, sorted, in `alsoHeldAs` (an empty list when
-  there are none), and the message names them.
+  there are none), and the message names them. Each name has its own record,
+  and so its own qualifications: qualifying the lens under one name does not
+  qualify it under another.
 - **A site.** `steerlab-cli remote lens-push <lensID> --site <id>` (or `steerlab
   runner lens-push <lensID> --runner <url>`) sends the converted file to the
   site's lens library once, in parts that follow its layers, each checked, and
   registers the lens's record there. No part is larger than the engine's
   `lensLibrary.partMaxBytes` (256 MiB at most), so the upload limit does not
-  stand in the way of a large lens. Run again after an interruption, it sends
-  only what is missing. A number in the record that is not finite (a
+  stand in the way of a large lens. Run again after an interruption (a lost
+  connection, or a failure on the engine, at any step), it sends only what is
+  missing. A number in the record that is not finite (a
   qualification's value that could not be scored) is sent as null, and the
   result counts them (`recordNonFiniteNumbers`). `lens-status
   <lensID>` says what the site holds. A request packaged with `science package

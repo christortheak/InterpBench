@@ -237,7 +237,7 @@ def execute(config, *, root, log=print, on_run_created=None):
                   'finiteByLayer': {str(layer): bool(torch.isfinite(maps[f'layer_{layer}']).all()) for layer in layers},
                   'stopping': control.report(),
                   'qualification': 'notPerformed', 'fullDepth': layers == list(range(target)),
-                  'nextStep': 'Review artifact-description.json with science artifact-plan, then artifact-import to add this fit to the lens library. Qualification and held-out assessment are separate.'}
+                  'nextStep': 'Review artifact-description.json with science artifact-plan, then artifact-import to make this fit a lens in the workspace. Qualification and held-out assessment are separate.'}
         write_json(run / 'fit-report.json', report)
         write_json(run / 'artifact-description.json', description)
         (run / 'COMPLETED').write_text('jlens-fit\n')
