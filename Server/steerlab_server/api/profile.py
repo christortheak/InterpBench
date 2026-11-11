@@ -173,10 +173,13 @@ def _lens_library_root(executor: str, metadata_root: str) -> str | None:
     raw = os.environ.get("STEERLAB_LENS_LIBRARY_ROOT")
     declared = _expanded_path(raw)
     if declared:
-        return declared
+        # Absolute, so the one folder is named wherever it is read from: a
+        # job changes directory to its execution root, and a relative value
+        # read there would name a different folder.
+        return os.path.abspath(declared)
     if raw is not None or executor == "slurm" or os.environ.get("SLURM_JOB_ID"):
         return None
-    return os.path.join(metadata_root, "lens-library")
+    return os.path.abspath(os.path.join(metadata_root, "lens-library"))
 
 
 def _choice(name: str, default: str, allowed: set[str]) -> str:
@@ -596,17 +599,21 @@ def validate_profile(profile: ServerProfile | None = None) -> dict[str, Any]:
     # use, so it need not exist yet, but something above it must let this
     # engine create it. A site that names a folder it cannot write would
     # otherwise learn so from `lensLibrary.available: false`, with no reason.
+    # The check says what was probed and nothing more: whether the account
+    # running this engine can write there. Entries are created under that
+    # account's umask, so who else may read them is the site's own setting.
     if os.environ.get("STEERLAB_LENS_LIBRARY_ROOT") and profile.lens_library_root:
         from ..jlens import lens_library
         if lens_library.writable(profile.lens_library_root):
-            add("lensLibraryRoot", "ok", profile.lens_library_root,
-                path=profile.lens_library_root)
+            add("lensLibraryRoot", "ok",
+                f"{profile.lens_library_root} can be written by the account "
+                "running this engine", path=profile.lens_library_root)
         else:
             add("lensLibraryRoot", "warn",
-                f"{profile.lens_library_root} cannot be written, so this engine "
-                "keeps no lenses and every request must carry its lens; create "
-                "the folder, or make it writable for the account that runs the "
-                "engine", path=profile.lens_library_root)
+                f"{profile.lens_library_root} cannot be written by the account "
+                "running this engine, so no lens can be added to it and "
+                "`lensLibrary.available` is false. Create the folder, or make "
+                "it writable for that account", path=profile.lens_library_root)
 
     if profile.executor == "slurm":
         # All four scheduler binaries are site data (WP5 G5, audit c6-c8 —
