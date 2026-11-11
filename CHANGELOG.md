@@ -90,11 +90,11 @@ migration that rewrites frozen bytes.
     is still the researcher's reviewed step, and that import is what gives
     the lens its record. The job's result says whether the lens was kept
     (`lensLibrary`), and a failure to keep it never fails the fit.
-  - **On the engine's own workspace.** An engine that was sent a lens holds
-    its record and no import receipt. Importing the same files in that
-    engine's workspace finds that lens: it writes nothing, makes no second
-    copy of the bytes the library holds, and leaves the site's record as it
-    is.
+  - **Importing a lens where it was sent.** An engine that was sent a lens
+    holds its record and no import receipt. Importing the same files in
+    that engine's workspace finds that lens: it writes nothing, makes no
+    second copy of the bytes the library holds, and leaves the site's
+    record as it is.
   - **Uploads.** The Mac streams an upload from its file and no longer
     reads the whole archive into memory. An upload now waits up to an hour
     for the engine's answer, on both clients. An upload that the engine
@@ -102,8 +102,9 @@ migration that rewrites frozen bytes.
     and referred to with `--lens-reference`.
   - **Engines with no library.** Both clients read `lensLibrary.available`
     first. Where it is not true, they refuse `lens-push`, and the upload of
-    a request that refers to its lens, before anything is sent, and say why
-    in the same words.
+    a request that refers to a lens, before anything is sent, and say why
+    in the same words. A request that names no lens goes to any engine,
+    whichever way it was packaged.
   - **Upgrade notes.** An engine from before this release has no lens
     library, so package requests without `--lens-reference` until the
     engine is updated. A cluster site has no library until its profile
