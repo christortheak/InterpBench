@@ -763,6 +763,38 @@ invents a wire format makes the engine's tests stop being the client's tests.
 | `job_log_tail(id, lines)` | `GET /api/jobs/{id}/log-tail?lines=…` | added with issue #7 → the last `lines` controller lines and the tails of the job's own scheduler output files; returns at once (capability `cluster.jobLogTail`) |
 | `download_bundle(…)` | `GET /api/bundles/download?path=…` | streamed to a caller-supplied temp path, hashed as it arrives |
 
+**Since Phase 2.** The adapter has learned the routes below, each with the work
+that needed it. The discipline is unchanged: the adapter sends each route's own
+keys and invents no wire format.
+
+| adapter method | route | what it sends / gets back |
+|---|---|---|
+| `model_plan(model, revision)` | `GET /api/models/plan?model=…` | `model`, and `revision` when given → the runner's model-cache target and install policy, with the `planSHA256` an install must quote; no hub contact, no weights loaded |
+| `install_model(model, revision, plan_sha256)` | `POST /api/models/install` | `{modelID, revision, planSHA256}` → a durable job. Exactly one POST: a response with no `jobId` is an uncertain outcome to inspect, never a reason to send it again |
+| `reconcile_jobs()` | `POST /api/jobs/reconcile` | `{}` → folds child records for every records directory the runner knows, then runs the shard-merge pass |
+| `resubmit_job(id, walltime)` | `POST /api/jobs/{id}/resubmit` | `{walltime}` when given, and `retryRefusedWalltime` only when asked → resumes a checkpointed or cancelled job, once the job's instrumentation requirements are checked against the runner's capabilities. A request that was sent and never answered is `ResumeOutcomeUnknown`, and nothing is retried |
+| `job_recovery(id)` | `GET /api/jobs/{id}/recovery` | → the controller's ownership evidence and the review token a recovery must quote |
+| `recover_job(id, review_token, reason)` | `POST /api/jobs/{id}/recover` | `{reviewToken, reason, confirmOwnerExited: true}` → records an explicit owner-exited attestation through the existing recovery gate |
+| `stage_diagnostic(path, sha256)` | `POST /api/science/stage` | `{bundlePath, bundleSHA256}` → verifies the bundle and stages isolated execution copies |
+| `scientific_plan(request, …)` | `POST /api/science/plan` | the request itself, or `{request, gpuType, walltime}` when an execution shape is given → the plan to review; every staged file is verified again and nothing executes |
+| `scientific_submit(request, plan_sha256, …)` | `POST /api/science/submit` | `{request, planSHA256}`, plus `gpuType` and `walltime` when given → the job. Exactly one POST, as for `install_model` |
+| `export_diagnostic(id)` | `POST /api/science/jobs/{id}/export` | `{}` → packages a completed job's output for verified local custody; idempotent, so the repair for a lost connection is to ask again |
+| `diagnostic_cleanup_plan(id, custody)` | `POST /api/science/jobs/{id}/cleanup-plan` | `{custody}` → the exact removal to review |
+| `diagnostic_cleanup_apply(id, custody, plan_sha256)` | `POST /api/science/jobs/{id}/cleanup-apply` | `{custody, planSHA256, confirmRemoval: true}` → rechecks the reviewed facts and removes only the named diagnostic output |
+| `lens_library_status(sha)` | `GET /api/lens-library/{sha}` | → whether the runner's lens library holds the file, and the parts of an upload in progress |
+| `lens_library_begin(sha, size, parts)` | `POST /api/lens-library/{sha}/begin` | `{bytes, parts}` → the parts still to send; idempotent for an identical manifest |
+| `lens_library_put_part(sha, part, source)` | `PUT /api/lens-library/{sha}/parts/{index}` | one part's bytes as an octet stream with `Content-Length` and `X-Content-SHA256`, hashed as they are read; a file that changed since the plan stops the upload |
+| `lens_library_complete(sha)` | `POST /api/lens-library/{sha}/complete` | `{}` → the runner hashes the whole file and publishes the entry; safe to repeat |
+| `lens_library_register(record)` | `POST /api/lens-library/register` | `{record}` as strict JSON (a number that is not finite goes as null) → the lens record, in the engine's own lens store |
+| `lens_library_adopt(path, sha256)` | `POST /api/lens-library/adopt` | `{path, sha256}` → the runner hashes a copy already on it and keeps it; the copy is left alone |
+| `lens_record(lens_id)` | `GET /api/jlens/lenses/{lens_id}` | → the engine's record of one lens |
+
+`science_call(operation, action_id, document)` is not in either table because it
+names no route of its own: the method catalog supplies the path, and the
+scientific catalog gate checks that path's role. Both tables are compared with
+the adapter by `test_the_contracts_tabulate_the_routes_the_adapter_speaks`, in
+both directions.
+
 Explicit constructor inputs, and no ambient configuration anywhere in the
 class: `base_url`, `token`, `timeout`, `verify` (TLS policy — `True`, a CA
 bundle path, or an `SSLContext`), plus an optional `http_client` seam and a
@@ -1620,7 +1652,7 @@ name a study **resident in the served workspace**, which a cache does not have.
 |---|---|---|
 | **route-census-completeness** | Every `(method, template)` the **live app object** serves appears in the census — enumerated by walking the router tree, not by grepping the source, so `include_in_schema=False` routes are covered. A new route cannot ship undeclared. | `test_every_route_the_app_serves_is_censused` |
 | **route-census-no-fiction** | The other direction: a censused route that no longer exists fails too, so the table cannot rot into a description of code that is gone. | `test_the_census_has_no_entries_for_routes_that_are_gone`, `…_declares_each_route_exactly_once`, `…_uses_the_methods_and_templates_the_router_declares`, `test_every_entry_carries_a_real_rationale` |
-| **adapter-routes-are-runner-reachable** | Every route the Phase-2 client adapter speaks (§8.1) is censused `runner` or `both` — a narrowing that refused one would break submit-and-bring-evidence-home, which is the runner role's whole purpose. Both directions again: the adapter's **source** is scanned for `/api/` literals, so a new endpoint cannot escape the check. | `test_every_route_the_client_adapter_uses_is_runner_reachable`, `test_the_adapters_endpoint_scan_finds_nothing_undeclared` |
+| **adapter-routes-are-runner-reachable** | Every route the Phase-2 client adapter speaks (§8.1) is censused `runner` or `both` — a narrowing that refused one would break submit-and-bring-evidence-home, which is the runner role's whole purpose. Both directions again: the adapter's **source** is scanned for `/api/` literals, so a new endpoint cannot escape the check. The §8.1 tables are held to the same list, so they name every route the adapter speaks and no other. | `test_every_route_the_client_adapter_uses_is_runner_reachable`, `test_the_adapters_endpoint_scan_finds_nothing_undeclared`, `test_the_contracts_tabulate_the_routes_the_adapter_speaks` |
 | **census-agrees-with-WP-S** | The mutating-by-default classification (`api/app.py`) answers a *different* question about the same table, and the two must not contradict. Every deliberately-open mutating route is censused `workbench` (an open mutating route neither writes nor spends, which is not a shape runner work takes); every mutating route the runner role keeps is token-gated; the two explicitly gated **reads** are runner-reachable. | `test_every_deliberately_open_mutating_route_is_workbench`, `test_every_mutating_runner_route_is_token_gated`, `test_the_read_side_privileged_prefixes_are_runner_reachable` |
 | **runtime-role-authority** | Every workbench operation refuses on a runner; runner/both declarations remain reachable and authentication remains required. | `test_service_authority.py`, `test_the_census_is_the_runtime_authority_source` |
 | **stated-counts-match-the-census** | The facts this section states about the census are read out of this document and compared with it: the count line in §11.1 (the total and each role's share), and the runner reads that §11.3 names as carrying no token gate. The prose cannot fall behind the table without a failure that says which line to edit. | `test_the_portability_contracts_state_the_census_counts`, `test_the_ungated_runner_reads_are_each_named_in_the_contracts` |
@@ -1632,9 +1664,11 @@ which is worthless the moment it silently falls behind the code) with the same
 answer.
 
 The census lives in the installed API package because runtime enforcement now
-reads it. Its declaration bodies match the original census; the relocation AST
-audit against `1954094` excludes only updated docstrings. The adapter remains
-light: it does not import this server-side module.
+reads it. When it moved there, its declaration bodies matched the original
+census: the relocation AST audit against `1954094` excluded only updated
+docstrings. Later changes to the census are held by the gates above, not by
+that audit. The adapter remains light: it does not import this server-side
+module.
 
 ### 11.3 One tension, recorded rather than forced
 

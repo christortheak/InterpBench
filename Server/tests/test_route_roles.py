@@ -1,4 +1,4 @@
-"""The route-ownership census's gate — runner-profile narrowing, step 1.
+"""The route-ownership census's gate.
 
 ``route_roles.CENSUS`` labels every HTTP route with the service role that owns
 it. This file is the mechanism that keeps the label honest, in the shape
@@ -12,8 +12,14 @@ it. This file is the mechanism that keeps the label honest, in the shape
    runner-reachable) and the WP-S privileged classification (which answers a
    different question about the same table, and should not contradict it).
 
-**No behaviour changes here and nothing is restricted.** The census records
-which routes a runner profile *would* keep; it does not keep them. See
+3. **The contracts document, against the census and the adapter.** What
+   ``docs/PORTABILITY-CONTRACTS.md`` states about either is read out of the
+   document and compared, so the prose cannot fall behind the code.
+
+**The census is enforced.** ``service_authority`` reads it at runtime: a
+deployment in the runner role refuses every route censused ``workbench`` and
+every route that is not censused at all, and ``test_service_authority.py``
+holds that refusal. This file keeps the table itself complete and honest. See
 ``docs/PORTABILITY-CONTRACTS.md`` §11.
 """
 
@@ -74,8 +80,8 @@ def test_every_route_the_app_serves_is_censused():
         "workspace switch, concept/manifest writes, server-side freeze, "
         "playground/interactive compute, catalog browsing), or `both` (really "
         "used by both today). Add an entry to route_roles.CENSUS with one line "
-        "of rationale. Nothing is refused because of the label; the label is "
-        "how a later runner profile knows what it may narrow.")
+        "of rationale. The label is enforced: a deployment in the runner role "
+        "refuses a `workbench` route, and refuses an undeclared one.")
 
 
 def test_the_census_has_no_entries_for_routes_that_are_gone():
@@ -356,10 +362,11 @@ def test_the_census_is_the_runtime_authority_source():
 # 5. What the contracts document says about the census
 # ---------------------------------------------------------------------------
 # `docs/PORTABILITY-CONTRACTS.md` §11 states the census's size and names the
-# runner reads that carry no token gate. Both statements fell behind the
-# census once (the document said 133 routes when the census had 166), so they
-# are read out of the document and compared here. The numbers stay in the
-# document alone: this file still pins no literal count.
+# runner reads that carry no token gate, and §8.1 tabulates the routes the
+# adapter speaks. Each statement fell behind the code once (the document said
+# 133 routes when the census had 166), so they are read out of the document
+# and compared here. The numbers stay in the document alone: this file still
+# pins no literal count.
 
 _CONTRACTS = (Path(__file__).resolve().parent.parent.parent
               / "docs" / "PORTABILITY-CONTRACTS.md")
@@ -413,3 +420,25 @@ def test_the_ungated_runner_reads_are_each_named_in_the_contracts():
         "docs/PORTABILITY-CONTRACTS.md §11.3 records the runner reads that "
         f"carry no token gate, and does not name: {unnamed}. Name each one "
         "there, written as the census writes it, and say why it joined.")
+
+
+def test_the_contracts_tabulate_the_routes_the_adapter_speaks():
+    # §8.1 tabulates the adapter's routes, and fell 19 routes behind it. The
+    # document writes a path parameter its own way (`{id}` for the census's
+    # `{job_id}`) and may follow a path with a query string, so both sides
+    # collapse every braced segment and a path ends at its `?`.
+    section = _shape(" ".join(_contracts_section("8.1").split()))
+    tabulated = set(re.findall(
+        r"`(GET|POST|PUT|DELETE|PATCH) (/api/[^`?\s]*)", section))
+    spoken = {(method, _shape(template)) for method, template in _ADAPTER_ROUTES}
+    missing = sorted(f"{method} {path}" for method, path in spoken - tabulated)
+    assert not missing, (
+        "docs/PORTABILITY-CONTRACTS.md §8.1 does not tabulate these routes "
+        f"the client adapter speaks: {missing}. Add a row for each: the "
+        "adapter method, the route, and what it sends and gets back.")
+    # …and the tables name nothing the adapter does not speak.
+    fiction = sorted(f"{method} {path}" for method, path in tabulated - spoken)
+    assert not fiction, (
+        "docs/PORTABILITY-CONTRACTS.md §8.1 tabulates routes the client "
+        f"adapter does not speak: {fiction}. Remove those rows, or add the "
+        "routes to _ADAPTER_ROUTES if the adapter has learned them.")
