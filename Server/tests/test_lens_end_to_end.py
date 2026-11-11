@@ -1028,6 +1028,31 @@ def test_a_lens_the_site_was_sent_is_found_when_its_files_are_imported_in_the_en
     assert sorted(path.name for path in folder.iterdir()) == ['jacobians.safetensors', 'lens.json']
 
 
+# --- a managed local runner, and the lens library its shell declares ---------------
+
+@pytest.mark.parametrize('declared, expected', [(None, 'its own'), ('', 'none'), ('a folder', 'declared')])
+def test_a_managed_runner_honours_the_lens_library_its_shell_declares(tmp_path, monkeypatch, declared, expected):
+    """`steerlab runner serve` builds its engine's environment and sets every other root. The lens library's is
+    honoured as declared, by the engine's one root rule: a folder, empty for no library, and, with nothing
+    declared, a library beside the runner's own records."""
+    from steerlab_server.api.profile import ServerProfile
+    folder = tmp_path / 'site-lenses'
+    layout = {'root': str(tmp_path / 'runner'), 'runs': str(tmp_path / 'runner/runs'),
+              'metadata': str(tmp_path / 'records'), 'jobsDatabase': str(tmp_path / 'records/jobs.sqlite'),
+              'tokenFile': str(tmp_path / 'token')}
+    for name in ('SLURM_JOB_ID', 'STEERLAB_LENS_LIBRARY_ROOT', 'STEERLAB_SERVICE_ROLE', 'STEERLAB_EXECUTOR'):
+        monkeypatch.delenv(name, raising=False)
+    if declared is not None:
+        monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(folder) if declared else '')
+    built = client_cli._runner_environment(layout, '127.0.0.1')
+    assert built.get('STEERLAB_LENS_LIBRARY_ROOT') == {None: None, '': '', 'a folder': str(folder)}[declared]
+    assert (built['STEERLAB_SERVICE_ROLE'], built['STEERLAB_EXECUTOR'], built['STEERLAB_ROOT']) == (
+        'runner', 'local', layout['root'])
+    with environment(built):
+        library = ServerProfile.from_env().lens_library_root
+    assert library == {'its own': str(tmp_path / 'records/lens-library'), 'none': None, 'declared': str(folder)}[expected]
+
+
 # --- one place says which numbers are not finite ---------------------------------
 
 def test_the_engine_and_the_clients_share_one_reading_of_a_number_that_is_not_finite():

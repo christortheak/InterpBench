@@ -3206,6 +3206,16 @@ def _runner_environment(layout: dict, host: str) -> dict:
     minted file), and `STEERLAB_AUTH_TOKEN` is REMOVED: an inherited value
     would silently outrank the file whose path this verb prints, so the
     printed path would name a credential that does not work.
+
+    One root is deliberately NOT set here: `STEERLAB_LENS_LIBRARY_ROOT`, where
+    an engine keeps converted lens files once each. It is honoured as the
+    operator's shell declares it, by the engine's one root rule
+    (`api/profile._lens_library_root`): a folder is this runner's lens
+    library, set and empty means it has none, and unset it keeps one beside
+    its own records (`<metadata>/lens-library`). A lens library holds only
+    bytes filed under their own hash, outside every workspace, so a declared
+    folder cannot put the runner's cache inside the client's tree, and a site
+    may mean several engines to share one.
     """
     env = {**os.environ,
            "STEERLAB_ROOT": layout["root"],
