@@ -1581,9 +1581,13 @@ not this authorization setting.
 |---|---|---|
 | `runner` | Batch execution reached through the bundle protocol, plus what keeps such a deployment alive: bundle upload / inspect / evidence / download, submission, jobs and logs, the scheduler, the model cache. Its artifact root is a **cache**; every input arrives hash-pinned. | `POST /api/bundles/upload`, `POST /api/studies/submit-bundle`, `GET /api/jobs/{job_id}/stream`, `POST /api/models/install`, `POST /api/housekeeping/maintenance` |
 | `workbench` | Interactive serving of a **live, authored** workspace: authoring writes, the workspace switch, concept and manifest writes, server-side freeze, the playground and every synchronous compute the app drives turn by turn, catalog browsing. | `POST /api/authoring/{name}/freeze`, `POST /api/workspace/switch`, `POST /api/generate`, `GET /api/concepts`, `PUT /api/experiment/{name}/manifest` |
-| `both` | Genuinely used by **both roles today**. Identity reads, and the cluster deployment's remote-workbench surface. | `GET /api/info`, `POST /api/experiment/{name}/{verb}`, `POST /api/variants/upload`, the `/api/session` family, the deferred-judging intake |
+| `both` | Genuinely used by **both roles today**. Identity reads, the cluster deployment's remote-workbench surface, managed scientific operations and their method catalog, the lens library, and job recovery. | `GET /api/info`, `POST /api/experiment/{name}/{verb}`, `POST /api/variants/upload`, the `/api/session` family, the deferred-judging intake, `POST /api/science/submit`, the `/api/lens-library` family |
 
-**133 routes: 17 `runner`, 89 `workbench`, 27 `both`.**
+**166 routes: 21 `runner`, 96 `workbench`, 49 `both`.**
+
+That line is read by a test (§11.2, **stated-counts-match-the-census**), which
+fails when it disagrees with the census. Keep its wording when the numbers
+change.
 
 The census is **documentation of TODAY, not aspiration.** Where a cluster
 deployment legitimately serves the Mac app's interactive features, the route is
@@ -1619,6 +1623,7 @@ name a study **resident in the served workspace**, which a cache does not have.
 | **adapter-routes-are-runner-reachable** | Every route the Phase-2 client adapter speaks (§8.1) is censused `runner` or `both` — a narrowing that refused one would break submit-and-bring-evidence-home, which is the runner role's whole purpose. Both directions again: the adapter's **source** is scanned for `/api/` literals, so a new endpoint cannot escape the check. | `test_every_route_the_client_adapter_uses_is_runner_reachable`, `test_the_adapters_endpoint_scan_finds_nothing_undeclared` |
 | **census-agrees-with-WP-S** | The mutating-by-default classification (`api/app.py`) answers a *different* question about the same table, and the two must not contradict. Every deliberately-open mutating route is censused `workbench` (an open mutating route neither writes nor spends, which is not a shape runner work takes); every mutating route the runner role keeps is token-gated; the two explicitly gated **reads** are runner-reachable. | `test_every_deliberately_open_mutating_route_is_workbench`, `test_every_mutating_runner_route_is_token_gated`, `test_the_read_side_privileged_prefixes_are_runner_reachable` |
 | **runtime-role-authority** | Every workbench operation refuses on a runner; runner/both declarations remain reachable and authentication remains required. | `test_service_authority.py`, `test_the_census_is_the_runtime_authority_source` |
+| **stated-counts-match-the-census** | The facts this section states about the census are read out of this document and compared with it: the count line in §11.1 (the total and each role's share), and the runner reads that §11.3 names as carrying no token gate. The prose cannot fall behind the table without a failure that says which line to edit. | `test_the_portability_contracts_state_the_census_counts`, `test_the_ungated_runner_reads_are_each_named_in_the_contracts` |
 
 The walk-and-require-declaration mechanism is deliberately the one
 `Tests/ExperimentKitTests/CheckoutDependencyTests.swift` already uses for the
@@ -1644,9 +1649,12 @@ these routes *without* token mode would be serving job logs to whoever can
 reach the socket. Pinned as an observation by
 `test_the_runner_reads_that_carry_no_token_gate_are_explicitly_censused`, so
 another one cannot join it quietly. The job status and log-tail reads (issue
-#7, `GET /api/jobs/{job_id}/status` and `/log-tail`) joined it deliberately:
-they are the same observation surface as the log stream, answered once
-instead of followed.
+#7, `GET /api/jobs/{job_id}/status` and `GET /api/jobs/{job_id}/log-tail`)
+joined it deliberately: they are the same observation surface as the log
+stream, answered once instead of followed. The model-cache plan read
+(`GET /api/models/plan`) is the sixth: it reports this deployment's model-cache
+target and install policy without contacting the hub or loading weights. The
+test pins all six.
 
 ### 11.4 Preserved execution authority
 

@@ -293,6 +293,16 @@ def test_the_read_side_privileged_prefixes_are_runner_reachable():
             f"`{entry.role.value}`")
 
 
+def _ungated_runner_reads() -> list[str]:
+    """The runner-only reads under ``/api`` that WP-S does not gate."""
+    return sorted(
+        entry.key for entry in CENSUS
+        if entry.role is Role.RUNNER
+        and entry.method == "GET"
+        and entry.path.startswith("/api/")
+        and not request_is_privileged(entry.method, _sample_path(entry.path)))
+
+
 def test_the_runner_reads_that_carry_no_token_gate_are_explicitly_censused():
     # THE TENSION, recorded rather than forced. A runner's job roster, one
     # job's record, and its log stream are the runner's entire observable
@@ -304,12 +314,7 @@ def test_the_runner_reads_that_carry_no_token_gate_are_explicitly_censused():
     # It is worth pinning because a runner profile that narrowed the surface
     # to exactly these routes, on a deployment NOT in token mode, would be
     # serving job logs to whoever can reach the socket.
-    open_reads = sorted(
-        entry.key for entry in CENSUS
-        if entry.role is Role.RUNNER
-        and entry.method == "GET"
-        and entry.path.startswith("/api/")
-        and not request_is_privileged(entry.method, _sample_path(entry.path)))
+    open_reads = _ungated_runner_reads()
     # The status and log-tail reads (issue #7) are the same observation
     # surface as the log stream, answered once instead of followed.
     assert open_reads == [
@@ -345,3 +350,66 @@ def test_the_census_is_the_runtime_authority_source():
     for entry in CENSUS:
         # Literal templates also exercise each method's declaration lookup.
         assert role_for_request(entry.method, entry.path) == entry.role
+
+
+# ---------------------------------------------------------------------------
+# 5. What the contracts document says about the census
+# ---------------------------------------------------------------------------
+# `docs/PORTABILITY-CONTRACTS.md` §11 states the census's size and names the
+# runner reads that carry no token gate. Both statements fell behind the
+# census once (the document said 133 routes when the census had 166), so they
+# are read out of the document and compared here. The numbers stay in the
+# document alone: this file still pins no literal count.
+
+_CONTRACTS = (Path(__file__).resolve().parent.parent.parent
+              / "docs" / "PORTABILITY-CONTRACTS.md")
+
+#: The line in §11.1 that states the census's size, in the wording the
+#: document uses: ``**N routes: N `runner`, N `workbench`, N `both`.**``
+_STATED_COUNTS = re.compile(
+    r"^\*\*(\d+) routes: (\d+) `runner`, (\d+) `workbench`, (\d+) `both`\.\*\*$",
+    re.MULTILINE)
+
+
+def _contracts_section(number: str) -> str:
+    """One numbered section of the contracts document: its heading, up to the
+    next heading at the same depth or above."""
+    lines = _CONTRACTS.read_text(encoding="utf-8").splitlines()
+    heading = re.compile(rf"(#+) {re.escape(number)}[. ]")
+    start = next((index for index, line in enumerate(lines)
+                  if heading.match(line)), None)
+    assert start is not None, (
+        f"docs/PORTABILITY-CONTRACTS.md has no section numbered {number}")
+    depth = len(heading.match(lines[start]).group(1))
+    end = next((index for index in range(start + 1, len(lines))
+                if re.match(rf"#{{1,{depth}}} ", lines[index])), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def test_the_portability_contracts_state_the_census_counts():
+    stated = _STATED_COUNTS.findall(_contracts_section("11.1"))
+    assert len(stated) == 1, (
+        "docs/PORTABILITY-CONTRACTS.md §11.1 should state the census's size "
+        "once, on a line of the form **N routes: N `runner`, N `workbench`, "
+        f"N `both`.** Found {len(stated)} such lines.")
+    documented = tuple(int(number) for number in stated[0])
+    census = (len(CENSUS), len(roles_for(Role.RUNNER)),
+              len(roles_for(Role.WORKBENCH)), len(roles_for(Role.BOTH)))
+    assert documented == census, (
+        "docs/PORTABILITY-CONTRACTS.md §11.1 states {} routes: {} runner, {} "
+        "workbench, {} both. The census has {} routes: {} runner, {} "
+        "workbench, {} both. Edit that line in the document, and read the "
+        "rest of §11 for anything else the changed routes made stale."
+        .format(*documented, *census))
+
+
+def test_the_ungated_runner_reads_are_each_named_in_the_contracts():
+    # Whitespace is collapsed so a route survives the paragraph being
+    # re-wrapped between its method and its path.
+    section = " ".join(_contracts_section("11.3").split())
+    unnamed = [key for key in _ungated_runner_reads()
+               if f"`{key}`" not in section]
+    assert not unnamed, (
+        "docs/PORTABILITY-CONTRACTS.md §11.3 records the runner reads that "
+        f"carry no token gate, and does not name: {unnamed}. Name each one "
+        "there, written as the census writes it, and say why it joined.")
