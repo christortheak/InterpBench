@@ -18,8 +18,9 @@ from a workspace that has the lens. So an entry is created once and never
 edited, there is no delete verb, and a reader that finds no entry falls back
 to exactly what it did before the library existed. A folder under a hash that
 is not a complete entry (storage purged its large file, or a publisher died)
-is set aside once it has been idle, so sending the lens again always works
-and nobody has to remove anything by hand.
+is set aside once it has been idle, and a complete entry whose file no longer
+hashes to its key is set aside when a queued job's check finds that, so
+sending the lens again works and nobody has to remove anything by hand.
 
 Bytes arrive three ways, recorded as an entry's ``origin``:
 
@@ -265,19 +266,37 @@ def held_file(sha):
 def reference(lens_id, sha, *, verify=False):
     """``{lensID, convertedSHA256, bytes}`` for a lens the library holds, or
     ``None``. With ``verify`` (the queued job, once per file) the library's
-    file is hashed and must equal its key, as carried bytes are hashed."""
+    file is hashed and must equal its key, as carried bytes are hashed.
+
+    A file that does not hash to its key is not the lens filed there, and
+    that is definite: the whole file was read. The entry is set aside, so
+    sending the lens again replaces it and nobody has to remove anything. A
+    failure to READ the file is not a mismatch, and sets nothing aside.
+    """
     base = root()
     if base is None or not isinstance(sha, str) or not _KEY.fullmatch(sha):
         return None
-    found = _read_entry(base.resolve(), sha)
+    base = base.resolve()
+    found = _read_entry(base, sha)
     if found is None:
         return None
-    if verify and archives.file_hash(found['path']) != sha:
-        raise LensLibraryRefusal(
-            'lensLibraryEntryCorrupt',
-            f"The lens library's copy of the lens '{lens_id}' no longer matches its SHA-256 ({sha}), so it was not read.",
-            f"Ask the site's operator to remove the folder {sha} from the lens library, then send the lens again with "
-            + _PUSH.format(lens=lens_id) + '.')
+    if verify:
+        try:
+            matches = archives.file_hash(found['path']) == sha
+        except OSError as exc:
+            raise storage_refusal(exc) from exc
+        if not matches:
+            with _locked(sha):
+                left = _set_aside(base, sha)
+            said = f"The lens library's copy of the lens '{lens_id}' no longer matches its SHA-256 ({sha}), so it was not read."
+            if left is None:
+                raise LensLibraryRefusal(
+                    'lensLibraryEntryCorrupt', said + ' It has been set aside, so the lens can be sent again.',
+                    'Send the lens again with ' + _PUSH.format(lens=lens_id) + ', then try the request again.')
+            raise LensLibraryRefusal(
+                'lensLibraryEntryCorrupt', said,
+                f"Ask the site's operator to remove the folder {sha} from the lens library, then send the lens again "
+                'with ' + _PUSH.format(lens=lens_id) + '.')
     return {'lensID': lens_id, 'convertedSHA256': sha, 'bytes': found['bytes']}
 
 
@@ -398,6 +417,23 @@ def _busy(sha):
         f'{STALE_ENTRY_SECONDS // 60} minutes.')
 
 
+def _set_aside(base, sha):
+    """Move the folder under a hash aside, inside the library, to
+    ``.incoming/damaged-<sha>-<token>``: one rename, swept a day later.
+
+    Returns ``None`` when the name is free afterwards, which it also is when
+    another process moved the folder in the same instant. Otherwise returns
+    the error that left a folder under the name, for the caller to say."""
+    target = _under(base, sha)
+    try:
+        incoming = _under(base, INCOMING)
+        incoming.mkdir(parents=True, exist_ok=True)
+        os.rename(target, incoming / f'damaged-{sha}-{secrets.token_hex(8)}')
+    except OSError as exc:
+        return exc if os.path.lexists(target) else None
+    return None
+
+
 def _make_way(base, sha):
     """Before bytes are sent or copied for a hash: deal with a folder under
     that hash that is not a complete entry.
@@ -415,14 +451,14 @@ def _make_way(base, sha):
         return
     if _idle_seconds(target) < STALE_ENTRY_SECONDS:
         raise _busy(sha)
-    incoming = _under(base, INCOMING)
-    incoming.mkdir(parents=True, exist_ok=True)
-    try:
-        os.rename(target, incoming / f'damaged-{sha}-{secrets.token_hex(8)}')
-    except OSError:
-        # Another process moved it aside, or published, in this instant.
-        if target.exists() and _entry(base, sha) is None:
-            raise _busy(sha) from None
+    left = _set_aside(base, sha)
+    if left is None or _entry(base, sha) is not None:
+        return                    # moved aside; or another process published in this instant
+    if isinstance(left, FileNotFoundError):
+        # Another process moved it aside and claimed the name again, in this
+        # instant: that folder is a publisher's, at work right now.
+        raise _busy(sha)
+    raise left                    # the storage would not move it: said as that, not as a busy folder
 
 
 def _publish(base, staged, sha, origin):
@@ -1055,7 +1091,7 @@ def register(document):
 
 # --- a lens fitted here stays here -----------------------------------------------
 
-def keep_fitted(run_directory, execution_root=None):
+def keep_fitted(run_directory):
     """After a fit: convert its output as an import would, and keep the
     converted bytes under the hash that import will record.
 
@@ -1065,11 +1101,11 @@ def keep_fitted(run_directory, execution_root=None):
     directory is written, and no failure here reaches the fit. Returns the
     ``lensLibrary`` block of the job's result.
 
-    Nothing is kept when the library lies inside ``execution_root``, the root
-    the fit ran in: a local engine serving its own workspace already holds
-    the fit there, and a workspace file always wins over the library, so the
-    copy would be a second full lens no reader uses. Nor when the library has
-    no room for it.
+    An engine with no library keeps nothing, and which engines have one is
+    decided in one place (``ServerProfile.lens_library_root``): an engine
+    that serves a researcher's own workspace has none unless one is declared,
+    so a fit there is not copied a second time. Nothing is kept either when
+    the library has no room for it.
     """
     def skipped(reason):
         return {'kept': False, 'convertedSHA256': None, 'reason': reason}
@@ -1081,9 +1117,6 @@ def keep_fitted(run_directory, execution_root=None):
         if not writable(base):
             return skipped('The lens library folder set for this engine cannot be written from the node this fit '
                            'ran on, so the fitted lens stays in its run folder only.')
-        if execution_root is not None and base.resolve().is_relative_to(Path(execution_root).resolve()):
-            return skipped('The lens library lies inside the workspace this fit ran in, which already holds the '
-                           'fit, so no second copy was made.')
         from ..experiment import artifact_imports, artifact_sources
         spec, files = artifact_sources.description(Path(run_directory) / 'artifact-description.json')
         if spec.get('kind') != 'jlens':

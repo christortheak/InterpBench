@@ -461,7 +461,7 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
                                      'reason': 'This fit is one shard of a fitting round: a slice of a lens, not a lens. '
                                                "Only the round's merged lens is offered to the lens library."}
         else:
-            result['lensLibrary'] = lens_library.keep_fitted(result['runDirectory'], root)
+            result['lensLibrary'] = lens_library.keep_fitted(result['runDirectory'])
         try:
             write_json(Path(record), document)
         except OSError:

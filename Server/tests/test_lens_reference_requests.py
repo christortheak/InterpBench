@@ -92,6 +92,16 @@ def library_client():
     return TestClient(app)
 
 
+@pytest.fixture
+def runner(monkeypatch):
+    """The engine is a runner: requests are staged on it, it runs them on its own machine, and with no folder
+    declared it keeps a lens library beside its own records. The fixtures borrowed below otherwise build a
+    workbench, which has no library unless one is declared. Ask for this fixture first, before the engine's
+    profile is read."""
+    monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'runner')
+    monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT', raising=False)
+
+
 # --- a request that carries its lens is the request it always was ----------------
 
 def test_a_request_without_the_flag_is_byte_identical_and_never_asks_for_a_library(managed, monkeypatch):
@@ -130,8 +140,9 @@ def test_a_request_without_the_flag_is_byte_identical_and_never_asks_for_a_libra
 
 # --- a request that refers to its lens -------------------------------------------
 
-def test_a_probe_batch_reads_a_lens_the_site_holds_and_the_request_does_not_carry(managed, monkeypatch):
+def test_a_probe_batch_reads_a_lens_the_site_holds_and_the_request_does_not_carry(runner, managed, monkeypatch):
     root, profile = managed
+    assert profile.lens_library_root == str(root / '.steerlab/lens-library')
     request = probe_request(root)
     lens = root / CONVERTED
     sha, size = digest(lens.read_bytes()), lens.stat().st_size
@@ -198,14 +209,36 @@ def test_a_probe_batch_reads_a_lens_the_site_holds_and_the_request_does_not_carr
     by_hand['planSHA256'] = hashlib.sha256(canonical(by_hand)).hexdigest()
     assert admitted['inputSHA256'] == hashlib.sha256(canonical(by_hand)).hexdigest()
 
-    # The queued job hashes the library's bytes once: a copy that changed after admission is not read.
+    # The queued job hashes the library's bytes once: a copy that changed after admission is not read. The
+    # whole file was hashed, so the mismatch is definite: the entry is set aside, and the repair needs nobody
+    # but the researcher, who sends the lens again.
     held = lens_library.root() / sha / 'jacobians.safetensors'
     original = held.read_bytes()
-    held.write_bytes(bytes([original[-1] ^ 1]) + original[1:-1] + bytes([original[-1] ^ 1]))
+    damaged = original[:-1] + bytes([original[-1] ^ 1])
+    held.write_bytes(damaged)
     assert scientific_execution.plan(staged['request'], profile)['inputSHA256'] == admitted['inputSHA256']
+    runs_before = sorted(path.name for path in (capsule / 'runs').iterdir())
     _, code, record = run_staged(staged, profile, root, monkeypatch, 'changed')
     assert code == 70 and record['status'] == 'failed' and 'runDirectory' not in record['result']
-    assert 'no longer matches its SHA-256' in record['error'] and 'lens-push' in record['error']
+    assert record['error'] == (
+        f"The lens library's copy of the lens '{LENS_ID}' no longer matches its SHA-256 ({sha}), so it was not "
+        'read. It has been set aside, so the lens can be sent again. '
+        f'Send the lens again with `remote lens-push {LENS_ID}` (or `runner lens-push`), then try the request again.')
+    assert sorted(path.name for path in (capsule / 'runs').iterdir()) == runs_before       # nothing was computed
+    aside = list((lens_library.root() / '.incoming').glob(f'damaged-{sha}-*'))
+    assert len(aside) == 1 and not held.parent.exists()
+    assert (aside[0] / 'jacobians.safetensors').read_bytes() == damaged                  # moved, not deleted
+    assert library_client().get(f'/api/lens-library/{sha}').json()['held'] is False
+    response = http.post('/api/science/plan', json=staged['request'])                    # and admission says so
+    assert response.status_code == 409 and response.json()['detail']['code'] == 'lensNotInLibrary'
+    assert response.json()['detail']['repairAction'] == PUSH_REPAIR
+    # Sent again from the researcher's copy: the entry is whole, and the same staged request runs.
+    assert push(library_client(), root / 'moved-away.safetensors')[2].json() == {'held': True, 'bytes': size}
+    assert held.read_bytes() == original
+    assert lens_library.reference(LENS_ID, sha, verify=True) == named[0]
+    _, code, record = run_staged(staged, profile, root, monkeypatch, 'again')
+    assert code == 0 and record['status'] == 'succeeded', record.get('error')
+    assert readings(record['result']) == carried_readings
     # A different size, or no entry at all, is caught at admission, by name.
     held.write_bytes(original + b'x')
     response = http.post('/api/science/plan', json=staged['request'])
@@ -219,14 +252,18 @@ def test_a_probe_batch_reads_a_lens_the_site_holds_and_the_request_does_not_carr
     again = transport.export('referred', jobs, profile)
     assert again['bundleSha256'] == exported['bundleSha256'] and again['entries'] == exported['entries']
     assert any(entry['path'].endswith('/' + batch.MANIFEST) for entry in again['entries'])
-    # An engine with no library says that instead, with the other repair.
-    monkeypatch.setenv('SLURM_JOB_ID', '1')
-    assert transport.export('referred', jobs, profile)['bundleSha256'] == exported['bundleSha256']
-    for call in (lambda: transport.stage(packed['bundlePath'], packed['bundleSha256'], profile),
-                 lambda: scientific_execution.plan(staged['request'], profile)):
-        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
-            call()
-        assert refused.value.code == 'lensLibraryUnavailable' and refused.value.repair_action == UNAVAILABLE_REPAIR
+    # An engine with no library says that instead, with the other repair: a runner inside a scheduler job, a
+    # runner that hands its work to Slurm, and a workbench, none of them with a folder declared.
+    for name, value in (('SLURM_JOB_ID', '1'), ('STEERLAB_EXECUTOR', 'slurm'), ('STEERLAB_SERVICE_ROLE', 'workbench')):
+        with monkeypatch.context() as patched:
+            patched.setenv(name, value)
+            assert lens_library.root() is None
+            assert transport.export('referred', jobs, profile)['bundleSha256'] == exported['bundleSha256']
+            for call in (lambda: transport.stage(packed['bundlePath'], packed['bundleSha256'], profile),
+                         lambda: scientific_execution.plan(staged['request'], profile)):
+                with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+                    call()
+                assert refused.value.code == 'lensLibraryUnavailable' and refused.value.repair_action == UNAVAILABLE_REPAIR
 
 
 def test_the_flag_reaches_the_plan_and_the_archive_through_the_workspace_action(managed):
@@ -286,19 +323,35 @@ def test_a_local_job_is_told_which_lens_library_its_engine_has(setup, monkeypatc
         deadline = time.monotonic() + 5
         while jobs.get(submitted['jobId']).status not in {'failed', 'succeeded'} and time.monotonic() < deadline:
             time.sleep(.01)
+    # A workbench with no folder declared has no library, and its child is told so rather than left to work
+    # it out.
+    monkeypatch.delenv('STEERLAB_SERVICE_ROLE', raising=False)
+    monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT', raising=False)
+    assert profile.lens_library_root is None
     submit(profile)
-    assert told == [{'STEERLAB_LENS_LIBRARY_ROOT': str(root / '.steerlab/lens-library')}]
-    # An engine inside a scheduler allocation with no folder declared has no library. The local
-    # executor drops the scheduler's job id for its child, so the child is told, and cannot guess.
+    assert told == [{'STEERLAB_LENS_LIBRARY_ROOT': ''}]
+    # A runner that runs its work on this machine has one beside its own records.
+    monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'runner')
+    submit(ServerProfile.from_env())
+    assert told[-1] == {'STEERLAB_LENS_LIBRARY_ROOT': str(root / '.steerlab/lens-library')}
+    # Inside a scheduler allocation it has none. The local executor drops the scheduler's job id for its
+    # child, so the child is told, and cannot guess.
     monkeypatch.setenv('SLURM_JOB_ID', '1')
     submit(ServerProfile.from_env())
     assert told[-1] == {'STEERLAB_LENS_LIBRARY_ROOT': ''}
+    # A declared folder is passed on, whatever else is true of the engine.
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(root / 'declared'))
+    for role in ('runner', 'workbench'):
+        monkeypatch.setenv('STEERLAB_SERVICE_ROLE', role)
+        submit(ServerProfile.from_env())
+        assert told[-1] == {'STEERLAB_LENS_LIBRARY_ROOT': str(root / 'declared')}
     monkeypatch.delenv('SLURM_JOB_ID')
+    monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'runner')
     monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', '')
     assert ServerProfile.from_env().lens_library_root is None and lens_library.root() is None
 
 
-def test_an_archive_cannot_claim_a_lens_its_request_does_not_read(managed):
+def test_an_archive_cannot_claim_a_lens_its_request_does_not_read(runner, managed):
     root, profile = managed
     request = probe_request(root)
     lens = root / CONVERTED
@@ -333,7 +386,11 @@ def test_a_readout_and_an_unstaged_request_resolve_a_registered_lens(workspace, 
     monkeypatch.setenv('STEERLAB_METADATA_ROOT', str(site / '.steerlab'))
     monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'workstation')
     monkeypatch.setenv('STEERLAB_EXECUTOR', 'local')
+    # A workbench that serves a workspace of its own, with a lens library declared for it, as a site's is.
+    monkeypatch.delenv('STEERLAB_SERVICE_ROLE', raising=False)
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(tmp_path / 'site-lenses'))
     profile = ServerProfile.from_env()
+    assert lens_library.root() == tmp_path / 'site-lenses'
     client = library_client()
     # Sent from the researcher's workspace: the bytes, then the record as it is on their machine.
     theirs = json.loads((workspace / RECORD).read_text())
@@ -381,15 +438,17 @@ def test_a_readout_and_an_unstaged_request_resolve_a_registered_lens(workspace, 
     assert 'localRequestPath' not in detail['repairAction']
     with pytest.raises(schemas.JLensError, match='missing'):
         lens_store.load_layer(record, 0, root=str(site))
-    # On an engine with no library at all, a missing file is the missing input it always was.
-    monkeypatch.setenv('SLURM_JOB_ID', '1')
+    # On an engine with no library at all (the same workbench, with none declared), a missing file is the
+    # missing input it always was.
+    monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')
+    assert lens_library.root() is None
     with pytest.raises(archives.PathRefusal, match='Required input or output is missing'):
         managed_inputs.plan(request, site, managed_inputs.WHERE_HELD)
 
 
 # --- fix round 1: the plan and the reader agree about where a lens's bytes come from ---
 
-def test_a_record_naming_a_file_outside_the_importers_layout_is_never_answered_by_the_library(managed, tmp_path):
+def test_a_record_naming_a_file_outside_the_importers_layout_is_never_answered_by_the_library(runner, managed, tmp_path):
     """The crafted archive of review finding 1. Its lens record names a hash the library holds and an absolute
     path, existing on the engine's host, that is not a lens folder. Planned from the library and read from that
     path, the job would compute from bytes nobody hashed; so such a record is never planned from the library."""
@@ -432,7 +491,7 @@ def test_a_record_naming_a_file_outside_the_importers_layout_is_never_answered_b
 
 # --- fix round 1: the engine's library, wherever a job or a child is pointed ------
 
-def test_a_job_reads_the_engines_library_and_a_lost_entry_costs_no_result(managed, monkeypatch, tmp_path):
+def test_a_job_reads_the_engines_library_and_a_lost_entry_costs_no_result(runner, managed, monkeypatch, tmp_path):
     import time
     from steerlab_server.api import diagnostic_cleanup as cleanup
     from steerlab_server.api.jobs import DurableJobStore, JobManager
@@ -510,7 +569,7 @@ def test_a_battery_packaged_with_the_flag_is_exported_and_cleaned_up_with_no_lib
     assert not output.exists()
 
 
-def test_the_validation_child_is_told_which_library_the_engine_has(managed, monkeypatch):
+def test_the_validation_child_is_told_which_library_the_engine_has(runner, managed, monkeypatch):
     from steerlab_server.api import managed_validation
     root, _ = managed
     monkeypatch.delenv('STEERLAB_METADATA_ROOT')           # so a child pointed elsewhere would look elsewhere
@@ -526,9 +585,17 @@ def test_the_validation_child_is_told_which_library_the_engine_has(managed, monk
     monkeypatch.setattr(managed_validation.subprocess, 'run', child)
     assert managed_validation.validate(request, elsewhere)['models'] == [{'modelID': 'test/tiny', 'revision': 'a' * 40}]
     assert told == [(str(elsewhere.resolve()), str(root / '.steerlab/lens-library'))]
-    monkeypatch.setenv('SLURM_JOB_ID', '1')                # an engine with no library says so to its child
+    # An engine with no library says so to its child: a runner inside a scheduler job, and a workbench.
+    for name, value in (('SLURM_JOB_ID', '1'), ('STEERLAB_SERVICE_ROLE', 'workbench')):
+        with monkeypatch.context() as patched:
+            patched.setenv(name, value)
+            managed_validation.validate(request, elsewhere)
+            assert told[-1] == (str(elsewhere.resolve()), '')
+    # A declared folder is the one the child is told, on a workbench too.
+    monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'workbench')
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(root / 'declared'))
     managed_validation.validate(request, elsewhere)
-    assert told[-1] == (str(elsewhere.resolve()), '')
+    assert told[-1] == (str(elsewhere.resolve()), str(root / 'declared'))
 
 
 # --- fix round 1: a finished job stays finished ------------------------------------

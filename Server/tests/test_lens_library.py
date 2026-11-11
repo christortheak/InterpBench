@@ -106,12 +106,15 @@ def site(tmp_path, monkeypatch):
     monkeypatch.setenv('STEERLAB_EXECUTOR', 'local')
     # 64 bytes: one 4 x 4 float32 tensor is exactly one part, and the header is split.
     monkeypatch.setenv('STEERLAB_MAX_UPLOAD_BYTES', '64')
-    for name in ('STEERLAB_LENS_LIBRARY_ROOT', 'SLURM_JOB_ID', 'STEERLAB_TRANSFER_METHOD', 'STEERLAB_RUN_ROOT'):
+    for name in ('SLURM_JOB_ID', 'STEERLAB_TRANSFER_METHOD', 'STEERLAB_RUN_ROOT', 'STEERLAB_SERVICE_ROLE'):
         monkeypatch.delenv(name, raising=False)
+    # The site names its library's folder. With none named, only a runner-role engine has one.
+    library = root / '.steerlab/lens-library'
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(library))
     app = FastAPI()
     app.include_router(lens_library_routes.build_router(SimpleNamespace(jobs=None)))
     source = tmp_path / 'researcher' / CANONICAL
-    return SimpleNamespace(root=root, library=root / '.steerlab/lens-library', app=app, client=TestClient(app),
+    return SimpleNamespace(root=root, library=library, app=app, client=TestClient(app),
                            source=source, sha=write_converted(source))
 
 
@@ -137,30 +140,51 @@ def qualification(sha, identifier='q-1', **changes):
 
 # --- where the library is, and what the engine says about it --------------------
 
-def test_the_root_is_named_by_the_site_and_never_guessed_on_a_cluster(tmp_path, monkeypatch):
-    for name in ('STEERLAB_LENS_LIBRARY_ROOT', 'SLURM_JOB_ID'):
-        monkeypatch.delenv(name, raising=False)
+#: Which engines have a lens library. Each row: the folder declared (None = the variable is unset, '' = set and
+#: empty), the service role (None = unset, which is a workbench), the executor, whether the engine is inside a
+#: scheduler job, and what it then has: 'declared', 'default' (<metadata root>/lens-library), or nothing.
+LIBRARY_ROWS = [
+    # Unset: only a runner that runs its work on this machine, outside any scheduler job, makes one for itself.
+    (None, 'runner', 'local', False, 'default'),
+    (None, None, 'local', False, None),              # a workbench: its lenses live in the workspace it serves
+    (None, 'workbench', 'local', False, None),
+    (None, 'not-a-role', 'local', False, None),      # an invalid role is not a runner here, and is not raised here
+    (None, 'Runner', 'local', False, None),
+    (None, 'runner', 'slurm', False, None),          # cluster storage: a folder there is never guessed
+    (None, 'runner', 'local', True, None),           # nor inside a scheduler job
+    (None, None, 'slurm', False, None),
+    # Declared: that folder, on any engine.
+    ('lenses', None, 'local', False, 'declared'),
+    ('lenses', 'workbench', 'local', False, 'declared'),
+    ('lenses', 'runner', 'local', False, 'declared'),
+    ('lenses', 'runner', 'slurm', False, 'declared'),
+    ('lenses', None, 'slurm', True, 'declared'),
+    # Set and empty: none, on any engine (how an engine tells a child it launches that it has none).
+    ('', 'runner', 'local', False, None),
+    ('', None, 'local', False, None),
+    ('', 'runner', 'slurm', False, None),
+]
+
+
+@pytest.mark.parametrize('declared, role, executor, in_job, expected', LIBRARY_ROWS)
+def test_which_engines_have_a_lens_library(tmp_path, monkeypatch, declared, role, executor, in_job, expected):
     monkeypatch.setenv('STEERLAB_ROOT', str(tmp_path))
     monkeypatch.setenv('STEERLAB_METADATA_ROOT', str(tmp_path / 'records'))
-    monkeypatch.setenv('STEERLAB_EXECUTOR', 'local')
-    assert ServerProfile.from_env().lens_library_root == str(tmp_path / 'records/lens-library')
-    # A deployment that runs its work through Slurm has no library until its
-    # site profile names a folder; so has a job, which cannot see its launcher.
-    monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
-    assert ServerProfile.from_env().lens_library_root is None
-    monkeypatch.setenv('STEERLAB_EXECUTOR', 'local')
-    monkeypatch.setenv('SLURM_JOB_ID', '1')
-    assert ServerProfile.from_env().lens_library_root is None
-    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(tmp_path / 'lenses'))
-    assert ServerProfile.from_env().lens_library_root == str(tmp_path / 'lenses')
-    monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
-    assert ServerProfile.from_env().lens_library_root == str(tmp_path / 'lenses')
-    # Set but empty means "no library" wherever it is read: how an engine tells a local child it has none.
-    for executor in ('slurm', 'local'):
-        monkeypatch.setenv('STEERLAB_EXECUTOR', executor)
-        monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', '')
-        monkeypatch.delenv('SLURM_JOB_ID', raising=False)
-        assert ServerProfile.from_env().lens_library_root is None
+    monkeypatch.setenv('STEERLAB_EXECUTOR', executor)
+    monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'controller' if executor == 'slurm' else 'workstation')
+    for name, value in (('STEERLAB_LENS_LIBRARY_ROOT', declared if declared != 'lenses' else str(tmp_path / 'lenses')),
+                        ('STEERLAB_SERVICE_ROLE', role), ('SLURM_JOB_ID', '1' if in_job else None)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    folder = {'declared': str(tmp_path / 'lenses'), 'default': str(tmp_path / 'records/lens-library'), None: None}[expected]
+    assert ServerProfile.from_env().lens_library_root == folder
+    assert lens_library.root() == (Path(folder) if folder else None)
+    if role in (None, 'runner', 'workbench'):          # the capabilities themselves refuse an invalid role
+        snapshot = capability_snapshot()
+        assert snapshot['lensLibrary']['available'] is (folder is not None)
+        assert snapshot['workspaceRootPolicy']['lensLibraryRoot'] == folder
 
 
 def test_capabilities_say_whether_lenses_are_kept_and_how_large_a_part_may_be(site, monkeypatch):
@@ -183,17 +207,31 @@ def test_capabilities_say_whether_lenses_are_kept_and_how_large_a_part_may_be(si
     monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(site.root / 'not-yet-made' / 'lenses'))
     (check,) = [c for c in validate_profile()['checks'] if c['name'] == 'lensLibraryRoot']
     assert check['status'] == 'ok' and capability_snapshot()['lensLibrary']['available'] is True
+    # With no folder declared, an engine serving a researcher's own workspace (the default role) has none,
+    # and says so; `profile validate` has nothing to check.
     monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')
     assert not [c for c in validate_profile()['checks'] if c['name'] == 'lensLibraryRoot']
-    monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
-    monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'controller')
     snapshot = capability_snapshot()
-    assert snapshot['lensLibrary']['available'] is False
-    assert snapshot['workspaceRootPolicy']['lensLibraryRoot'] is None
+    assert snapshot['lensLibrary'] == {'schemaVersion': 1, 'available': False, 'partMaxBytes': 268435456}
+    assert snapshot['workspaceRootPolicy']['lensLibraryRoot'] is None and snapshot['serviceRole'] == 'workbench'
+    # A runner has one beside its own records.
+    monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'runner')
+    snapshot = capability_snapshot()
+    assert snapshot['lensLibrary']['available'] is True and snapshot['serviceRole'] == 'runner'
+    assert snapshot['workspaceRootPolicy']['lensLibraryRoot'] == str(site.library)
 
 
-def test_an_engine_without_a_library_refuses_every_route_with_the_repair(site, monkeypatch):
-    monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
+@pytest.mark.parametrize('engine', ['a workbench with none declared', 'a Slurm deployment with none declared',
+                                    'told it has none'])
+def test_an_engine_without_a_library_refuses_every_route_with_the_repair(site, monkeypatch, engine):
+    if engine == 'told it has none':
+        monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', '')
+        monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'runner')
+    else:
+        monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')
+        if engine.startswith('a Slurm'):
+            monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'runner')
+            monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
     plan = part_plan(site.source, 64)
     calls = [site.client.get(f'/api/lens-library/{site.sha}'),
              site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan),
@@ -214,7 +252,7 @@ def test_an_engine_without_a_library_refuses_every_route_with_the_repair(site, m
 
 def test_a_job_is_given_the_library_only_when_the_deployment_has_one(tmp_path, monkeypatch):
     from steerlab_server.api.executors import SlurmExecutor, SlurmResources, render_slurm_script
-    for name in ('STEERLAB_LENS_LIBRARY_ROOT', 'SLURM_JOB_ID'):
+    for name in ('STEERLAB_LENS_LIBRARY_ROOT', 'SLURM_JOB_ID', 'STEERLAB_SERVICE_ROLE'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv('STEERLAB_ROOT', str(tmp_path))
     monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
@@ -222,6 +260,10 @@ def test_a_job_is_given_the_library_only_when_the_deployment_has_one(tmp_path, m
     without = SlurmExecutor().create_bundle(str(tmp_path / 'one'), ['python', '-c', 'pass'], resources=resources)
     assert 'STEERLAB_LENS_LIBRARY_ROOT' not in without.env
     assert 'LENS_LIBRARY' not in render_slurm_script(without)
+    with monkeypatch.context() as patched:                 # a runner that hands its work to Slurm has none either
+        patched.setenv('STEERLAB_SERVICE_ROLE', 'runner')
+        runner = SlurmExecutor().create_bundle(str(tmp_path / 'runner'), ['python', '-c', 'pass'], resources=resources)
+        assert runner.env == without.env
     monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(tmp_path / 'lenses'))
     given = SlurmExecutor().create_bundle(str(tmp_path / 'two'), ['python', '-c', 'pass'], resources=resources)
     assert given.env['STEERLAB_LENS_LIBRARY_ROOT'] == str(tmp_path / 'lenses')
@@ -714,7 +756,7 @@ def test_a_workspace_file_always_wins_and_the_library_is_never_hashed(site, monk
                                          str(site.root)) == str(site.root.resolve() / 'runs/jlens-lenses/custom-lens-unknown/jacobians.safetensors')
     # Losing the library loses no record: the lens is still listed, and says its bytes are missing.
     record = lens_store.resolve(LENS_ID, str(site.root))
-    monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
+    monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')       # an engine with no library at all
     assert artifact_paths.converted_file(LENS_ID, CANONICAL, str(site.root)) == str(canonical)
     with pytest.raises(schemas.JLensError, match='missing'):
         lens_store.load_layer(record, 0, root=str(site.root))
@@ -845,6 +887,40 @@ def test_an_unfinished_folder_that_is_still_changing_is_refused_before_a_byte_is
     assert lens_library.STALE_ENTRY_SECONDS == 15 * 60
 
 
+def test_an_idle_unfinished_folder_that_cannot_be_moved_is_said_as_that_and_not_as_a_busy_one(site, monkeypatch):
+    folder, incoming = site.library / site.sha, site.library / '.incoming'
+    folder.mkdir(parents=True)
+    incoming.mkdir()
+    idle(folder, lens_library.STALE_ENTRY_SECONDS + 1)
+    begin = lambda: site.client.post(f'/api/lens-library/{site.sha}/begin', json=part_plan(site.source, 64))  # noqa: E731
+    incoming.chmod(0o555)                                  # the storage will not take the folder set aside
+    try:
+        response = begin()
+    finally:
+        incoming.chmod(0o755)
+    assert response.status_code == 409, response.text
+    detail = refusal(response)
+    assert detail['code'] == 'lensLibraryStorage'
+    assert detail['reason'] == "The engine's storage refused the request (Permission denied)."
+    assert str(site.root) not in response.text and 'Errno' not in response.text
+    assert folder.is_dir() and not list(incoming.iterdir())             # nothing moved, nothing begun
+    # Another engine process moved the folder aside and claimed the name again, all in this instant: the
+    # folder now under the name is a publisher's, at work, and that is what "busy" says.
+    rename = os.rename
+
+    def beaten(source, target):
+        rename(source, incoming / f'damaged-{site.sha}-by-another-process')
+        os.mkdir(source)
+        raise FileNotFoundError(errno.ENOENT, 'No such file or directory', str(source))
+    with monkeypatch.context() as patched:
+        patched.setattr(lens_library.os, 'rename', beaten)
+        response = begin()
+    assert response.status_code == 409 and refusal(response)['code'] == 'lensLibraryEntryBusy'
+    # Left alone and idle, it makes way.
+    idle(folder, lens_library.STALE_ENTRY_SECONDS + 1)
+    assert begin().status_code == 200
+
+
 def test_an_entry_that_cannot_be_read_just_now_is_never_taken_for_an_unfinished_one(site):
     sha = push(site.client, site.source)[0]
     entry = site.library / sha
@@ -864,6 +940,118 @@ def test_an_entry_that_cannot_be_read_just_now_is_never_taken_for_an_unfinished_
     assert sorted(path.name for path in entry.iterdir()) == ['entry.json', 'jacobians.safetensors']
     assert not list((site.library / '.incoming').iterdir())
     assert site.client.get(f'/api/lens-library/{sha}').json()['held'] is True
+
+
+# --- fix round 2: an entry whose bytes are no longer the lens ---------------------
+
+SEND_AGAIN = f'Send the lens again with `remote lens-push {LENS_ID}` (or `runner lens-push`), then try the request again.'
+
+
+def damage(entry):
+    """Change one byte of an entry's file and none of its size: only a hash can tell."""
+    file = entry / 'jacobians.safetensors'
+    data = file.read_bytes()
+    file.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+    return file.read_bytes()
+
+
+def test_an_entry_that_no_longer_hashes_to_its_key_is_set_aside_and_the_lens_is_sent_again(site):
+    sha = push(site.client, site.source)[0]
+    entry, data = site.library / sha, site.source.read_bytes()
+    whole = {'lensID': LENS_ID, 'convertedSHA256': sha, 'bytes': len(data)}
+    assert lens_library.reference(LENS_ID, sha, verify=True) == whole
+    damaged = damage(entry)
+    # Staging and admission check that the entry exists and its size. They hash nothing and set nothing aside.
+    assert lens_library.reference(LENS_ID, sha) == whole
+    lens_library.require_held([whole])
+    assert site.client.get(f'/api/lens-library/{sha}').json()['held'] is True
+    assert not list((site.library / '.incoming').iterdir())
+    # The queued job's check reads the whole file, so a mismatch is definite: the entry is moved aside.
+    with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+        lens_library.reference(LENS_ID, sha, verify=True)
+    assert refused.value.code == 'lensLibraryEntryCorrupt' and refused.value.status == 409
+    assert str(refused.value) == (f"The lens library's copy of the lens '{LENS_ID}' no longer matches its SHA-256 "
+                                  f'({sha}), so it was not read. It has been set aside, so the lens can be sent again.')
+    assert refused.value.repair_action == SEND_AGAIN
+    (aside,) = (site.library / '.incoming').iterdir()
+    assert aside.name.startswith(f'damaged-{sha}-') and not entry.exists()
+    assert (aside / 'jacobians.safetensors').read_bytes() == damaged          # moved in one piece, not deleted
+    assert site.client.get(f'/api/lens-library/{sha}').json()['held'] is False
+    with pytest.raises(lens_library.LensLibraryRefusal) as refused:           # what admission now says, by name
+        lens_library.require_held([whole])
+    assert refused.value.code == 'lensNotInLibrary'
+    # Nobody removed anything. Sent again, every part is wanted, and the entry is whole.
+    _, begun, done = push(site.client, site.source)
+    assert begun == {'held': False, 'missingParts': [part['index'] for part in part_plan(site.source, 64)['parts']]}
+    assert done.json() == {'held': True, 'bytes': len(data)}
+    assert (entry / 'jacobians.safetensors').read_bytes() == data
+    assert lens_library.reference(LENS_ID, sha, verify=True) == whole
+    # What was set aside is swept a day later, like any other private folder.
+    idle(aside, lens_library.STALE_STAGING_SECONDS + 60)
+    damage(entry)
+    with pytest.raises(lens_library.LensLibraryRefusal):
+        lens_library.reference(LENS_ID, sha, verify=True)
+    push(site.client, site.source)
+    assert not aside.exists() and len(list((site.library / '.incoming').iterdir())) == 1
+
+
+def test_a_file_that_cannot_be_read_is_not_a_mismatch_and_nothing_is_set_aside(site, monkeypatch):
+    from steerlab_server.experiment import diagnostic_archives as archives
+    sha = push(site.client, site.source)[0]
+    entry = site.library / sha
+    whole = {'lensID': LENS_ID, 'convertedSHA256': sha, 'bytes': site.source.stat().st_size}
+
+    def refused_by_storage():
+        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+            lens_library.reference(LENS_ID, sha, verify=True)
+        assert str(site.root) not in str(refused.value) and 'Errno' not in str(refused.value)
+        assert 'operator' in refused.value.repair_action and 'lens-push' not in refused.value.repair_action
+        return refused.value.code, str(refused.value)
+    (entry / 'jacobians.safetensors').chmod(0)             # the storage will not let it be read at this moment
+    try:
+        assert refused_by_storage() == ('lensLibraryStorage', "The engine's storage refused the request (Permission denied).")
+    finally:
+        (entry / 'jacobians.safetensors').chmod(0o644)
+    with monkeypatch.context() as patched:                 # or the read fails part-way
+        def failing(path):
+            raise OSError(errno.EIO, 'Input/output error', str(path))
+        patched.setattr(archives, 'file_hash', failing)
+        assert refused_by_storage() == ('lensLibraryStorage', "The engine's storage refused the request (Input/output error).")
+    # Nothing was set aside, either time: the entry is whole, and read once it can be.
+    assert sorted(path.name for path in entry.iterdir()) == ['entry.json', 'jacobians.safetensors']
+    assert not list((site.library / '.incoming').iterdir())
+    assert lens_library.reference(LENS_ID, sha, verify=True) == whole
+
+
+def test_an_entry_that_cannot_be_moved_aside_is_left_where_it_is_and_the_operator_is_asked(site, monkeypatch):
+    sha = push(site.client, site.source)[0]
+    entry = site.library / sha
+    damaged = damage(entry)
+    site.library.chmod(0o555)                              # the library's folder will not give up the entry
+    try:
+        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+            lens_library.reference(LENS_ID, sha, verify=True)
+    finally:
+        site.library.chmod(0o755)
+    assert refused.value.code == 'lensLibraryEntryCorrupt'
+    assert str(refused.value) == (f"The lens library's copy of the lens '{LENS_ID}' no longer matches its SHA-256 "
+                                  f'({sha}), so it was not read.')
+    assert refused.value.repair_action == (
+        f"Ask the site's operator to remove the folder {sha} from the lens library, then send the lens again with "
+        f'`remote lens-push {LENS_ID}` (or `runner lens-push`).')
+    assert (entry / 'jacobians.safetensors').read_bytes() == damaged and not list((site.library / '.incoming').iterdir())
+    # Another engine process moved it aside in the same instant: the name is free, which is all the repair needs.
+    rename = os.rename
+
+    def beaten(source, target):
+        rename(source, site.library / '.incoming' / f'damaged-{sha}-by-another-process')
+        raise FileNotFoundError(errno.ENOENT, 'No such file or directory', str(source))
+    with monkeypatch.context() as patched:
+        patched.setattr(lens_library.os, 'rename', beaten)
+        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+            lens_library.reference(LENS_ID, sha, verify=True)
+    assert refused.value.repair_action == SEND_AGAIN and 'It has been set aside' in str(refused.value)
+    assert not entry.exists() and push(site.client, site.source)[2].json()['held'] is True
 
 
 # --- fix round 1: a run root reached through a link -------------------------------

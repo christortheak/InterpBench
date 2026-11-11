@@ -7,10 +7,11 @@ fit's own record is written, reads the run folder without writing to it, and a
 failure is only reported. A request can then refer to the imported lens, and
 the site already holds what it needs.
 
-The site here keeps its library where a real site does, outside the workspace
-it serves. An engine whose library lies inside the workspace a fit ran in (a
-local engine serving its own workspace) keeps nothing: the workspace already
-holds the fit.
+The site here declares its library, as a real site does, outside the workspace
+it serves. Which engines have a library when none is declared is decided in
+one place (`ServerProfile.lens_library_root`): a runner that runs its work on
+its own machine does, and keeps its fits; an engine that serves a researcher's
+own workspace does not, and its fits stay in their run folders only.
 """
 import json
 import os
@@ -41,7 +42,7 @@ def site(fitting, monkeypatch, tmp_path_factory):
     monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'workstation')
     monkeypatch.setenv('STEERLAB_EXECUTOR', 'local')
     monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(library))
-    for name in ('SLURM_JOB_ID', 'STEERLAB_RUN_ROOT'):
+    for name in ('SLURM_JOB_ID', 'STEERLAB_RUN_ROOT', 'STEERLAB_SERVICE_ROLE'):
         monkeypatch.delenv(name, raising=False)
     return root, config, ServerProfile.from_env(), library
 
@@ -75,9 +76,9 @@ def test_a_fit_is_kept_under_the_hash_its_import_records_and_a_request_can_refer
     seen = {}
     keep = lens_library.keep_fitted
 
-    def observed(run_directory, execution_root=None):
+    def observed(run_directory):
         seen['before'] = files_of(run_directory)         # the run folder as the fit left it
-        return keep(run_directory, execution_root)
+        return keep(run_directory)
     monkeypatch.setattr(lens_library, 'keep_fitted', observed)
     result = fit(root, config, profile)
     assert result['promptsFitted'] == 3
@@ -159,48 +160,74 @@ def test_a_copy_that_cannot_be_made_never_fails_the_fit_or_touches_its_files(sit
     description['lens']['layers']['0'] = 'layer_9'
     (broken / 'artifact-description.json').write_text(json.dumps(description))
     before = files_of(broken)
-    refused = lens_library.keep_fitted(broken, root)
+    refused = lens_library.keep_fitted(broken)
     assert refused['kept'] is False and 'layer_9' in refused['reason'] and files_of(broken) == before
 
     # Not enough room: said, and nothing is converted or written.
     with monkeypatch.context() as patched:
         patched.setattr(lens_library.shutil, 'disk_usage', lambda path: type('usage', (), {'free': 10})())
         patched.setattr(artifact_imports, 'convert_lens', lambda *args: pytest.fail('converted with no room for it'))
-        short = lens_library.keep_fitted(fitted, root)
+        short = lens_library.keep_fitted(fitted)
     assert short['kept'] is False and '10 bytes free' in short['reason'] and 'the fit itself is unaffected' in short['reason']
     assert not list((library / '.incoming').iterdir())
 
 
-def test_the_reason_a_fit_is_not_kept_says_which_of_three_things_is_true(site, monkeypatch, tmp_path_factory):
+def test_which_engines_keep_a_fit_and_what_the_others_say(site, monkeypatch, tmp_path_factory):
     root, config, profile, library = site
     request = {'operation': 'jlens-fit', 'parameters': {'config': config}}
     plan = scientific_execution.plan(request, profile)
+    default = root / '.steerlab/lens-library'
+    none_set = 'No folder is set for a lens library on this engine, so the fitted lens stays in its run folder only.'
 
-    def reason(name):
+    def block(name):
         code, output = execute(root, plan, name)
         assert code == 0 and output['status'] == 'succeeded'
-        kept = output['result']['lensLibrary']
+        return output['result']['lensLibrary']
+
+    def reason(name):
+        kept = block(name)
         assert kept['kept'] is False and kept['convertedSHA256'] is None
         return kept['reason']
-    # No folder is set (a scheduler job that was given none).
+    # No folder is declared from here on. A workbench (the default role) serves a researcher's own workspace,
+    # which already holds the fit: it has no library, so no second copy is made, and none is created for it.
     monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')
+    assert reason('workbench') == none_set
+    monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'workbench')
+    assert reason('workbench-named') == none_set
+    # A runner inside a scheduler job that was given no folder, and one that hands its work to Slurm.
+    monkeypatch.setenv('STEERLAB_SERVICE_ROLE', 'runner')
     monkeypatch.setenv('SLURM_JOB_ID', '1')
-    assert reason('none') == ('No folder is set for a lens library on this engine, so the fitted lens stays in its '
-                              'run folder only.')
+    assert reason('scheduler') == none_set
     monkeypatch.delenv('SLURM_JOB_ID')
-    # A folder is set, and cannot be written from where the fit ran.
+    monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
+    assert reason('slurm') == none_set
+    monkeypatch.setenv('STEERLAB_EXECUTOR', 'local')
+    # Told it has none (as a launcher tells its child): none, even on a runner.
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', '')
+    assert reason('told') == none_set
+    assert not default.exists() and not library.exists()
+    # A runner that runs its work on this machine keeps the fit beside its own records. That folder lies
+    # inside the root the fit ran in, and the fit is kept all the same: the role decides, not the location.
+    monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')
+    assert ServerProfile.from_env().lens_library_root == str(default)
+    kept = block('runner')
+    assert kept['kept'] is True and kept['reason'] is None
+    assert json.loads((default / kept['convertedSHA256'] / 'entry.json').read_bytes())['origin'] == 'fitted'
+    assert not library.exists()
+    # A folder is set, and cannot be written from where the fit ran: said as that, on either role.
     blocked = tmp_path_factory.mktemp('blocked') / 'a-file'
     blocked.write_text('not a folder')
     monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(blocked / 'lenses'))
-    assert reason('unwritable') == ('The lens library folder set for this engine cannot be written from the node this '
-                                    'fit ran on, so the fitted lens stays in its run folder only.')
-    # The library lies inside the workspace the fit ran in (a local engine serving its own workspace): the
-    # workspace already holds the fit, and a workspace file always wins, so a second full copy is not made.
-    monkeypatch.delenv('STEERLAB_LENS_LIBRARY_ROOT')
-    assert ServerProfile.from_env().lens_library_root == str(root / '.steerlab/lens-library')
-    assert reason('inside') == ('The lens library lies inside the workspace this fit ran in, which already holds the '
-                                'fit, so no second copy was made.')
-    assert not (root / '.steerlab/lens-library').exists() and not library.exists()
+    for role in ('runner', 'workbench'):
+        monkeypatch.setenv('STEERLAB_SERVICE_ROLE', role)
+        assert reason('unwritable-' + role) == (
+            'The lens library folder set for this engine cannot be written from the node this fit ran on, so the '
+            'fitted lens stays in its run folder only.')
+    # A declared folder is used on a workbench too.
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(library))
+    declared = block('declared')
+    assert declared == {'kept': True, 'convertedSHA256': kept['convertedSHA256'], 'reason': None}
+    assert (library / kept['convertedSHA256'] / 'jacobians.safetensors').is_file()
 
 
 def test_a_relative_library_folder_names_one_folder_wherever_the_job_changes_directory(site, monkeypatch, tmp_path_factory):

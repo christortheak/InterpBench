@@ -154,21 +154,32 @@ def _expanded_path(value: str | None) -> str | None:
 
 
 def _lens_library_root(executor: str, metadata_root: str) -> str | None:
-    """The lens library's folder, or ``None`` when this deployment has none.
+    """The lens library's folder, or ``None`` when this engine has none.
 
-    ``STEERLAB_LENS_LIBRARY_ROOT`` names it (a site profile renders the
-    variable from its ``lensLibrary`` storage role). Without it, a deployment
-    that runs its work through Slurm has no library: cluster storage has
-    quotas and purge rules only the site knows, so a folder there is never
-    guessed. The same holds inside a scheduler job, which starts with only the
-    variables its bundle carries and cannot tell which deployment launched it.
-    Anywhere else the library sits beside this engine's own records, in
-    ``<metadata root>/lens-library``.
+    - ``STEERLAB_LENS_LIBRARY_ROOT`` set to a folder: that folder, on any
+      engine (a site profile renders the variable from its ``lensLibrary``
+      storage role).
+    - Set but empty: none, on any engine. An engine sets it that way for a
+      process it launches on the same machine, so the child answers as its
+      launcher does (the local executor drops the scheduler's job id, which
+      the last rule would otherwise have read).
+    - Unset: ``<metadata root>/lens-library``, and only on an engine whose
+      service role is ``runner`` (``STEERLAB_SERVICE_ROLE=runner``), that runs
+      its work on this machine, and that is not itself inside a scheduler
+      job. A runner receives staged requests and holds no workspace of its
+      own, so it is where a lens sent once is worth keeping.
 
-    The variable set but empty means "no library", whatever the executor. An
-    engine sets it that way for a process it launches on the same machine, so
-    the child answers as its launcher does (the local executor drops the
-    scheduler's job id, which the rule above would otherwise have read).
+    Everything else has none unless one is declared. A workbench engine, the
+    default role, serves a researcher's own workspace: its lenses already
+    live there, a workspace file always wins, and a library it made for
+    itself would only collect second copies. A deployment that runs its work
+    through Slurm is on cluster storage, whose quotas and purge rules only
+    the site knows, so a folder there is never guessed; the same holds inside
+    a scheduler job, which starts with only the variables its bundle carries.
+
+    The role is read here without judging it: anything other than ``runner``
+    is not a runner for this rule, and an invalid role is reported where
+    roles are enforced (``service_authority``).
     """
     raw = os.environ.get("STEERLAB_LENS_LIBRARY_ROOT")
     declared = _expanded_path(raw)
@@ -177,7 +188,10 @@ def _lens_library_root(executor: str, metadata_root: str) -> str | None:
         # job changes directory to its execution root, and a relative value
         # read there would name a different folder.
         return os.path.abspath(declared)
-    if raw is not None or executor == "slurm" or os.environ.get("SLURM_JOB_ID"):
+    if raw is not None:
+        return None
+    runner = os.environ.get("STEERLAB_SERVICE_ROLE") == "runner"
+    if not runner or executor == "slurm" or os.environ.get("SLURM_JOB_ID"):
         return None
     return os.path.abspath(os.path.join(metadata_root, "lens-library"))
 
