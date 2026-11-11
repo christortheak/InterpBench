@@ -634,3 +634,192 @@ def test_a_job_whose_record_says_succeeded_is_succeeded_whatever_became_of_its_p
         time.sleep(.01)
     assert job.status == 'succeeded' and job.error is None and not job.cancelled
     assert job.result['promptsFitted'] == 3 and job.result['runDirectory'].endswith('runs/finished')
+
+
+def test_a_job_whose_record_says_failed_is_failed_even_if_its_process_exited_cleanly(setup, monkeypatch):
+    """The record is the truth about the work in both directions. The real child exits 70 unless its record says
+    succeeded, so this pair needs a stand-in: a record that says failed, from a process that exits 0."""
+    import sys
+    import time
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    root, request, profile = setup
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    script = ('import json, sys; from pathlib import Path; '
+              'Path(sys.argv[1]).write_text(json.dumps({"status": "failed", "error": "The lens was lost.", '
+              '"result": {"runDirectory": sys.argv[2]}}))')
+    real_run = scientific_execution.LocalExecutor.run
+
+    def child(self, command, **kwargs):
+        return real_run(self, [sys.executable, '-c', script, command[-2], str(root / 'runs/unfinished')], **kwargs)
+    monkeypatch.setattr(scientific_execution.LocalExecutor, 'run', child)
+    submitted = scientific_execution.submit(request, scientific_execution.plan(request, profile)['planSHA256'],
+                                            profile=profile, jobs=jobs)
+    job = jobs.get(submitted['jobId'])
+    deadline = time.monotonic() + 20
+    while job.status not in {'succeeded', 'failed', 'cancelled'} and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert job.status == 'failed' and 'The lens was lost.' in job.error
+    assert job.result['runDirectory'].endswith('runs/unfinished')       # what the record holds is still kept
+
+
+# --- fix round 3: a job reads what its plan hashed, and nothing else ---------------
+
+def different_lens(source, target):
+    """A converted lens file with the same layers and shapes as another, and different numbers: what a
+    different lens under the same name looks like on a host."""
+    from safetensors.numpy import load_file, save_file
+    save_file({name: (value * -1.5 + 0.25).astype(value.dtype) for name, value in load_file(str(source)).items()},
+              str(target))
+    assert Path(target).stat().st_size == Path(source).stat().st_size
+    assert digest(Path(target).read_bytes()) != digest(Path(source).read_bytes())
+
+
+def test_a_job_reads_a_lens_its_plan_took_from_the_library_there_and_nowhere_else(runner, managed, monkeypatch, tmp_path):
+    """Review 2, finding 1. The lens record names an absolute path in the importer's layout, and on the engine's
+    host that path exists and holds OTHER bytes. The plan takes the lens from the library and hashes it there.
+    Whatever then becomes of the library's entry, the job reads the library's file for the planned hash or
+    stops, by name: it never computes from the file that path names."""
+    from steerlab_server.experiment import managed_methods
+    from steerlab_server.jlens import artifact_paths
+    root, profile = managed
+    request = probe_request(root)
+    lens = root / CONVERTED
+    assert json.loads((root / RECORD).read_text())['converted']['path'] == str(lens)   # absolute, on this host
+    sha, size = digest(lens.read_bytes()), lens.stat().st_size
+    named = [{'lensID': LENS_ID, 'convertedSHA256': sha, 'bytes': size}]
+    honest = tmp_path / 'the-lens.safetensors'
+    shutil.copy(lens, honest)
+
+    carried = diagnostic_inputs.plan(request, root)
+    packed = diagnostic_inputs.package(request, root, root / 'runs/carried.tar.gz', carried['planSHA256'])
+    seen = {}
+    execute = managed_methods.execute
+
+    def then(action=lambda: None):
+        """Run `action` after the job has verified its inputs and before its method reads anything."""
+        def hooked(operation, config, execution_root, **kwargs):
+            seen['pinned'] = artifact_paths.pinned_library_lenses()
+            action()
+            return execute(operation, config, execution_root, **kwargs)
+        monkeypatch.setattr(managed_methods, 'execute', hooked)
+    then()
+    _, code, record = run_staged(transport.stage(packed['bundlePath'], packed['bundleSha256'], profile),
+                                 profile, root, monkeypatch, 'carried')
+    assert code == 0 and seen['pinned'] == {}               # a carried lens is read where it always was
+    carried_readings = readings(record['result'])
+
+    referred = diagnostic_inputs.plan(request, root, lens_reference=True)
+    packed = diagnostic_inputs.package(request, root, root / 'runs/referred.tar.gz', referred['planSHA256'], lens_reference=True)
+    push(library_client(), lens)
+    staged = transport.stage(packed['bundlePath'], packed['bundleSha256'], profile)
+    capsule = Path(staged['executionRoot'])
+    held = (lens_library.root() / sha / 'jacobians.safetensors').resolve()
+    # On this host, the path the record names now holds another lens: the same shapes, different numbers.
+    different_lens(honest, lens)
+
+    # Outside a job the reader answers from the library, not from that path, although the path exists.
+    assert artifact_paths.converted_file(LENS_ID, str(lens), str(capsule)) == str(held)
+    # With the entry held, the job reads the lens: its readings are the carried run's.
+    admitted, code, record = run_staged(staged, profile, root, monkeypatch, 'held')
+    assert code == 0 and record['status'] == 'succeeded', record.get('error')
+    assert seen['pinned'] == {LENS_ID: sha} and artifact_paths.pinned_library_lenses() == {}
+    assert readings(record['result']) == carried_readings
+
+    lost = (f"The lens library no longer holds the lens '{LENS_ID}' (converted SHA-256 {sha}), which this job's "
+            'plan took from it. The job stopped, and read the lens from nowhere else. '
+            f'Send the lens again with `remote lens-push {LENS_ID}` (or `runner lens-push`), then run the request again.')
+
+    def set_aside_by_another_job():
+        data = held.read_bytes()
+        held.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+        with pytest.raises(lens_library.LensLibraryRefusal, match='has been set aside'):
+            lens_library.reference(LENS_ID, sha, verify=True)
+    for name, loss in (('removed', lambda: shutil.rmtree(held.parent)), ('set-aside', set_aside_by_another_job)):
+        # The entry goes after this job hashed it and before its method reads a layer.
+        then(loss)
+        _, code, record = run_staged(staged, profile, root, monkeypatch, name)
+        assert code == 70 and record['status'] == 'failed', record
+        assert record['error'] == lost
+        assert seen['pinned'] == {LENS_ID: sha} and artifact_paths.pinned_library_lenses() == {}
+        # The run folder was made before the lens was needed. Its own record says the run failed, and why, and
+        # it holds no reading of any prompt.
+        unfinished = Path(record['result']['runDirectory'])
+        ledger = json.loads((unfinished / batch.MANIFEST).read_text())
+        assert record['result']['partial'] is True and ledger['status'] == 'failed' and ledger['totals']['prompts'] == 0
+        assert 'no longer holds the lens' in ledger['error']
+        assert not list(unfinished.rglob(probe.TOPK_CSV)) and not list(unfinished.rglob(probe.TRAJECTORY_CSV))
+        assert not held.exists()
+        assert push(library_client(), honest)[2].json() == {'held': True, 'bytes': size}
+
+    # The staged record is edited after the job verified it, to name another file altogether. The job still
+    # reads the library's file for the hash its plan named.
+    staged_record = capsule / RECORD
+    original = staged_record.read_bytes()
+    elsewhere = tmp_path / 'elsewhere' / 'another.safetensors'
+    elsewhere.parent.mkdir()
+    different_lens(honest, elsewhere)
+
+    def edit_the_record():
+        document = json.loads(original)
+        document['converted']['path'] = str(elsewhere)
+        staged_record.write_text(json.dumps(document))
+    then(edit_the_record)
+    _, code, record = run_staged(staged, profile, root, monkeypatch, 'edited')
+    assert code == 0 and record['status'] == 'succeeded', record.get('error')
+    assert json.loads(staged_record.read_bytes())['converted']['path'] == str(elsewhere)
+    assert readings(record['result']) == carried_readings
+    staged_record.write_bytes(original)
+
+    # The pin names the PLANNED hash. A record that says another hash, one the library also holds, changes
+    # nothing for a pinned job; unpinned, the reader goes by the record as it always did.
+    other_sha = push(library_client(), elsewhere)[0]
+    document = json.loads(original)
+    document['converted']['sha256'] = other_sha
+    staged_record.write_text(json.dumps(document))
+    artifact_paths.pin_library_lenses(named)
+    try:
+        assert artifact_paths.converted_file(LENS_ID, str(lens), str(capsule)) == str(held)
+        assert artifact_paths.converted_file(LENS_ID, 'any/other/reference.safetensors', str(capsule)) == str(held)
+        # The planner's own containment test is not answered from the pin.
+        assert artifact_paths.converted_file(LENS_ID, str(lens), str(capsule), library=False) == str(lens)
+        assert artifact_paths.converted_file('custom-lens-other', str(lens), str(capsule)) == str(lens)
+    finally:
+        artifact_paths.unpin_library_lenses()
+    assert artifact_paths.converted_file(LENS_ID, str(lens), str(capsule)) == str(
+        (lens_library.root() / other_sha / 'jacobians.safetensors').resolve())
+    staged_record.write_bytes(original)
+
+
+def test_a_record_that_names_its_file_outside_the_importers_layout_cannot_be_referred_to(managed):
+    """Review 2, finding 4. Such a record could be packaged with `--lens-reference`, and the site could never
+    serve it: staging refused it, late, with a sentence about something else. It is refused at packaging."""
+    root, _ = managed
+    record = json.loads((root / RECORD).read_text())
+    file = root / 'request.json'
+    for moved in ('custom/candidate.safetensors', f'runs/jlens-lenses/{LENS_ID}/renamed.safetensors'):
+        (root / moved).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(root / CONVERTED, root / moved)
+        (root / RECORD).write_text(json.dumps({**record, 'converted': {**record['converted'], 'path': moved}}))
+        request = probe_request(root)
+        file.write_text(json.dumps(request))
+        # Carried, it is the request it always was.
+        carried = diagnostic_inputs.plan(request, root)
+        assert moved in [entry['path'] for entry in carried['files']] and 'libraryLenses' not in carried
+        for call in (lambda: diagnostic_inputs.plan(request, root, lens_reference=True),
+                     lambda: managed_inputs.plan(request, root, managed_inputs.REFERRED),
+                     lambda: workspace_action('input-plan', {'workspaceRoot': str(root), 'requestFile': str(file),
+                                                             'lensReference': True})):
+            with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+                call()
+            assert refused.value.code == 'lensNotReferable'
+            assert str(refused.value) == (
+                f"The lens '{LENS_ID}' cannot be referred to: its record (`lens.json`) does not name its converted "
+                f'file as `jacobians.safetensors` in its own lens folder (`runs/jlens-lenses/{LENS_ID}/`), where an '
+                'import puts it, and a site keeps and serves a lens only under that layout.')
+            assert refused.value.repair_action == (
+                'Package the request without `--lens-reference`, so it carries the lens, or import the lens again '
+                'and then package with `--lens-reference`.')
+    # A record in the layout, relative or absolute, is referred to as before.
+    for path in (CONVERTED, str(root / CONVERTED)):
+        (root / RECORD).write_text(json.dumps({**record, 'converted': {**record['converted'], 'path': path}}))
+        assert [lens['lensID'] for lens in diagnostic_inputs.plan(probe_request(root), root, lens_reference=True)['libraryLenses']] == [LENS_ID]

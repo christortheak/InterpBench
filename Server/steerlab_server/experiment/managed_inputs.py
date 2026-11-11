@@ -71,6 +71,20 @@ def inventory(operation, config, root, *, lens_reference=CARRIED, referred=None,
         if not selected.is_relative_to(root): raise archives.Refusal('Managed lenses require converted tensors in the workspace lens library.')
         relative = selected.relative_to(root).as_posix()
         if lens_reference is REFERRED:
+            if not artifact_paths.library_eligible(value, converted['path']):
+                # The same rule the site applies. A reference to this record
+                # could never be served: the site answers from its library
+                # only for a record in the importer's layout, so the request
+                # would be packaged here and refused there, about something
+                # else. Said here, where the repair is.
+                from ..jlens.lens_library import LensLibraryRefusal
+                raise LensLibraryRefusal(
+                    'lensNotReferable',
+                    f"The lens '{value}' cannot be referred to: its record (`lens.json`) does not name its converted "
+                    f'file as `jacobians.safetensors` in its own lens folder (`runs/jlens-lenses/{value}/`), where '
+                    'an import puts it, and a site keeps and serves a lens only under that layout.',
+                    'Package the request without `--lens-reference`, so it carries the lens, or import the lens '
+                    'again and then package with `--lens-reference`.')
             # The checks a carried file passes (an ordinary file in this
             # workspace whose bytes are the record's), without listing it.
             archives.parts(relative)

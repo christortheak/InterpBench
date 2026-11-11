@@ -88,7 +88,11 @@ def workspace_file(root, relative):
 
 
 @input_hashes.operation
-def input_plan(request, root, *, verify_library=False):
+def input_plan(request, root, *, verify_library=False, library_lenses=None):
+    """``library_lenses``, when a list is passed, receives the lenses this
+    plan took from the lens library (the captured closure's ``libraryLenses``),
+    so the queued job can pin its readers to them without the admitted plan
+    gaining a field."""
     request = request_document(request)
     p = request['parameters']
     from ..experiment import managed_methods, managed_inputs
@@ -101,6 +105,8 @@ def input_plan(request, root, *, verify_library=False):
         # library's file is checked by existence and size here, and hashed
         # once on the queued job (`verify_library`).
         captured = managed_inputs.plan(request, root, managed_inputs.WHERE_HELD, verify_library)
+        if library_lenses is not None:
+            library_lenses.extend(captured.get('libraryLenses') or [])
         validated = managed_validation.validate(request, root)
         result = {'request': request, 'root': str(Path(root).resolve()), 'inputSHA256': digest(captured),
                 'models': validated['models'], 'effectiveConfig': validated['effectiveConfig'],
@@ -295,11 +301,13 @@ def submit(request, expected, *, profile, jobs, registry=None, execution_capsule
                                             env={'STEERLAB_LENS_LIBRARY_ROOT': profile.lens_library_root or ''},
                                             should_cancel=lambda: job.cancelled)
                 record = records / (job.id + '.json')
-                finished = False
+                finished, failure = False, None
                 if record.exists():
                     document = json.loads(record.read_text())
                     job.result.update(document.get('result', {}))
                     finished = document.get('status') == 'succeeded'
+                    if document.get('status') == 'failed':
+                        failure = document.get('error') or 'The diagnostic child recorded a failure; inspect its retained submission record.'
                 if finished:
                     # The child's record is the truth about the work. Once it
                     # says succeeded, what became of the process afterwards
@@ -314,6 +322,11 @@ def submit(request, expected, *, profile, jobs, registry=None, execution_capsule
                     return job.result
                 if proc.returncode:
                     raise RuntimeError(proc.stderr.strip() or f'Diagnostic child exited {proc.returncode}; inspect its retained submission record.')
+                if failure:
+                    # The record is the truth about the work in this direction
+                    # too: one that says failed is a failed job, even from a
+                    # child that exited 0.
+                    raise RuntimeError(proc.stderr.strip() or failure)
                 return job.result
             job = jobs.submit('science:' + reviewed['request']['operation'], work,
                               requested_resources={'executor': 'local', 'resumable': False})
@@ -359,6 +372,8 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
     os.environ['STEERLAB_RUN_ROOT'] = str(Path(root) / 'runs')
     os.environ['STEERLAB_LENS_LIBRARY_ROOT'] = library_root or ''
     os.chdir(root)
+    from ..jlens import artifact_paths
+    artifact_paths.unpin_library_lenses()      # nothing is pinned until this job has verified its own inputs
     directory = Path(packet).parent
     result = {'scientificPlan': reviewed, 'resumable': False,
               'recordsDirectory': str(Path(record).parent), 'submissionDirectory': str(directory)}
@@ -389,9 +404,16 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
                 raise ScientificRefusal('Staged archive request differs from the queued plan.')
         # The queued job hashes a lens taken from the lens library once, here,
         # as it hashes the inputs its execution root carries.
-        current = input_plan(reviewed['request'], root, verify_library=True)
+        taken = []
+        current = input_plan(reviewed['request'], root, verify_library=True, library_lenses=taken)
         if current['inputSHA256'] != reviewed['inputSHA256']:
             raise ScientificRefusal('Inputs changed while queued; diagnostic refused before model loading.')
+        # The plan digests the hash of each lens it took from the library, so
+        # from here the job reads each of those lenses from the library's file
+        # for that hash, and from nowhere else. If the library loses one while
+        # the job runs, the job stops and says so; it never falls back to
+        # whatever the lens record's own path names on this host.
+        artifact_paths.pin_library_lenses(taken)
         p = current['request']['parameters']
         if current.get('compute') != 'cpu':
             from ..experiment import runtime_hardware
@@ -467,6 +489,7 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         except OSError:
             pass
     os.chdir(prior_cwd)
+    artifact_paths.unpin_library_lenses()
     for key, value in prior_environment.items():
         if value is None: os.environ.pop(key, None)
         else: os.environ[key] = value

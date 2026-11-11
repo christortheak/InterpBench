@@ -31,7 +31,45 @@ def in_workspace(path, root):
     return path.is_relative_to(Path(root).resolve()) and path.is_file()
 
 
+#: The lenses the job running in this process took from the lens library, by
+#: lens ID, each with the hash its plan named. Empty outside a queued job.
+_PINNED: dict = {}
+
+
+def pin_library_lenses(lenses):
+    """For the rest of this job, read these lenses from the lens library and
+    from nowhere else. ``lenses`` is the ``libraryLenses`` of the plan the
+    queued job has just verified (``scientific_execution.execute_packet``):
+    each lens it took from the library, and the hash it hashed there.
+
+    A job's plan digests those hashes, so the job must compute from those
+    bytes. Without the pin the reader resolves again on every layer load, and
+    an entry the library lost in the meantime (set aside, purged) would send
+    it to whatever the record's own path names on this host, unhashed.
+    """
+    _PINNED.clear()
+    _PINNED.update({lens['lensID']: lens['convertedSHA256'] for lens in lenses})
+
+
+def unpin_library_lenses():
+    """The job has ended: nothing is pinned."""
+    _PINNED.clear()
+
+
+def pinned_library_lenses():
+    """``{lensID: convertedSHA256}`` for the lenses pinned in this process."""
+    return dict(_PINNED)
+
+
 def converted_file(lens_id, reference, root=None, *, library=True):
+    if library and lens_id in _PINNED:
+        # This job's plan took the lens from the lens library under this hash.
+        # Every read is of the library's file for THAT hash: not the record's
+        # path, not the workspace, and not a hash read again from a record
+        # that may have changed since the plan. A library that no longer
+        # holds it stops the job, by name, with the repair.
+        from . import lens_library
+        return lens_library.pinned_file(lens_id, _PINNED[lens_id])
     base = Path(root or paths.project_root()).resolve()
     source = Path(reference)
     # Only the importer's canonical layout is relocatable. Arbitrary external

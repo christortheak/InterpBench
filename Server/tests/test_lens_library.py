@@ -10,11 +10,14 @@ workspace, and every way a path or a key could reach outside the library.
 import errno
 import hashlib
 import json
+import multiprocessing
 import os
+import shutil
 import stat
 import struct
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -878,7 +881,7 @@ def test_an_unfinished_folder_that_is_still_changing_is_refused_before_a_byte_is
         assert detail['code'] == 'lensLibraryEntryBusy' and 'being published right now' in detail['reason']
         assert detail['repairAction'].startswith('Try again in a few minutes.')
     # Nothing was begun or copied, and the folder was left to whoever is filling it.
-    assert not (site.library / '.incoming').exists() and list(folder.iterdir()) == []
+    assert not list((site.library / '.incoming').iterdir()) and list(folder.iterdir()) == []
     # A little short of idle is still busy; idle, it makes way.
     idle(folder, lens_library.STALE_ENTRY_SECONDS - 5)
     assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).status_code == 409
@@ -904,6 +907,14 @@ def test_an_idle_unfinished_folder_that_cannot_be_moved_is_said_as_that_and_not_
     assert detail['reason'] == "The engine's storage refused the request (Permission denied)."
     assert str(site.root) not in response.text and 'Errno' not in response.text
     assert folder.is_dir() and not list(incoming.iterdir())             # nothing moved, nothing begun
+    # The same when the move itself is what the storage refuses.
+    def refused_by_storage(source, target):
+        raise PermissionError(errno.EACCES, 'Permission denied', str(source))
+    with monkeypatch.context() as patched:
+        patched.setattr(lens_library.os, 'rename', refused_by_storage)
+        response = begin()
+    assert response.status_code == 409 and refusal(response)['code'] == 'lensLibraryStorage', response.text
+    assert 'being published' not in response.text and folder.is_dir() and not list(incoming.iterdir())
     # Another engine process moved the folder aside and claimed the name again, all in this instant: the
     # folder now under the name is a publisher's, at work, and that is what "busy" says.
     rename = os.rename
@@ -934,6 +945,14 @@ def test_an_entry_that_cannot_be_read_just_now_is_never_taken_for_an_unfinished_
             assert detail['code'] == 'lensLibraryStorage' and 'Permission denied' in detail['reason']
             assert str(site.root) not in response.text and 'Errno' not in response.text
         assert lens_library.held_file(sha) is None          # a reader is simply not answered
+        # A plan, a staging, and a pinned job are refused as the storage's failure, typed, never a bare error.
+        whole = {'lensID': LENS_ID, 'convertedSHA256': sha, 'bytes': site.source.stat().st_size}
+        for call in (lambda: lens_library.reference(LENS_ID, sha), lambda: lens_library.require_held([whole]),
+                     lambda: lens_library.pinned_file(LENS_ID, sha)):
+            with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+                call()
+            assert refused.value.code == 'lensLibraryStorage' and str(site.root) not in str(refused.value)
+        assert lens_library.holds([whole]) is False
     finally:
         (entry / 'entry.json').chmod(0o644)
     # Nothing was set aside: the entry is whole, and held again once it can be read.
@@ -1145,18 +1164,33 @@ def test_an_upload_folder_with_no_plan_or_no_working_files_starts_clean(site, mo
 def test_two_engine_processes_on_one_library_never_show_an_error_number_or_a_path(site, tmp_path):
     """Two engines on one library folder share no lock. Each child here is one engine process sending the same
     lens over the routes; whichever loses a race is answered plainly, and the entry is whole."""
+    from steerlab_server.experiment import diagnostic_archives as archives
     plain = {'lensUploadIncomplete', 'lensUploadNotBegun', 'lensUploadBusy', 'lensLibraryEntryBusy'}
     for attempt in range(8):
         source = tmp_path / f'forked-{attempt}.safetensors'
         sha = write_converted(source, seed=100 + attempt)
         data, plan = source.read_bytes(), part_plan(source, 64)
         ready, go = os.pipe()
+        # Both engines are held at the moment each is about to give its upload folder its name, so each has
+        # seen that no upload exists and built its own: the two collide there in every attempt, not by luck.
+        together = multiprocessing.get_context('fork').Barrier(2)
         children = []
         for number in range(2):
             pid = os.fork()
             if pid == 0:
                 status = 1
                 try:
+                    publish, waited = archives.publish_directory, []
+
+                    def collide(source_folder, target):
+                        if Path(target).parent.name == '.incoming' and not waited:
+                            waited.append(True)
+                            try:
+                                together.wait(timeout=20)
+                            except threading.BrokenBarrierError:
+                                pass
+                        return publish(source_folder, target)
+                    archives.publish_directory = collide
                     os.read(ready, 1)                      # both start together
                     client, seen = TestClient(site.app), []
                     begun = client.post(f'/api/lens-library/{sha}/begin', json=plan)
@@ -1166,6 +1200,8 @@ def test_two_engine_processes_on_one_library_never_show_an_error_number_or_a_pat
                         seen.append((f'part {index}', sent.status_code, sent.text))
                     done = client.post(f'/api/lens-library/{sha}/complete', json={})
                     seen.append(('complete', done.status_code, done.text))
+                    # Each engine must have reached the collision, or the test proved nothing.
+                    seen.insert(0, ('reached the upload folder', 200 if waited else 500, ''))
                     (tmp_path / f'outcome-{attempt}-{number}.json').write_text(json.dumps(seen))
                     status = 0
                 finally:
@@ -1305,3 +1341,499 @@ def test_added_qualifications_go_in_date_order_after_what_the_site_has(site):
                      json={'record': record_for(site.sha, qualifications=[later, held, earlier])})
     assert [q.qualificationID for q in lens_store.resolve(LENS_ID, str(site.root)).qualifications] == [
         'q-site', 'q-october-01', 'q-october-20']
+
+
+# --- fix round 3: an upload's plan file -------------------------------------------
+
+def urls(sha):
+    return SimpleNamespace(status=f'/api/lens-library/{sha}', begin=f'/api/lens-library/{sha}/begin',
+                           complete=f'/api/lens-library/{sha}/complete')
+
+
+@pytest.mark.parametrize('kind', ['empty', 'not JSON', 'a list', 'no parts', 'no schema version',
+                                  "another lens's plan", 'parts that do not cover the file'])
+def test_an_upload_whose_plan_file_is_not_a_plan_starts_clean_and_no_route_answers_from_inside_it(site, kind):
+    plan, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    everything = [part['index'] for part in plan['parts']]
+    assert site.client.post(url.begin, json=plan).status_code == 200
+    assert send_part(site.client, site.sha, plan, data, 0).status_code == 200
+    manifest = site.library / '.incoming' / site.sha / 'manifest.json'
+    stored = json.loads(manifest.read_bytes())
+    assert stored == {'schemaVersion': 1, 'convertedSHA256': site.sha, **plan}
+    manifest.write_bytes({                                  # a write cut short, or storage that dropped it
+        'empty': b'', 'not JSON': b'{"bytes": ', 'a list': b'[]', 'no parts': b'{"bytes": 3}',
+        'no schema version': json.dumps({k: v for k, v in stored.items() if k != 'schemaVersion'}).encode(),
+        "another lens's plan": json.dumps({**stored, 'convertedSHA256': 'e' * 64}).encode(),
+        'parts that do not cover the file': json.dumps({**stored, 'parts': stored['parts'][:-1]}).encode()}[kind])
+    idle(manifest.parent, 3600)                             # however long ago: it is not "another sender at work"
+    assert site.client.get(url.status).json() == {'held': False, 'bytes': None, 'receivedParts': None}
+    for response in (send_part(site.client, site.sha, plan, data, 1), site.client.post(url.complete, json={})):
+        assert response.status_code == 409, response.text
+        detail = refusal(response)
+        assert detail['code'] == 'lensUploadNotBegun'
+        assert detail['reason'] == f'No upload is in progress for {site.sha}: none was begun, or it was discarded.'
+    # The next `begin` starts it clean, at once, and the lens then arrives whole.
+    again = site.client.post(url.begin, json=plan)
+    assert again.status_code == 200 and again.json() == {'held': False, 'missingParts': everything}, again.text
+    assert json.loads(manifest.read_bytes()) == stored and list((manifest.parent / 'received').iterdir()) == []
+    assert push(site.client, site.source)[2].json() == {'held': True, 'bytes': len(data)}
+
+
+def test_an_uploads_plan_reaches_storage_before_the_upload_gets_its_name(site, monkeypatch):
+    from steerlab_server.experiment import diagnostic_archives as archives
+    plan = part_plan(site.source, 64)
+    synced, named = set(), []
+    fsync, publish = os.fsync, archives.publish_directory
+
+    def recorded(descriptor):
+        synced.add(os.fstat(descriptor).st_ino)
+        return fsync(descriptor)
+
+    def published(source, target):
+        source = Path(source)
+        named.append({'target': Path(target).name, 'plan synced': os.stat(source / 'manifest.json').st_ino in synced,
+                      'folder synced': os.stat(source).st_ino in synced,
+                      'plan': json.loads((source / 'manifest.json').read_bytes())['bytes']})
+        return publish(source, target)
+    monkeypatch.setattr(lens_library.os, 'fsync', recorded)
+    monkeypatch.setattr(archives, 'publish_directory', published)
+    assert site.client.post(urls(site.sha).begin, json=plan).status_code == 200
+    assert named == [{'target': site.sha, 'plan synced': True, 'folder synced': True, 'plan': plan['bytes']}]
+
+
+# --- fix round 3: a part, or a completion, that outlives its upload ----------------
+
+def split_last(plan, data):
+    """The same file planned another way: every part but the last unchanged, the last cut in two."""
+    last = plan['parts'][-1]
+    half, start = last['bytes'] // 2, last['offset']
+    return {'bytes': plan['bytes'], 'parts': plan['parts'][:-1] + [
+        {'index': last['index'], 'offset': start, 'bytes': half, 'sha256': digest(data[start:start + half])},
+        {'index': last['index'] + 1, 'offset': start + half, 'bytes': last['bytes'] - half,
+         'sha256': digest(data[start + half:start + last['bytes']])}]}
+
+
+def test_a_late_part_of_a_replaced_upload_is_refused_and_the_new_upload_is_left_alone(site):
+    first, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    second = split_last(first, data)
+    upload = site.library / '.incoming' / site.sha
+    assert site.client.post(url.begin, json=first).status_code == 200
+    # Sender A's part 0 is on its way: expected, spooled, and not yet kept.
+    expected = lens_library.expect_part(site.sha, '0', first['parts'][0]['sha256'])
+    body = data[:expected['bytes']]
+    with lens_library.spool(site.sha) as spooled:
+        spooled.write_bytes(body)
+        # Meanwhile A's upload goes idle, and sender B replaces it and delivers two parts.
+        idle(upload, lens_library.IDLE_UPLOAD_SECONDS + 1)
+        assert site.client.post(url.begin, json=second).json() == {
+            'held': False, 'missingParts': [part['index'] for part in second['parts']]}
+        for index in (1, 2):
+            assert send_part(site.client, site.sha, second, data, index).status_code == 200
+        # A's part 0 arrives at last. It is the same part in both plans, but its bytes went with A's upload.
+        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+            lens_library.commit_part(site.sha, expected, spooled, digest(body), len(body))
+    said = (f'The upload this request belonged to ({site.sha}) has been replaced by another upload of the same lens, '
+            'so nothing was kept or published from it. The upload now in progress was left as it is.')
+    assert refused.value.code == 'lensUploadNotBegun' and str(refused.value) == said
+    assert refused.value.repair_action.startswith('Run `lens-push` again.')
+    # A part of A's whose place in B's plan is another part is refused the same way, before anything is opened.
+    theirs = {'schemaVersion': 1, 'convertedSHA256': site.sha, **first}['parts'][-1]
+    with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+        lens_library.commit_part(site.sha, theirs, upload / 'spool/never-opened',
+                                 digest(data[theirs['offset']:]), theirs['bytes'])
+    assert refused.value.code == 'lensUploadNotBegun' and str(refused.value) == said
+    # B's upload is untouched: what it delivered is still there, and it finishes.
+    assert site.client.get(url.status).json()['receivedParts'] == [1, 2]
+    for part in second['parts']:
+        assert send_part(site.client, site.sha, second, data, part['index']).status_code == 200
+    assert site.client.post(url.complete, json={}).json() == {'held': True, 'bytes': len(data)}
+
+
+def test_a_resumed_upload_is_in_use_and_is_not_replaced_as_idle(site, monkeypatch):
+    first, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    second = split_last(first, data)
+    assert site.client.post(url.begin, json=first).status_code == 200
+    assert send_part(site.client, site.sha, first, data, 0).status_code == 200
+    idle(site.library / '.incoming' / site.sha, lens_library.IDLE_UPLOAD_SECONDS + 1)
+    # The sender comes back. Nothing of this visit is on disk yet, and the upload is in use all the same.
+    resumed = site.client.post(url.begin, json=first)
+    assert resumed.json() == {'held': False, 'missingParts': [part['index'] for part in first['parts'][1:]]}
+    other = site.client.post(url.begin, json=second)        # a different plan, a moment later
+    assert other.status_code == 409 and refusal(other)['code'] == 'lensUploadPlanDiffers', other.text
+    assert send_part(site.client, site.sha, first, data, 1).status_code == 200
+    assert site.client.get(url.status).json()['receivedParts'] == [0, 1]
+    # A completion is the upload in use too: while its file is being checked, it is not idle.
+    for part in first['parts'][2:]:
+        assert send_part(site.client, site.sha, first, data, part['index']).status_code == 200
+    upload = site.library / '.incoming' / site.sha
+    idle(upload, lens_library.IDLE_UPLOAD_SECONDS + 1)
+    check, seen = lens_library._check_and_publish, {}
+
+    def checking(base, sha, folder, plan):
+        seen['idle'] = lens_library._idle_seconds(folder, lens_library._storage_now(folder.parent))
+        return check(base, sha, folder, plan)
+    monkeypatch.setattr(lens_library, '_check_and_publish', checking)
+    assert site.client.post(url.complete, json={}).json() == {'held': True, 'bytes': len(data)}
+    assert seen['idle'] < 60
+
+
+@pytest.fixture
+def whole_entry(site, tmp_path):
+    """A complete entry for the site's lens, kept to one side: what another engine process would publish."""
+    sha = push(site.client, site.source)[0]
+    aside = tmp_path / 'published-by-another-process'
+    os.rename(site.library / sha, aside)
+    assert site.client.get(urls(sha).status).json()['held'] is False
+    return lambda: os.rename(aside, site.library / sha)
+
+
+@pytest.mark.parametrize('published', [True, False], ids=['the lens was published meanwhile', 'the upload was discarded'])
+def test_a_part_whose_upload_vanishes_as_it_arrives_is_answered_plainly(site, monkeypatch, whole_entry, published):
+    plan, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    upload = site.library / '.incoming' / site.sha
+    assert site.client.post(url.begin, json=plan).status_code == 200
+    spool = lens_library.spool
+
+    @contextmanager
+    def vanishing(sha):
+        with spool(sha) as path:
+            if published:
+                whole_entry()                               # another engine process finished this lens...
+            shutil.rmtree(upload)                           # ...and removed the upload, before a byte is spooled
+            yield path
+    monkeypatch.setattr(lens_library, 'spool', vanishing)
+    response = send_part(site.client, site.sha, plan, data, 0)
+    assert 'Errno' not in response.text and str(site.root) not in response.text
+    if published:
+        assert response.status_code == 200 and response.json() == {'received': True}
+    else:
+        assert response.status_code == 409, response.text
+        detail = refusal(response)
+        assert detail['code'] == 'lensUploadNotBegun' and detail['reason'].startswith('No upload is in progress')
+
+
+@pytest.mark.parametrize('published', [True, False], ids=['the lens was published meanwhile', 'the upload was discarded'])
+def test_a_completion_whose_upload_vanishes_while_it_is_checked_is_answered_plainly(site, monkeypatch, whole_entry, published):
+    plan, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    upload = site.library / '.incoming' / site.sha
+    assert site.client.post(url.begin, json=plan).status_code == 200
+    for part in plan['parts']:
+        assert send_part(site.client, site.sha, plan, data, part['index']).status_code == 200
+    make_way = lens_library._make_way
+
+    def meanwhile(base, sha):
+        make_way(base, sha)
+        if published:
+            whole_entry()
+        shutil.rmtree(upload)
+    monkeypatch.setattr(lens_library, '_make_way', meanwhile)
+    response = site.client.post(url.complete, json={})
+    assert 'Errno' not in response.text and str(site.root) not in response.text
+    if published:
+        assert response.status_code == 200 and response.json() == {'held': True, 'bytes': len(data)}
+    else:
+        assert response.status_code == 409, response.text
+        assert refusal(response)['code'] == 'lensUploadNotBegun'
+    # Nothing of the checking is left behind either way.
+    assert not [path.name for path in (site.library / '.incoming').iterdir()]
+
+
+def test_a_completion_never_discards_an_upload_another_sender_has_begun_since(site, monkeypatch):
+    first, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    second = split_last(first, data)
+    upload = site.library / '.incoming' / site.sha
+    assert site.client.post(url.begin, json=first).status_code == 200
+    for part in first['parts']:
+        assert send_part(site.client, site.sha, first, data, part['index']).status_code == 200
+    make_way = lens_library._make_way
+
+    def meanwhile(base, sha):
+        # While this completion checks its upload, another engine process replaces it with one of its own.
+        make_way(base, sha)
+        shutil.rmtree(upload)
+        assert lens_library._create_upload(base, sha, {'schemaVersion': 1, 'convertedSHA256': sha, **second})
+    with monkeypatch.context() as patched:
+        patched.setattr(lens_library, '_make_way', meanwhile)
+        response = site.client.post(url.complete, json={})
+    # What it then checked was the other sender's file, not yet filled. It is not "the lens with the wrong
+    # hash", and that sender's upload is not discarded for it.
+    assert response.status_code == 409, response.text
+    detail = refusal(response)
+    assert detail['code'] == 'lensUploadNotBegun' and 'has been replaced by another upload' in detail['reason']
+    assert site.client.get(url.status).json() == {'held': False, 'bytes': len(data), 'receivedParts': []}
+    assert json.loads((upload / 'manifest.json').read_bytes())['parts'] == second['parts']
+    for part in second['parts']:
+        assert send_part(site.client, site.sha, second, data, part['index']).status_code == 200
+    assert site.client.post(url.complete, json={}).json() == {'held': True, 'bytes': len(data)}
+
+
+# --- fix round 3: an entry a newer engine wrote; and what "not there" means --------
+
+NEWER = ("The lens library's entry for {sha} was written by a newer version of the engine (entry schema 2; this "
+         'engine reads schema 1), so this engine left it as it is and did not read it.')
+UPDATE = 'Update this engine to the version that wrote the entry, or a later one, then try again.'
+
+
+@pytest.mark.parametrize('layout', ['the same file name', 'another file name'])
+def test_an_entry_a_newer_engine_wrote_is_never_read_set_aside_or_replaced(site, layout):
+    sha, url = push(site.client, site.source)[0], urls(site.sha)
+    entry, incoming = site.library / sha, site.library / '.incoming'
+    record = json.loads((entry / 'entry.json').read_bytes())
+    (entry / 'entry.json').write_text(json.dumps({**record, 'schemaVersion': 2, 'encoding': 'something later'}))
+    if layout == 'another file name':
+        (entry / 'jacobians.safetensors').rename(entry / 'jacobians.later')
+    idle(entry, 2 * lens_library.STALE_STAGING_SECONDS)     # long idle: its age must not matter
+    before = {path.name: path.read_bytes() for path in entry.iterdir()}
+    whole = {'lensID': LENS_ID, 'convertedSHA256': sha, 'bytes': site.source.stat().st_size}
+    assert site.client.get(url.status).json() == {'held': False, 'bytes': None, 'receivedParts': None, 'newerEntry': True}
+    plan, data = part_plan(site.source, 64), site.source.read_bytes()
+    staged = site.root / 'runs/lens.safetensors'
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(data)
+    for response in (site.client.post(url.begin, json=plan), send_part(site.client, sha, plan, data, 0),
+                     site.client.post(url.complete, json={}),
+                     site.client.post('/api/lens-library/adopt', json={'path': 'lens.safetensors', 'sha256': sha}),
+                     site.client.post('/api/lens-library/register', json={'record': record_for(sha)})):
+        assert response.status_code == 409, response.text
+        detail = refusal(response)
+        assert detail['code'] == 'lensLibraryEntryNewer' and detail['reason'] == NEWER.format(sha=sha)
+        assert detail['repairAction'] == UPDATE
+    for call in (lambda: lens_library.reference(LENS_ID, sha), lambda: lens_library.reference(LENS_ID, sha, verify=True),
+                 lambda: lens_library.require_held([whole]), lambda: lens_library.pinned_file(LENS_ID, sha)):
+        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+            call()
+        assert refused.value.code == 'lensLibraryEntryNewer'
+    assert lens_library.holds([whole]) is False and lens_library.held_file(sha) is None
+    # Left exactly as it was: not set aside, not swept, not replaced, and no record written beside it.
+    assert {path.name: path.read_bytes() for path in entry.iterdir()} == before
+    assert not list(incoming.iterdir()) and not (site.root / 'runs/jlens-lenses').exists()
+    # An entry that says an OLDER or unreadable version is debris like any other, and makes way when idle.
+    (entry / 'entry.json').write_text(json.dumps({**record, 'schemaVersion': 0}))
+    idle(entry, lens_library.STALE_ENTRY_SECONDS + 1)
+    assert site.client.get(url.status).json() == {'held': False, 'bytes': None, 'receivedParts': None}
+    assert push(site.client, site.source)[2].json() == {'held': True, 'bytes': len(data)}
+
+
+def test_an_entry_the_storage_cannot_read_is_not_taken_for_absent_on_a_later_python(site, monkeypatch):
+    """From Python 3.14 `Path.is_file`, `exists`, `is_dir`, and `is_symlink` answer False for any error, where
+    3.12 raises for one such as an I/O error. Presence is decided with `lstat` in the library, so the answer is
+    the same on both. The later behaviour is simulated here, as the review did."""
+    sha, url = push(site.client, site.source)[0], urls(site.sha)
+    entry = site.library / sha
+    idle(entry, 3600)
+    inside = str(entry) + os.sep
+
+    def failing(real):
+        def call(path, *args, **kwargs):
+            if isinstance(path, (str, os.PathLike)) and os.fspath(path).startswith(inside):
+                raise OSError(errno.EIO, 'Input/output error', os.fspath(path))
+            return real(path, *args, **kwargs)
+        return call
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, 'is_file', lambda self: os.path.isfile(self))
+        patched.setattr(Path, 'is_dir', lambda self: os.path.isdir(self))
+        patched.setattr(Path, 'exists', lambda self: os.path.exists(self))
+        patched.setattr(Path, 'is_symlink', lambda self: os.path.islink(self))
+        patched.setattr(os, 'stat', failing(os.stat))
+        patched.setattr(os, 'lstat', failing(os.lstat))
+        assert (entry / 'entry.json').is_file() is False     # what the later Python says of a file it cannot stat
+        for response in (site.client.get(url.status), site.client.post(url.begin, json=part_plan(site.source, 64))):
+            assert response.status_code == 409, response.text
+            detail = refusal(response)
+            assert detail['code'] == 'lensLibraryStorage' and 'Input/output error' in detail['reason']
+        with pytest.raises(lens_library.LensLibraryRefusal) as refused:
+            lens_library.reference(LENS_ID, sha)
+        assert refused.value.code == 'lensLibraryStorage' and lens_library.held_file(sha) is None
+    # Nothing was set aside or begun: the entry is whole, and held once it can be read.
+    assert sorted(path.name for path in entry.iterdir()) == ['entry.json', 'jacobians.safetensors']
+    assert not list((site.library / '.incoming').iterdir())
+    assert site.client.get(url.status).json()['held'] is True
+
+
+# --- fix round 3: how old a folder is, by the storage's clock ---------------------
+
+@pytest.mark.parametrize('ahead', [20 * 60, 25 * 3600, 8 * 24 * 3600], ids=['20 minutes', '25 hours', '8 days'])
+def test_an_engine_whose_clock_runs_ahead_sets_aside_and_sweeps_nothing_fresh(site, monkeypatch, tmp_path, ahead):
+    plan, url = part_plan(site.source, 64), urls(site.sha)
+    incoming = site.library / '.incoming'
+    claim = site.library / site.sha
+    claim.mkdir(parents=True)                               # another publisher claimed the name a moment ago
+    working = ['publish-an-adopt-that-is-hashing', 'begin-an-upload-being-made', 'damaged-' + 'c' * 64 + '-0000',
+               'f' * 64]
+    for name in working:
+        (incoming / name).mkdir(parents=True)
+        (incoming / name / 'data').write_bytes(b'in use right now')
+    real = time.time
+    monkeypatch.setattr(time, 'time', lambda: real() + ahead)   # the engine's clock, and nothing on the storage
+    refused = site.client.post(url.begin, json=plan)
+    assert refused.status_code == 409 and refusal(refused)['code'] == 'lensLibraryEntryBusy', refused.text
+    assert claim.is_dir() and sorted(path.name for path in incoming.iterdir()) == sorted(working)
+    # A request that makes a staging folder runs the sweep. Nothing that is fresh on the storage is removed.
+    other = tmp_path / 'another-lens.safetensors'
+    write_converted(other, seed=9)
+    assert push(site.client, other)[2].json()['held'] is True
+    assert sorted(path.name for path in incoming.iterdir()) == sorted(working)
+    assert all((incoming / name / 'data').read_bytes() == b'in use right now' for name in working)
+
+
+def test_a_folder_dated_in_the_future_is_of_unknown_age_and_is_left_alone(site, tmp_path):
+    first, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    month = 30 * 24 * 3600
+    incoming, folder = site.library / '.incoming', site.library / site.sha
+    folder.mkdir(parents=True)
+    idle(folder, -month)                                    # dated thirty days ahead of the storage's own clock
+    staged = site.root / 'runs/lens.safetensors'
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(data)
+    for response in (site.client.post(url.begin, json=first),
+                     site.client.post('/api/lens-library/adopt', json={'path': 'lens.safetensors', 'sha256': site.sha})):
+        assert response.status_code == 409, response.text
+        detail = refusal(response)
+        assert detail['code'] == 'lensLibraryTimeAhead' and 'modification time is in the future' in detail['reason']
+        assert 'cannot tell whether' in detail['reason'] and 'changed within the last' not in detail['reason']
+        assert detail['repairAction'].startswith("Ask the site's operator to check the clocks")
+        assert 'Try again in a few minutes' not in detail['repairAction']
+    assert folder.is_dir() and not list(incoming.iterdir())
+    # Clocks that differ by a little: a folder dated half a minute ahead changed just now, and is busy.
+    idle(folder, -30)
+    assert refusal(site.client.post(url.begin, json=first))['code'] == 'lensLibraryEntryBusy'
+    assert lens_library.CLOCK_TOLERANCE_SECONDS == 60
+    # Dated in the past and idle, it makes way.
+    idle(folder, lens_library.STALE_ENTRY_SECONDS + 1)
+    assert site.client.post(url.begin, json=first).status_code == 200
+    # An upload dated in the future is not replaced by a different plan, and neither it nor a private folder
+    # dated in the future is swept.
+    upload = incoming / site.sha
+    (incoming / 'publish-dated-ahead').mkdir()
+    for path in (upload, incoming / 'publish-dated-ahead'):
+        idle(path, -month)
+    other = site.client.post(url.begin, json=split_last(first, data))
+    assert other.status_code == 409, other.text
+    detail = refusal(other)
+    assert detail['code'] == 'lensLibraryTimeAhead' and 'cannot tell whether it is still receiving' in detail['reason']
+    assert 'idle for 15 minutes' not in detail['repairAction'] and 'operator' in detail['repairAction']
+    another = tmp_path / 'another-lens.safetensors'
+    write_converted(another, seed=9)
+    assert push(site.client, another)[2].json()['held'] is True      # the sweep runs
+    assert {path.name for path in incoming.iterdir()} >= {site.sha, 'publish-dated-ahead'}
+    assert json.loads((upload / 'manifest.json').read_bytes())['parts'] == first['parts']
+
+
+def test_a_folder_is_idle_only_when_everything_in_it_is(site):
+    plan, url = part_plan(site.source, 64), urls(site.sha)
+    folder = site.library / site.sha
+    (folder / 'parts').mkdir(parents=True)
+    (folder / 'parts' / 'jacobians.safetensors').write_bytes(b'still arriving')
+    old = time.time() - lens_library.STALE_ENTRY_SECONDS - 60
+    for path in (folder / 'parts', folder):
+        os.utime(path, (old, old))                          # the folders have not changed; a file in one just has
+    refused = site.client.post(url.begin, json=plan)
+    assert refused.status_code == 409 and refusal(refused)['code'] == 'lensLibraryEntryBusy', refused.text
+    assert (folder / 'parts' / 'jacobians.safetensors').read_bytes() == b'still arriving'
+    os.utime(folder / 'parts' / 'jacobians.safetensors', (old, old))
+    assert site.client.post(url.begin, json=plan).status_code == 200
+
+
+# --- fix round 3: two engines and one idle folder ----------------------------------
+
+def test_a_lens_published_while_an_idle_folder_was_being_judged_is_not_set_aside(site, monkeypatch, whole_entry):
+    """This engine finds an idle unfinished folder and is about to move it aside. In that moment another engine
+    process moves it aside itself and publishes the lens. What this engine then finds under the name is a
+    complete entry, and it leaves it alone."""
+    data, url = site.source.read_bytes(), urls(site.sha)
+    incoming, folder = site.library / '.incoming', site.library / site.sha
+    folder.mkdir()
+    idle(folder, lens_library.STALE_ENTRY_SECONDS + 1)
+    judged = lens_library._idle_seconds
+
+    def meanwhile(path, now):
+        seconds = judged(path, now)
+        if Path(path) == folder and seconds >= lens_library.STALE_ENTRY_SECONDS:
+            os.rename(folder, incoming / f'damaged-{site.sha}-by-the-other-process')
+            whole_entry()
+        return seconds
+    monkeypatch.setattr(lens_library, '_idle_seconds', meanwhile)
+    staged = site.root / 'runs/lens.safetensors'
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(data)
+    adopted = site.client.post('/api/lens-library/adopt', json={'path': 'lens.safetensors', 'sha256': site.sha})
+    assert adopted.status_code == 200 and adopted.json() == {'held': True, 'bytes': len(data)}, adopted.text
+    # The other process's entry is the entry: never moved, never replaced.
+    assert json.loads((folder / 'entry.json').read_bytes())['origin'] == 'pushed'
+    assert [path.name for path in incoming.iterdir()] == [f'damaged-{site.sha}-by-the-other-process']
+    assert site.client.get(url.status).json() == {'held': True, 'bytes': len(data), 'receivedParts': None}
+
+
+# --- fix round 3: checks the earlier tests left to chance --------------------------
+
+def test_an_unfinished_folder_that_appears_while_parts_arrive_makes_way_at_completion(site):
+    plan, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    assert site.client.post(url.begin, json=plan).status_code == 200
+    for part in plan['parts']:
+        assert send_part(site.client, site.sha, plan, data, part['index']).status_code == 200
+    folder = site.library / site.sha
+    folder.mkdir()                                          # a publisher claimed the name, and died
+    (folder / 'entry.json').write_text('{}')
+    busy = site.client.post(url.complete, json={})
+    assert busy.status_code == 409 and refusal(busy)['code'] == 'lensLibraryEntryBusy', busy.text
+    assert site.client.get(url.status).json()['receivedParts'] == [part['index'] for part in plan['parts']]
+    idle(folder, lens_library.STALE_ENTRY_SECONDS + 1)
+    done = site.client.post(url.complete, json={})
+    assert done.status_code == 200 and done.json() == {'held': True, 'bytes': len(data)}, done.text
+    assert digest((folder / 'jacobians.safetensors').read_bytes()) == site.sha
+    (aside,) = (site.library / '.incoming').iterdir()
+    assert aside.name.startswith(f'damaged-{site.sha}-') and (aside / 'entry.json').read_text() == '{}'
+
+
+def test_the_upload_being_completed_is_never_swept_however_old_it_is(site):
+    plan, data, url = part_plan(site.source, 64), site.source.read_bytes(), urls(site.sha)
+    assert site.client.post(url.begin, json=plan).status_code == 200
+    for part in plan['parts']:
+        assert send_part(site.client, site.sha, plan, data, part['index']).status_code == 200
+    incoming = site.library / '.incoming'
+    idle(incoming / site.sha, lens_library.STALE_UPLOAD_SECONDS + 3600)
+    # The sweep a completion's own staging folder runs is told which upload it is working on.
+    lens_library._sweep(incoming, keep=site.sha)
+    assert (incoming / site.sha / 'manifest.json').is_file()
+    done = site.client.post(url.complete, json={})
+    assert done.status_code == 200 and done.json() == {'held': True, 'bytes': len(data)}, done.text
+    # Any other upload that old is removed.
+    (incoming / ('a' * 64)).mkdir()
+    idle(incoming / ('a' * 64), lens_library.STALE_UPLOAD_SECONDS + 3600)
+    lens_library._sweep(incoming, keep=site.sha)
+    assert not list(incoming.iterdir())
+
+
+def test_the_sweep_never_follows_a_symbolic_link_or_removes_anything_through_one(site, tmp_path):
+    outside = tmp_path / 'not-the-librarys'
+    outside.mkdir()
+    (outside / 'manifest.json').write_text('{"somebody": "needs this"}')
+    (outside / 'data').write_bytes(b'x' * 100)
+    incoming = site.library / '.incoming'
+    incoming.mkdir(parents=True)
+    old = time.time() - 30 * 24 * 3600
+    for name in ('publish-linked', 'begin-linked', 'damaged-linked', 'a' * 64):
+        os.symlink(outside, incoming / name)
+        os.utime(incoming / name, (old, old), follow_symlinks=False)
+    idle(outside, 30 * 24 * 3600)
+    assert push(site.client, site.source)[2].json()['held'] is True      # the sweep runs, twice
+    assert {path.name: path.read_bytes() for path in outside.iterdir()} == {
+        'manifest.json': b'{"somebody": "needs this"}', 'data': b'x' * 100}
+    assert sorted(path.name for path in incoming.iterdir() if path.is_symlink()) == sorted(
+        ['publish-linked', 'begin-linked', 'damaged-linked', 'a' * 64])
+
+
+def test_a_file_that_cannot_fit_is_not_adopted(site, monkeypatch):
+    data = site.source.read_bytes()
+    staged = site.root / 'runs/lens.safetensors'
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(data)
+    monkeypatch.setattr(lens_library.shutil, 'disk_usage', lambda path: type('usage', (), {'free': 10})())
+    monkeypatch.setattr(lens_library.shutil, 'copyfile', lambda *args, **kwargs: pytest.fail('copied with no room for it'))
+    response = site.client.post('/api/lens-library/adopt', json={'path': 'lens.safetensors', 'sha256': site.sha})
+    assert response.status_code == 409, response.text
+    detail = refusal(response)
+    assert detail['code'] == 'lensLibraryNoSpace'
+    assert detail['reason'] == f'The lens library has 10 bytes free, and this lens needs {len(data)}. Nothing was added.'
+    assert not (site.library / site.sha).exists()
+    assert not [path for path in (site.library / '.incoming').iterdir()] if (site.library / '.incoming').exists() else True

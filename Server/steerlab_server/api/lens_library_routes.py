@@ -117,13 +117,16 @@ def build_router(state):
             except (library.LensLibraryRefusal, FileNotFoundError) as exc:
                 # Another sender finished this lens while the part was in
                 # flight: its upload folder is gone because the lens is held.
-                # A folder that is gone and a lens that is not held is an
-                # upload that was discarded, and is said so.
-                gone = isinstance(exc, FileNotFoundError) or exc.code == 'lensUploadNotBegun'
-                if gone and library.status(sha)['held']:
-                    return {'received': True}
+                # A spool that is gone and a lens that is not held is an
+                # upload that was discarded or replaced, and is said as
+                # whichever is true. Nothing is discarded here.
                 if isinstance(exc, FileNotFoundError):
-                    raise library.not_begun(sha) from None
+                    lost = library.part_lost(sha)
+                    if lost is None:
+                        return {'received': True}
+                    raise lost from None
+                if exc.code == 'lensUploadNotBegun' and library.status(sha)['held']:
+                    return {'received': True}
                 raise
             return {'received': True}
         except (ValueError, OSError, KeyError, TypeError) as exc:

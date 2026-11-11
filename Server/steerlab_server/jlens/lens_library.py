@@ -11,6 +11,13 @@ file's own SHA-256 (a record's ``converted.sha256``):
     <root>/<sha>/entry.json                 its size, origin, and date
     <root>/.incoming/<sha>/                 an upload in progress
     <root>/.incoming/{publish,begin,damaged}-*   private folders, swept when idle
+    <root>/.incoming/clock-*                an empty file, written and removed at once
+
+How old a folder is, is measured against the storage's own clock: the time on
+a file this engine has just written there (``clock-*``), never the engine's
+clock. A folder dated later than that is of unknown age and is left alone.
+An entry whose record names a later schema than this engine's was written by
+a newer engine; it is never read, set aside, swept, or replaced by this one.
 
 The workspace stays the truth. The library is a cache of bytes: it holds no
 lens record, qualification, or result, and anything in it can be sent again
@@ -49,8 +56,8 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import threading
-import time
 
 from ..experiment import diagnostic_archives as archives
 
@@ -75,6 +82,11 @@ IDLE_UPLOAD_SECONDS = 15 * 60
 STALE_STAGING_SECONDS = 24 * 3600
 #: An upload nobody has added to for seven days is removed.
 STALE_UPLOAD_SECONDS = 7 * 24 * 3600
+#: Ages are measured by the storage's clock (:func:`_storage_now`). The
+#: machines that write to one library can still differ a little, so a time up
+#: to this much later than the storage's "now" counts as "changed just now".
+#: Later than that, the age is unknown, and nothing is decided on it.
+CLOCK_TOLERANCE_SECONDS = 60
 _KEY = re.compile('[0-9a-f]{64}')
 _INDEX = re.compile('0|[1-9][0-9]{0,5}')
 _PUSH = '`remote lens-push {lens}` (or `runner lens-push`)'
@@ -126,6 +138,35 @@ def gone(lens_id, sha):
         'Send the lens again with ' + _PUSH.format(lens=lens_id) + ' from a workspace that has it, then try the '
         'request again. If the lens was imported in the workspace this engine serves, importing it there again '
         'also restores it.')
+
+
+def lost(lens_id, sha):
+    """The refusal for a running job whose plan took a lens from the library
+    when the library no longer holds it (``artifact_paths.converted_file``)."""
+    return LensLibraryRefusal(
+        'lensNotInLibrary',
+        f"The lens library no longer holds the lens '{lens_id}' (converted SHA-256 {sha}), which this job's plan "
+        'took from it. The job stopped, and read the lens from nowhere else.',
+        'Send the lens again with ' + _PUSH.format(lens=lens_id) + ', then run the request again.')
+
+
+def newer(sha, version):
+    """The refusal for an entry a newer engine wrote. It is never read, set
+    aside, swept, or replaced by this one."""
+    return LensLibraryRefusal(
+        'lensLibraryEntryNewer',
+        f"The lens library's entry for {sha} was written by a newer version of the engine (entry schema {version}; "
+        f'this engine reads schema {SCHEMA_VERSION}), so this engine left it as it is and did not read it.',
+        'Update this engine to the version that wrote the entry, or a later one, then try again.')
+
+
+def time_ahead(message, then):
+    """The refusal for a folder whose age cannot be known: something in it is
+    dated later than the storage's own "now". Waiting does not help until
+    that date passes, so the repair is the operator's."""
+    return LensLibraryRefusal(
+        'lensLibraryTimeAhead', message,
+        "Ask the site's operator to check the clocks of the machines that write to the lens library, and " + then)
 
 
 def storage_refusal(exc):
@@ -202,26 +243,60 @@ def _under(base, relative):
             "Ask the site's operator to replace it with an ordinary folder, then try again.") from exc
 
 
+def _seen(path):
+    """What is at a path, without following a link: its ``lstat``, or ``None``
+    when nothing is there.
+
+    Only "no such file or directory" and "not a directory" mean nothing is
+    there. Any other failure is the storage's and is raised, so a folder is
+    never set aside, discarded, or begun again because a read failed. This is
+    why presence is never decided here with ``Path.exists``, ``is_file``,
+    ``is_dir``, or ``is_symlink``: whether those raise or answer False for an
+    error such as an I/O error depends on the Python that runs them.
+    """
+    try:
+        return os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+
+
+def _is_file(path):
+    seen = _seen(path)
+    return seen is not None and stat.S_ISREG(seen.st_mode)
+
+
+def _is_folder(path):
+    seen = _seen(path)
+    return seen is not None and stat.S_ISDIR(seen.st_mode)
+
+
 def _entry(base, sha):
     """The entry for a hash, or ``None``. An existence and size check: the
     file and its record are ordinary files, and the record names this hash
-    and the file's size. Nothing is hashed."""
+    and the file's size. Nothing is hashed.
+
+    ``None`` means the folder can be SEEN to hold no complete entry, which is
+    what lets `_make_way` set it aside. A failure to read is raised instead.
+    So is an entry a newer engine wrote (:func:`newer`): it is somebody's
+    complete entry, and this engine neither reads it nor treats it as debris.
+    """
     file, record = _under(base, f'{sha}/{FILE_NAME}'), _under(base, f'{sha}/{ENTRY_NAME}')
-    if not file.is_file() or not record.is_file():
+    if not _is_file(record):
         return None
     try:
         document = json.loads(record.read_bytes())
-        size = file.stat().st_size
-    except (FileNotFoundError, ValueError):
-        # Gone in this instant, or not a record: not an entry. Any other
-        # failure to read is the storage's, and is raised, never taken for
-        # "not held": an entry is set aside only when it can be SEEN to be
-        # incomplete (`_make_way`).
+    except (FileNotFoundError, NotADirectoryError, ValueError):
+        return None               # gone in this instant, or not a record: not an entry
+    if not isinstance(document, dict) or document.get('convertedSHA256') != sha:
         return None
-    if (not isinstance(document, dict) or document.get('schemaVersion') != SCHEMA_VERSION
-            or document.get('convertedSHA256') != sha or document.get('bytes') != size):
+    version = document.get('schemaVersion')
+    if type(version) is int and version > SCHEMA_VERSION:
+        raise newer(sha, version)
+    held = _seen(file)
+    if (held is None or not stat.S_ISREG(held.st_mode) or version != SCHEMA_VERSION
+            or document.get('bytes') != held.st_size):
         return None
-    return {'path': file, 'bytes': size, 'entry': document}
+    return {'path': file, 'bytes': held.st_size, 'entry': document}
 
 
 def _read_entry(base, sha):
@@ -261,6 +336,22 @@ def held_file(sha):
         return str(found['path']) if found else None
     except (ValueError, OSError):
         return None
+
+
+def pinned_file(lens_id, sha):
+    """The library's file for a lens that a running job's plan took from the
+    library, under the hash that plan named
+    (``artifact_paths.pin_library_lenses``). Unlike :func:`held_file` it
+    never answers "not held" quietly: the job's plan digests this hash, so a
+    library that has lost it stops the job (:func:`lost`), and a storage that
+    cannot be read says so."""
+    base = root()
+    if base is None:
+        raise unavailable()
+    found = _read_entry(base.resolve(), _key(sha))
+    if found is None:
+        raise lost(lens_id, sha)
+    return str(found['path'])
 
 
 def reference(lens_id, sha, *, verify=False):
@@ -349,37 +440,83 @@ def _opens_as_safetensors(path):
         return False
 
 
-def _idle_seconds(path):
-    """How long ago anything in a folder last changed: the newest modification
-    time of the folder and of everything in it. A folder that cannot be read
-    counts as changed now, so nothing is ever removed on a guess."""
+def _storage_now(incoming):
+    """What time it is on the library's storage: the modification time of a
+    file this engine has just written inside ``.incoming``.
+
+    Ages are measured against this, never against the engine's own clock. The
+    times on a folder were stamped by whichever machine or file server wrote
+    it, and an engine whose clock runs ahead of that would take a folder
+    claimed a second ago for one abandoned a day ago.
+    """
+    probe = incoming / f'clock-{secrets.token_hex(8)}'
+    with open(probe, 'xb'):
+        pass
+    try:
+        return os.lstat(probe).st_mtime
+    finally:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+
+
+def _idle_seconds(path, now):
+    """How long ago anything in a folder last changed, by the storage's clock
+    (``now``, from :func:`_storage_now`): measured from the newest
+    modification time of the folder and of everything in it.
+
+    ``None`` when something in it is dated later than ``now`` by more than
+    :data:`CLOCK_TOLERANCE_SECONDS`: its age cannot be known, and nothing is
+    decided on it. A folder that is changing under the reader counts as
+    changed now. Any other failure to read is raised, so nothing is ever
+    removed on a guess.
+    """
+    def unreadable(error):
+        raise error
     try:
         newest = os.lstat(path).st_mtime
-        for directory, folders, files in os.walk(path):
+        for directory, folders, files in os.walk(path, onerror=unreadable):
             for name in folders + files:
                 newest = max(newest, os.lstat(os.path.join(directory, name)).st_mtime)
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return 0.0
-    return max(0.0, time.time() - newest)
+    if newest > now + CLOCK_TOLERANCE_SECONDS:
+        return None
+    return max(0.0, now - newest)
 
 
 def _sweep(incoming, keep=None):
     """Remove what a killed process left for good: a private folder idle for
     a day, and an upload nobody has added to for seven. Best effort, and
-    never the upload now being worked on (``keep``)."""
+    never the upload now being worked on (``keep``), a symbolic link, or a
+    folder whose age cannot be known (dated in the future, or unreadable)."""
     try:
         names = os.listdir(incoming)
+        now = _storage_now(incoming)
     except OSError:
         return
     for name in names:
-        if name.startswith(('publish-', 'begin-', 'damaged-')):
-            limit = STALE_STAGING_SECONDS
-        elif _KEY.fullmatch(name) and name != keep:
-            limit = STALE_UPLOAD_SECONDS
-        else:
-            continue
         path = incoming / name
-        if path.is_dir() and not path.is_symlink() and _idle_seconds(path) >= limit:
+        try:
+            if name.startswith('clock-'):
+                # A clock probe a killed process left: one empty file.
+                seen = _seen(path)
+                if seen is not None and stat.S_ISREG(seen.st_mode) and now - seen.st_mtime >= STALE_STAGING_SECONDS:
+                    os.unlink(path)
+                continue
+            if name.startswith(('publish-', 'begin-', 'damaged-')):
+                limit = STALE_STAGING_SECONDS
+            elif _KEY.fullmatch(name) and name != keep:
+                limit = STALE_UPLOAD_SECONDS
+            else:
+                continue
+            if not _is_folder(path):      # by `lstat`: a symbolic link is never followed, or removed through
+                continue
+            idle = _idle_seconds(path, now)
+        except OSError:
+            continue
+        if idle is not None and idle >= limit:
             _discard(path)
 
 
@@ -417,20 +554,33 @@ def _busy(sha):
         f'{STALE_ENTRY_SECONDS // 60} minutes.')
 
 
-def _set_aside(base, sha):
+def _set_aside(base, sha, *, incomplete_only=False):
     """Move the folder under a hash aside, inside the library, to
     ``.incoming/damaged-<sha>-<token>``: one rename, swept a day later.
 
     Returns ``None`` when the name is free afterwards, which it also is when
     another process moved the folder in the same instant. Otherwise returns
-    the error that left a folder under the name, for the caller to say."""
+    the error that left a folder under the name, for the caller to say.
+
+    With ``incomplete_only`` (the idle rule) a complete entry is looked for
+    once more, immediately before the rename, and left where it is: another
+    engine process may have set the idle folder aside and published the lens
+    in the moment since the caller looked. ``None`` is returned then too; the
+    caller finds the entry.
+    """
     target = _under(base, sha)
     try:
         incoming = _under(base, INCOMING)
         incoming.mkdir(parents=True, exist_ok=True)
-        os.rename(target, incoming / f'damaged-{sha}-{secrets.token_hex(8)}')
+        aside = incoming / f'damaged-{sha}-{secrets.token_hex(8)}'
+        if incomplete_only and _entry(base, sha) is not None:
+            return None
+        os.rename(target, aside)
     except OSError as exc:
-        return exc if os.path.lexists(target) else None
+        try:
+            return exc if _seen(target) is not None else None
+        except OSError:
+            return exc
     return None
 
 
@@ -445,13 +595,25 @@ def _make_way(base, sha):
     library (one rename; swept later) and the caller carries on. One that
     changed more recently may belong to a publisher at work, so the caller is
     told to try again. A complete entry, or no folder, is left to the caller.
+
+    Idle is judged by the storage's clock (:func:`_storage_now`). A folder
+    dated in the future is of unknown age: it is left alone, and that is said.
     """
     target = _under(base, sha)
-    if not target.exists() or _entry(base, sha) is not None:
+    if _seen(target) is None or _entry(base, sha) is not None:
         return
-    if _idle_seconds(target) < STALE_ENTRY_SECONDS:
+    incoming = _under(base, INCOMING)
+    incoming.mkdir(parents=True, exist_ok=True)
+    idle = _idle_seconds(target, _storage_now(incoming))
+    if idle is None:
+        raise time_ahead(
+            f'The lens library has an unfinished folder for this lens ({sha}) whose modification time is in the '
+            'future, so this engine cannot tell whether another copy of the lens is being published there. It left '
+            'the folder as it is, and nothing was sent or added.',
+            'to remove that folder if no engine is using it. Then send the lens again.')
+    if idle < STALE_ENTRY_SECONDS:
         raise _busy(sha)
-    left = _set_aside(base, sha)
+    left = _set_aside(base, sha, incomplete_only=True)
     if left is None or _entry(base, sha) is not None:
         return                    # moved aside; or another process published in this instant
     if isinstance(left, FileNotFoundError):
@@ -489,7 +651,7 @@ def _publish(base, staged, sha, origin):
         found = _entry(base, sha)
         if found is not None:
             return found
-        if not _under(base, sha).exists():
+        if _seen(_under(base, sha)) is None:
             raise               # nothing holds the name: the failure is the storage's own, and says so
         raise _busy(sha) from exc
     return _entry(base, sha)
@@ -529,23 +691,60 @@ def _manifest(sha, body, limit):
     return {'schemaVersion': SCHEMA_VERSION, 'convertedSHA256': sha, 'bytes': total, 'parts': planned}
 
 
+def _stored_plan(document, sha):
+    """A manifest's content as the plan it must be, or ``None``: exactly what
+    :func:`_manifest` wrote for this hash. A file that is empty, not JSON, or
+    any other shape is not a plan, and no caller ever indexes into one."""
+    if not isinstance(document, dict) or set(document) != {'schemaVersion', 'convertedSHA256', 'bytes', 'parts'}:
+        return None
+    if document['schemaVersion'] != SCHEMA_VERSION or document['convertedSHA256'] != sha:
+        return None
+    try:
+        plan = _manifest(sha, {'bytes': document['bytes'], 'parts': document['parts']}, PART_MAX_BYTES)
+    except LensLibraryRefusal:
+        return None
+    return plan if plan == document else None
+
+
 def _upload(base, sha):
-    """The folder and plan of an upload in progress, or ``(folder, None)``."""
+    """The folder and plan of an upload in progress, or ``(folder, None)``
+    when there is no plan there: no folder, no manifest, or a manifest that
+    is not a plan (a write cut short can leave one empty). ``begin`` starts
+    such a folder clean. A failure to read is raised, never taken for "no
+    plan"."""
     folder = _under(base, f'{INCOMING}/{sha}')
     plan = _under(base, f'{INCOMING}/{sha}/manifest.json')
-    if not plan.is_file():
+    if not _is_file(plan):
         return folder, None
     try:
-        return folder, json.loads(plan.read_bytes())
-    except (OSError, ValueError):
+        return folder, _stored_plan(json.loads(plan.read_bytes()), sha)
+    except (FileNotFoundError, NotADirectoryError, ValueError):
         return folder, None
 
 
 def _received(folder):
     marks = folder / 'received'
-    if not marks.is_dir():
+    if not _is_folder(marks):
         return set()
-    return {int(name) for name in os.listdir(marks) if _INDEX.fullmatch(name)}
+    try:
+        return {int(name) for name in os.listdir(marks) if _INDEX.fullmatch(name)}
+    except (FileNotFoundError, NotADirectoryError):
+        return set()
+
+
+def _fsync_folder(path):
+    """Ask the storage to keep a folder's own entries, where it can: some
+    filesystems refuse to sync a folder, and that is not an error here."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
 
 
 def _discard(folder):
@@ -571,7 +770,14 @@ def _create_upload(base, sha, plan):
             os.mkdir(private / name)
         with open(private / 'data', 'xb') as stream:
             stream.truncate(plan['bytes'])
-        (private / 'manifest.json').write_bytes(archives.encoded(plan))
+        # The plan reaches storage before the folder gets its name, so a crash
+        # (or storage that drops unflushed data) cannot leave an upload whose
+        # plan is empty.
+        with open(private / 'manifest.json', 'xb') as stream:
+            stream.write(archives.encoded(plan))
+            stream.flush()
+            os.fsync(stream.fileno())
+        _fsync_folder(private)
         try:
             archives.publish_directory(private, _under(base, f'{INCOMING}/{sha}'))
         except OSError as exc:
@@ -583,19 +789,59 @@ def _create_upload(base, sha, plan):
         shutil.rmtree(private, ignore_errors=True)
 
 
-def not_begun(sha):
+def not_begun(sha, *, replaced=False):
+    """A part or a completion that has no upload to belong to. ``replaced``:
+    there is an upload in progress, and it is not the one the request was
+    sent under, so "no upload is in progress" would be untrue."""
+    if replaced:
+        return LensLibraryRefusal(
+            'lensUploadNotBegun',
+            f'The upload this request belonged to ({sha}) has been replaced by another upload of the same lens, so '
+            'nothing was kept or published from it. The upload now in progress was left as it is.',
+            'Run `lens-push` again. It joins the upload now in progress and sends only the parts that are missing, '
+            'or says what to do if that upload was planned with a different part size.')
     return LensLibraryRefusal(
         'lensUploadNotBegun',
         f'No upload is in progress for {sha}: none was begun, or it was discarded.',
         'Send the lens again with `lens-push`; it begins the upload and sends every part that is missing.')
 
 
-def status(sha):
-    """``GET /api/lens-library/{sha}``: whether the library holds a hash, and
-    how far an upload in progress has come."""
+def _upload_gone(base, sha):
+    """The refusal for a part or a completion whose upload vanished under it
+    and whose lens is not held: the upload was finished and discarded, or
+    replaced. Nothing is discarded here. An upload that is there now, whole,
+    is somebody's, begun since; anything less is debris the next ``begin``
+    clears, and no upload is in progress."""
+    folder, plan = _upload(base, sha)
+    whole = (plan is not None and _is_file(folder / 'data') and _is_folder(folder / 'received')
+             and _is_folder(folder / 'spool'))
+    return not_begun(sha, replaced=whole)
+
+
+def part_lost(sha):
+    """What to answer a part whose spool or upload vanished while it arrived:
+    ``None`` when the library holds the lens by now (another sender finished
+    it), and otherwise the refusal that is true of what is there."""
     sha = _key(sha)
     base = _reading()
-    found = _entry(base, sha)
+    if _entry(base, sha) is not None:
+        return None
+    return _upload_gone(base, sha)
+
+
+def status(sha):
+    """``GET /api/lens-library/{sha}``: whether the library holds a hash, and
+    how far an upload in progress has come. An entry a newer engine wrote is
+    not held by this one, and the answer says why (``newerEntry``); every
+    request that would need it is refused by name."""
+    sha = _key(sha)
+    base = _reading()
+    try:
+        found = _entry(base, sha)
+    except LensLibraryRefusal as exc:
+        if exc.code != 'lensLibraryEntryNewer':
+            raise
+        return {'held': False, 'bytes': None, 'receivedParts': None, 'newerEntry': True}
     if found is not None:
         return {'held': True, 'bytes': found['bytes'], 'receivedParts': None}
     folder, plan = _upload(base, sha)
@@ -624,8 +870,8 @@ def begin(sha, body):
             if _entry(base, sha) is not None:
                 _discard(folder)
                 return {'held': True, 'missingParts': []}
-            if current is not None and not ((folder / 'data').is_file() and (folder / 'received').is_dir()
-                                            and (folder / 'spool').is_dir()):
+            if current is not None and not (_is_file(folder / 'data') and _is_folder(folder / 'received')
+                                            and _is_folder(folder / 'spool')):
                 # A plan whose working files are gone cannot be resumed.
                 _discard(folder)
                 current = None
@@ -633,7 +879,14 @@ def begin(sha, body):
             # idle, refused when fresh, before a byte is sent.
             _make_way(base, sha)
             if current is not None and current != plan:
-                if _idle_seconds(folder) < IDLE_UPLOAD_SECONDS:
+                idle = _idle_seconds(folder, _storage_now(_under(base, INCOMING)))
+                if idle is None:
+                    raise time_ahead(
+                        'An upload of this lens is in progress with a different plan of parts, and its modification '
+                        'time is in the future, so this engine cannot tell whether it is still receiving. It left '
+                        'that upload as it is, and nothing was begun.',
+                        'to remove that unfinished upload if no sender is using it. Then run `lens-push` again.')
+                if idle < IDLE_UPLOAD_SECONDS:
                     raise LensLibraryRefusal(
                         'lensUploadPlanDiffers',
                         'An upload of this lens is in progress with a different plan of parts, and its received '
@@ -655,10 +908,15 @@ def begin(sha, body):
                     "Free space on the lens library's storage, or ask the site's operator to, then run `lens-push` "
                     'again.')
             if current is not None:
+                # A resumed upload is in use from this moment, before any
+                # part of it arrives: touch it, so a different plan sent a
+                # moment later does not replace it as idle.
+                os.utime(folder)
                 return {'held': False, 'missingParts': missing}
-            if folder.exists() and not (folder / 'manifest.json').exists():
-                # A folder with no plan: nothing in it was ever checked
-                # against one (a removal cut short, or debris). Start clean.
+            if _seen(folder) is not None and _upload(base, sha)[1] is None:
+                # A folder with no plan: no manifest, or a manifest that is
+                # not a plan (a removal or a write cut short, or debris).
+                # Nothing in it was ever checked against a plan. Start clean.
                 # An upload is created whole, so a folder that has a plan by
                 # now is another process's new upload, and is left alone.
                 _discard(folder)
@@ -706,7 +964,7 @@ def spool(sha):
     were already checked."""
     base = _writing()
     folder = _under(base, f'{INCOMING}/{_key(sha)}/spool')
-    if not folder.is_dir():
+    if not _is_folder(folder):
         raise not_begun(sha)
     path = folder / secrets.token_hex(8)
     try:
@@ -735,10 +993,14 @@ def commit_part(sha, part, spooled, digest, received_bytes):
         if _entry(base, sha) is not None:
             return
         folder, plan = _upload(base, sha)
-        if plan is None or index >= len(plan['parts']) or plan['parts'][index] != part:
+        if plan is None:
             raise not_begun(sha)
+        if index >= len(plan['parts']) or plan['parts'][index] != part:
+            # The plan this part was checked against is not the one in
+            # progress now: that upload was replaced while the part arrived.
+            raise not_begun(sha, replaced=True)
         mark = folder / 'received' / str(index)
-        if mark.exists():
+        if _seen(mark) is not None:
             return
         try:
             with open(folder / 'data', 'r+b') as target, open(spooled, 'rb') as source:
@@ -752,11 +1014,12 @@ def commit_part(sha, part, spooled, digest, received_bytes):
             except FileExistsError:
                 pass
         except FileNotFoundError:
-            # Another engine process finished this upload and removed its
-            # folder in this instant: the lens is held, or the upload is gone.
+            # The spooled part, or the upload's own file, is gone: the upload
+            # this part was sent under was finished, discarded, or replaced
+            # while the part arrived. Nothing is discarded here. Whatever
+            # upload is there now is somebody's, begun after this part was.
             if _entry(base, sha) is None:
-                _discard(folder)
-                raise not_begun(sha) from None
+                raise _upload_gone(base, sha) from None
 
 
 def complete(sha):
@@ -785,21 +1048,31 @@ def complete(sha):
                 'so the lens was not added.',
                 'Run `lens-push` again; it sends only the parts that are missing.')
         try:
+            # A completion is the upload in use: touched, so a different plan
+            # sent while the file is being hashed does not replace it as idle.
+            os.utime(folder)
             found = _check_and_publish(base, sha, folder, plan)
         except FileNotFoundError:
             # Another engine process finished this same upload and removed its
             # folder while this one was checking it: the lens is held, or the
-            # upload is gone. Never an error number or a path of the engine's.
+            # upload is gone. Never an error number or a path of the engine's,
+            # and nothing is discarded: an upload that is there now is one
+            # another sender has begun since.
             found = _entry(base, sha)
             if found is None:
-                _discard(folder)
-                raise not_begun(sha) from None
+                raise _upload_gone(base, sha) from None
+            return {'held': True, 'bytes': found['bytes']}
         _discard(folder)
         return {'held': True, 'bytes': found['bytes']}
 
 
 def _check_and_publish(base, sha, folder, plan):
     def discarded(code, what, repair):
+        if _upload(base, sha)[1] != plan:
+            # What was just checked is not the upload this completion began
+            # with: another engine process replaced it meanwhile. That upload
+            # is its sender's, and is left alone.
+            return _upload_gone(base, sha)
         _discard(folder)
         return LensLibraryRefusal(
             code, f'The uploaded file {what}, so the upload was discarded and nothing was added to the lens library.',

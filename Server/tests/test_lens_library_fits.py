@@ -135,6 +135,71 @@ def test_a_fit_is_kept_under_the_hash_its_import_records_and_a_request_can_refer
     assert report['comparisons'] == direct['comparisons']
 
 
+def test_an_assessment_stops_when_the_library_loses_a_lens_and_never_reads_the_path_its_record_names(
+        site, monkeypatch, tmp_path_factory):
+    """Review 2, finding 1, as it was reproduced. The candidate's record names an absolute path in the importer's
+    layout, as the published importer writes one, and on the engine's host that path holds the REFERENCE lens's
+    bytes. An assessment resolves a lens again for every layer it loads. With the candidate's entry lost after
+    the job verified its inputs, it used to read that path and report two identical lenses."""
+    from steerlab_server.experiment import managed_methods
+    from steerlab_server.jlens import artifact_paths
+    root, config, profile, library = site
+    theirs = tmp_path_factory.mktemp('researcher')
+    shutil.copy(root / 'corpus.jsonl', theirs / 'corpus.jsonl')
+    reference = imported(run(theirs, config)['artifactDescription'], theirs)
+    candidate = imported(run(theirs, {**config, 'maxPrompts': 1})['artifactDescription'], theirs)
+    assert candidate.converted.sha256 != reference.converted.sha256
+    absolute = theirs / candidate.converted.path
+    record = theirs / 'runs/jlens-lenses' / candidate.lensID / 'lens.json'
+    document = json.loads(record.read_bytes())
+    document['converted']['path'] = str(absolute)
+    record.write_text(json.dumps(document))
+    for lens in (reference, candidate):
+        assert push(library_client(), theirs / 'runs/jlens-lenses' / lens.lensID / 'jacobians.safetensors')[2].json()['held']
+    held_out = theirs / 'assessment.jsonl'
+    held_out.write_text(''.join(json.dumps({'id': str(i), 'text': text}) + '\n' for i, text in enumerate(['24', '2', '30', '25'])))
+    settings = assessment.AssessmentConfig.from_dict({
+        **{key: config[key] for key in ('modelID', 'revision', 'dtype', 'device')},
+        'corpus': {'path': held_out.name, 'sha256': archives.file_hash(held_out)},
+        'referenceLensID': reference.lensID, 'candidateLensID': candidate.lensID,
+        'maxPrompts': 4, 'maxSeqLen': 32, 'skipFirst': 2, 'maxPositionsPerRow': 20, 'topK': 2})
+    monkeypatch.setattr(Tiny, 'unembed', lambda self, h: torch.tanh(h / 30) @ torch.tensor(
+        [[1., .3, -.2, .7], [-.2, .8, .5, -.1]]), raising=False)
+    honest = json.loads(Path(assessment.assess(settings, root=theirs)['reportPath']).read_bytes())
+
+    request = {'operation': 'jlens-fit-assess', 'parameters': {'config': settings.to_dict()}}
+    referred = diagnostic_inputs.plan(request, theirs, lens_reference=True)
+    packed = diagnostic_inputs.package(request, theirs, theirs / 'referred.tar.gz', referred['planSHA256'], lens_reference=True)
+    (root / 'runs').mkdir(exist_ok=True)
+    shutil.copy(packed['bundlePath'], root / 'runs/referred.tar.gz')
+    staged = transport.stage('referred.tar.gz', packed['bundleSha256'], profile)
+    # On this host, the path the candidate's record names now holds the reference lens.
+    shutil.copy(theirs / 'runs/jlens-lenses' / reference.lensID / 'jacobians.safetensors', absolute)
+
+    plan = scientific_execution.plan(staged['request'], profile)
+    code, output = execute(root, plan, 'held')
+    assert code == 0 and output['status'] == 'succeeded', output.get('error')
+    report = json.loads(Path(output['result']['reportPath']).read_bytes())
+    assert report['layers'] == honest['layers'] and report['comparisons'] == honest['comparisons']
+
+    real, seen = managed_methods.execute, {}
+
+    def after_the_job_verified_its_inputs(operation, settings_, execution_root, **kwargs):
+        seen['pinned'] = artifact_paths.pinned_library_lenses()
+        shutil.rmtree(library / candidate.converted.sha256)          # the library loses the candidate
+        return real(operation, settings_, execution_root, **kwargs)
+    monkeypatch.setattr(managed_methods, 'execute', after_the_job_verified_its_inputs)
+    code, output = execute(root, plan, 'lost')
+    assert seen['pinned'] == {reference.lensID: reference.converted.sha256, candidate.lensID: candidate.converted.sha256}
+    assert code == 70 and output['status'] == 'failed', output
+    assert output['error'] == (
+        f"The lens library no longer holds the lens '{candidate.lensID}' (converted SHA-256 "
+        f"{candidate.converted.sha256}), which this job's plan took from it. The job stopped, and read the lens from "
+        f'nowhere else. Send the lens again with `remote lens-push {candidate.lensID}` (or `runner lens-push`), then '
+        'run the request again.')
+    assert 'reportPath' not in output['result'] and artifact_paths.pinned_library_lenses() == {}
+
+
 def test_a_copy_that_cannot_be_made_never_fails_the_fit_or_touches_its_files(site, monkeypatch):
     root, config, profile, library = site
     seen, publish = {}, lens_library._publish
@@ -284,6 +349,22 @@ def test_a_purged_entry_is_replaced_when_the_lens_is_fitted_again(site):
     (library / sha / 'jacobians.safetensors').unlink()
     busy = fit(root, config, profile, 'third')['lensLibrary']
     assert busy['kept'] is False and 'being published right now' in busy['reason'] and 'the fit itself is unaffected' in busy['reason']
+
+
+def test_a_fit_is_not_kept_over_an_entry_a_newer_engine_wrote(site):
+    root, config, profile, library = site
+    sha = fit(root, config, profile, 'first')['lensLibrary']['convertedSHA256']
+    record = json.loads((library / sha / 'entry.json').read_bytes())
+    (library / sha / 'entry.json').write_text(json.dumps({**record, 'schemaVersion': 2}))
+    (library / sha / 'jacobians.safetensors').rename(library / sha / 'jacobians.later')
+    idle(library / sha, 2 * lens_library.STALE_STAGING_SECONDS)
+    before = files_of(library / sha)
+    newer = fit(root, config, profile, 'second')['lensLibrary']
+    assert newer['kept'] is False and newer['convertedSHA256'] is None
+    assert 'written by a newer version of the engine' in newer['reason'] and 'the fit itself is unaffected' in newer['reason']
+    assert str(library) not in newer['reason']
+    # The newer engine's entry is exactly as it was, and nothing was set aside or left behind.
+    assert files_of(library / sha) == before and not list((library / '.incoming').iterdir())
 
 
 def test_the_kept_lens_reaches_the_job_a_scheduler_ran(site):
