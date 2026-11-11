@@ -34,6 +34,28 @@ import Testing
             .hasSuffix("select the new lens."))
     }
 
+    /// A failed import's job error is the refusal's sentence, then its
+    /// repair, behind the name of the error's class (the engine's test:
+    /// `test_a_refused_imports_job_error_is_its_sentence_then_its_repair`).
+    /// The dialog shows the sentence and the repair, and not that name.
+    @Test func theDialogShowsARefusalWithItsRepairAndWithoutAClassName() {
+        let sentence = "This workspace already holds these files as lens custom-lens-example, but its converted "
+            + "file (runs/jlens-lenses/custom-lens-example/jacobians.safetensors) differs from the SHA-256 its "
+            + "record names. Nothing was imported, and that file was left as it is."
+        let repair = "Move that file aside, then import again: the import puts back the file the record names."
+        #expect(ArtifactImportSelection.failureStatus(
+            jobStatus: "failed", error: "ImportRefusal: \(sentence) \(repair)")
+            == "Import failed: \(sentence) \(repair)")
+        // Only that name, and only in front: any other error reads as before.
+        #expect(ArtifactImportSelection.failureStatus(jobStatus: "failed", error: "RuntimeError: out of memory")
+            == "Import failed: RuntimeError: out of memory")
+        #expect(ArtifactImportSelection.failureStatus(
+            jobStatus: "failed", error: "ValueError: an ImportRefusal: was raised")
+            == "Import failed: ValueError: an ImportRefusal: was raised")
+        #expect(ArtifactImportSelection.failureStatus(jobStatus: "cancelled", error: nil)
+            == "Import cancelled: See the job log.")
+    }
+
     @Test func localDescriptionPlansAndPublishesThroughThePortableOwner() async throws {
         let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let python = URL(filePath: try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"]))

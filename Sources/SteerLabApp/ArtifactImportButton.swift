@@ -146,7 +146,8 @@ private struct ArtifactImportSheet: View {
                     status = "Import is still running. Follow its job in Compute."; return
                 }
                 guard job.status == "succeeded" else {
-                    status = "Import \(job.status): \(job.error ?? "See the job log.")"; return
+                    status = ArtifactImportSelection.failureStatus(jobStatus: job.status, error: job.error)
+                    return
                 }
                 if service.cluster.activeWorkspace == origin {
                     _ = await service.catalog.refreshRemoteVectors()

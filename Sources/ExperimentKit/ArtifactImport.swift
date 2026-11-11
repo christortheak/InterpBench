@@ -58,6 +58,17 @@ public struct ArtifactImportSelection: Sendable {
         return Self(description: url, kind: value.kind, modelID: value.modelID, files: files)
     }
 
+    /// What the import dialog says when the import job did not succeed. The
+    /// engine's job error is the refusal's sentence, then its repair, behind
+    /// the name of the error's class. The dialog shows the sentence and the
+    /// repair, as the command lines do, and not that name.
+    public static func failureStatus(jobStatus: String, error: String?) -> String {
+        let className = "ImportRefusal: "
+        guard let error, !error.isEmpty else { return "Import \(jobStatus): See the job log." }
+        return "Import \(jobStatus): "
+            + (error.hasPrefix(className) ? String(error.dropFirst(className.count)) : error)
+    }
+
     /// What the import dialog says once the import job has succeeded. A lens
     /// is named from its reviewed files, so importing files the workspace
     /// already holds as a lens finds that lens (the job's result says

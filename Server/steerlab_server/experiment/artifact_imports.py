@@ -232,8 +232,11 @@ def existing_lens(plan, root):
     bytes has a random one), or None.
 
     A lens is the one being imported when its ``import-receipt.json`` lists
-    the same files as the plan, role for role, with the same SHA-256: the
-    description, the tensor file, and the config file when there is one. A
+    the same files as the plan, role for role, with the same SHA-256 (the
+    description, the tensor file, and the config file when there is one),
+    and its record agrees: ``source.tensorSHA256`` is the plan's tensor hash
+    and ``source.configSHA256`` the plan's description hash. A receipt that
+    lists these files beside a record of other bytes is not this lens. A
     lens with no readable receipt is not a match, and neither is a folder
     whose record names another lens. Several matches give the content-derived
     name first, then the oldest.
@@ -243,6 +246,7 @@ def existing_lens(plan, root):
     never stop this import."""
     from ..jlens.schemas import JLensRecord
     wanted = file_hashes(plan['files'])
+    tensor, description = plan['files']['tensorFile']['sha256'], plan['files']['description']['sha256']
     library = Path(root) / LENS_FOLDER
     try:
         folders = sorted(item for item in library.iterdir() if item.is_dir() and not item.is_symlink())
@@ -259,7 +263,10 @@ def existing_lens(plan, root):
             # aside (renamed in place), not a lens of this workspace.
             if not isinstance(document, dict) or document.get('lensID') != folder.name:
                 continue
-            matches.append((folder.name, JLensRecord.from_dict(document)))
+            record = JLensRecord.from_dict(document)
+            if record.source.tensorSHA256 != tensor or record.source.configSHA256 != description:
+                continue
+            matches.append((folder.name, record))
         except Exception:   # noqa: BLE001 - unreadable is "not this lens", whatever the reason
             continue
     derived = lens_name(plan)
@@ -296,13 +303,19 @@ def existing_lens_state(lens_id, record, root):
                        _move_aside(folder))
     try:
         path = diagnostic_archives.ordinary(root, canonical, missing=True)
-    except diagnostic_archives.Refusal:
+    except diagnostic_archives.PathRefusal:
         path = None
+    except diagnostic_archives.Refusal:
+        # Not a link and not a folder: the name itself. A folder name can
+        # hold a backslash; a workspace path cannot.
+        raise _refusal(held + 'its name has a character a workspace path cannot have (a backslash), so its '
+                       'converted file cannot be checked. Nothing was imported.', _move_aside(folder)) from None
     if path is not None and not path.exists():
         return False
     if path is None or not path.is_file():
-        raise _refusal(held + f'{canonical} is not an ordinary file inside the workspace (it is a folder, or is '
-                       'reached through a symbolic link), so it cannot be checked. Nothing was imported.',
+        raise _refusal(held + f'{canonical} is not an ordinary file inside the workspace (it is a folder or '
+                       'something else that is not a file, or is reached through a symbolic link), so it '
+                       'cannot be checked. Nothing was imported.',
                        'Put an ordinary file or nothing at that path, then import again.')
     if artifact_sources.digest(path) != converted.sha256:
         raise _refusal(held + f'its converted file ({canonical}) differs from the SHA-256 its record names. '
@@ -314,16 +327,37 @@ def existing_lens_state(lens_id, record, root):
 def _existing_result(lens_id, record, plan, root):
     # A record can hold a number that is not finite (a qualification's
     # measured values); what an import answers is strict JSON.
+    # ``recordNonFiniteNumbers`` counts the numbers that are null in it.
     from .strict_json import strict
-    return {'kind': 'jlens', 'lensID': lens_id, 'record': strict(record.to_dict())[0], 'changed': False,
-            'existing': True, 'outputDirectory': str(Path(root) / LENS_FOLDER / lens_id),
+    stored, count = strict(record.to_dict())
+    return {'kind': 'jlens', 'lensID': lens_id, 'record': stored, 'recordNonFiniteNumbers': count,
+            'changed': False, 'existing': True, 'outputDirectory': str(Path(root) / LENS_FOLDER / lens_id),
             'warnings': plan['warnings']}
 
 
 def _taken(target, root):
-    return _refusal(f'A folder named {target.relative_to(root).as_posix()} already exists and holds no lens record '
-                    f'for {target.name} with an import receipt for these files, so nothing was imported.',
-                    'Move that folder aside, then import again.')
+    """The refusal for a lens name that something else already has. Said as
+    what is there: a symbolic link, a file, or a folder that is not the lens
+    these files make."""
+    name = target.relative_to(root).as_posix()
+    if target.is_symlink():
+        return _refusal(f'{name} is a symbolic link, and a lens is read only from an ordinary folder inside '
+                        'the workspace, so nothing was imported.',
+                        'Move that link aside, or put the lens folder itself there in place of the link; then '
+                        'import again.')
+    if not target.is_dir():
+        return _refusal(f'{name} already exists and is not a folder, so nothing was imported.',
+                        'Move it aside, then import again.')
+    return _refusal(f'A folder named {name} already exists and does not hold the lens these files make (a record '
+                    f'for {target.name} that names these files, with an import receipt for them), so nothing '
+                    'was imported.', 'Move that folder aside, then import again.')
+
+
+def _missing_again(lens_id):
+    """Another import held the lens's name, or its converted file's, and the
+    file is not there now."""
+    return _refusal(f'This workspace already holds these files as lens {lens_id}, but its converted file '
+                    'is missing. Nothing was imported.', 'Import again: the import puts that file back.')
 
 
 def _capture(plan, staged):
@@ -369,9 +403,18 @@ def _restore(lens_id, record, spec, plan, tensors, captured, staged, root):
         diagnostic_archives.publish_file(converted, diagnostic_archives.ordinary(root, f'{folder}/{CONVERTED_NAME}', missing=True))
     except FileExistsError:
         # A file appeared there meanwhile. It is checked like any other, and
-        # never replaced.
-        existing_lens_state(lens_id, record, root)
+        # never replaced; if it is gone again, there is no lens file to
+        # answer "already here" about.
+        if not existing_lens_state(lens_id, record, root):
+            raise _missing_again(lens_id) from None
         return _existing_result(lens_id, record, plan, root)
+    except OSError as exc:
+        # The one file is published with a hard link, which some disks do
+        # not have (ExFAT). A whole lens folder is published another way, so
+        # importing afresh works there.
+        raise _refusal(f'This workspace already holds these files as lens {lens_id}, but its missing '
+                       f'converted file could not be put back: a single file cannot be added to {folder} on '
+                       'this disk. Nothing was changed.', _move_aside(folder)) from exc
     return {**_existing_result(lens_id, record, plan, root), 'changed': True, 'restored': True}
 
 
@@ -427,9 +470,7 @@ def publish(description_file, root, expected):
             if held is None:
                 raise _taken(target, root) from None
             if not existing_lens_state(*held, root):
-                raise _refusal(f'This workspace already holds these files as lens {held[0]}, but its converted file '
-                               'is missing. Nothing was imported.',
-                               'Import again: the import puts that file back.') from None
+                raise _missing_again(held[0]) from None
             return _existing_result(*held, plan, root)
     return {**result, 'changed': True, 'outputDirectory': str(target), 'warnings': plan['warnings']}
 

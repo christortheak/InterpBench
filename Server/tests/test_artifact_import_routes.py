@@ -45,6 +45,66 @@ def test_staged_lens_reaches_the_existing_library(tmp_path, monkeypatch):
     assert duplicate.status_code == 400
 
 
+def test_a_refused_imports_job_error_is_its_sentence_then_its_repair(tmp_path, monkeypatch):
+    """The app's import dialog shows a failed job's error, which is one
+    string. A refusal that carries its own repair says it there, after its
+    sentence, as both command lines show it. The job layer puts the name of
+    the error's class in front; the dialog drops it
+    (``ArtifactImportSelection.failureStatus``)."""
+    import time
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    monkeypatch.setenv('STEERLAB_ROOT', str(tmp_path))
+    jobs = JobManager(DurableJobStore(str(tmp_path / 'jobs.sqlite')), capability_provider=lambda: {'test': True})
+    app = FastAPI(); app.include_router(build_router(SimpleNamespace(jobs=jobs)))
+    client = TestClient(app)
+    source = 'b' * 32
+    weights = tmp_path / 'weights.safetensors'
+    save_file({'L1': np.eye(2, dtype=np.float32)}, str(weights))
+    spec = {'schemaVersion': 1, 'kind': 'jlens', 'modelID': 'example/model',
+            'hiddenSize': 2, 'layerCount': 3, 'tensorFile': 'weights.safetensors',
+            'lens': {'targetLayer': 2, 'layers': {'1': 'L1'}}}
+    for name, data in [('import.json', json.dumps(spec).encode()), ('weights.safetensors', weights.read_bytes())]:
+        staged = client.post(f'/api/artifact-imports/stage/{source}/{name}', content=data,
+                             headers={'X-Content-SHA256': hashlib.sha256(data).hexdigest()})
+        assert staged.status_code == 200, staged.text
+    reference = f'.steerlab/artifact-inputs/{source}/import.json'
+    request = {'descriptionFile': reference,
+               'planSHA256': client.post('/api/artifact-imports/plan', json={'descriptionFile': reference}).json()['planSHA256']}
+
+    def finished():
+        job_id = client.post('/api/artifact-imports/import', json=request).json()['jobId']
+        deadline = time.time() + 20
+        while time.time() < deadline and jobs.get(job_id).status not in {'succeeded', 'failed'}:
+            time.sleep(0.02)
+        return jobs.get(job_id)
+
+    first = finished()
+    assert first.status == 'succeeded' and first.error is None
+    lens = first.result['lensID']
+    file = tmp_path / 'runs/jlens-lenses' / lens / 'jacobians.safetensors'
+    good = file.read_bytes()
+    file.write_bytes(good[:-1] + bytes([good[-1] ^ 1]))
+
+    damaged = finished()
+    assert damaged.status == 'failed'
+    assert damaged.error == (
+        f'ImportRefusal: This workspace already holds these files as lens {lens}, but its converted file '
+        f'(runs/jlens-lenses/{lens}/jacobians.safetensors) differs from the SHA-256 its record names. Nothing was '
+        'imported, and that file was left as it is. Move that file aside, then import again: the import puts back '
+        'the file the record names.')
+    # The repair in that sentence, carried out: the job succeeds and says the file was put back.
+    file.rename(file.with_name('jacobians.safetensors.aside'))
+    repaired = finished()
+    assert repaired.status == 'succeeded' and repaired.result['restored'] is True and file.read_bytes() == good
+
+    # A refusal with no repair of its own stays one sentence: the family's general advice is not added to it.
+    (tmp_path / reference).write_text(json.dumps({**spec, 'modelID': 'example/another-model'}))
+    stale = finished()
+    assert stale.status == 'failed'
+    assert stale.error == ('ImportRefusal: The reviewed description, source files, or calibration changed. Review a '
+                           'fresh plan before importing.')
+
+
 def test_staging_bad_hash_and_external_description_publish_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv('STEERLAB_ROOT', str(tmp_path))
     app = FastAPI(); app.include_router(build_router(SimpleNamespace()))
