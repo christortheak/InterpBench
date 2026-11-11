@@ -167,13 +167,15 @@ stays its source. Two verbs take it elsewhere without minting another lens:
   with the `--plan-sha256` the review shows to copy. Every file is hashed before
   and after. On macOS each file is cloned where the filesystem allows, so the
   copy uses no extra disk space; elsewhere, or where a clone fails, it is a full
-  copy, and the result's `copyMethod` says which. A lens already present is
-  checked, not copied again: intact, nothing changes; its converted file
-  missing, that file is put back (`restored: true`); its converted file
-  different, the copy is refused and the file is left alone. The same lens
-  under another name (the same reviewed files) is reported as
-  `existingLensID`, and nothing is copied. A different lens under that name is
-  refused.
+  copy, and the result's `copyMethod` says which. A lens already present under
+  that name is checked, not copied again: intact, nothing changes; its
+  converted file missing, that file is put back (`restored: true`); its
+  converted file different, the copy is refused and the file is left alone. A
+  different lens under that name is refused. A study names a lens by its ID, so
+  when the workspace holds the same lens under another name (the same reviewed
+  files), the copy is still made under the origin's name. The review and the
+  copy both list those other names, sorted, in `alsoHeldAs` (an empty list when
+  there are none), and the message names them.
 - **A site.** `steerlab-cli remote lens-push <lensID> --site <id>` (or `steerlab
   runner lens-push <lensID> --runner <url>`) sends the converted file to the
   site's lens library once, in parts that follow its layers, each checked, and

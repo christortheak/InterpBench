@@ -273,8 +273,9 @@ public enum ExperimentCLIParser {
         "Copy a lens from another workspace on this machine into this one, under the same name and "
         + "record. Reviews by default and writes nothing; repeat with the --plan-sha256 the review "
         + "shows to copy it. Each file is checked before and after, and on macOS the copy is a clone "
-        + "that uses no extra disk space where the filesystem allows. A lens already here is not "
-        + "copied again; its converted file is put back if it is missing."
+        + "that uses no extra disk space where the filesystem allows. A lens already here under that "
+        + "name is not copied again; its converted file is put back if it is missing. The answer lists "
+        + "any other names under which this workspace holds the same lens."
     /// Python twin: `science_commands.LENS_PUSH_PURPOSE`.
     static let lensPushPurpose =
         "Send a workspace lens to the site's lens library once, in parts that follow its layers, each "

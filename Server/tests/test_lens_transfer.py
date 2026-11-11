@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import httpx
 import numpy as np
 import pytest
+import torch
 from safetensors.numpy import save_file
 
 from steerlab_server import client_cli
@@ -31,6 +32,7 @@ from steerlab_server.client import diagnostic_commands, diagnostic_workspace, le
 from steerlab_server.client import runner as runner_api
 from steerlab_server.experiment import artifact_imports as imports
 from steerlab_server.experiment import diagnostic_archives as archives
+from steerlab_server.jlens import lens_store
 
 FIXTURE = json.loads((Path(__file__).resolve().parents[2]
                       / 'prompts/fixtures/lens-library/refusals.json').read_text(encoding='utf-8'))
@@ -1037,40 +1039,117 @@ def test_a_lens_already_here_is_checked_and_its_missing_file_is_put_back(tmp_pat
     assert file.read_bytes() == good
 
 
-def test_the_same_lens_under_another_name_is_not_copied_again(tmp_path):
-    """One lens, one name: an older import's random name in the other
-    workspace, and the same files under the content-derived name here."""
-    origin, derived = make_lens(tmp_path, name='first')
-    old_name = 'custom-lens-' + '5e' * 16
-    lens_folder(origin, derived).rename(lens_folder(origin, old_name))
-    record_file = lens_folder(origin, old_name) / 'lens.json'
+def renamed(root, lens_id, name):
+    """The lens ``lens_id`` of ``root`` under the name ``name`` instead, as an
+    older import's random name was: same files, same receipt."""
+    lens_folder(root, lens_id).rename(lens_folder(root, name))
+    record_file = lens_folder(root, name) / 'lens.json'
     record = json.loads(record_file.read_text())
-    record['lensID'] = old_name
-    record['converted']['path'] = f'runs/jlens-lenses/{old_name}/jacobians.safetensors'
+    record['lensID'] = name
+    record['converted']['path'] = f'runs/jlens-lenses/{name}/jacobians.safetensors'
     record_file.write_text(json.dumps(record))
+    return name
+
+
+def test_the_same_lens_under_another_name_is_still_copied_under_the_origins_name(tmp_path):
+    """A study names a lens by its ID, so the copy is made under the origin's
+    name even when this workspace holds the same lens under another: an older
+    import's random name in the other workspace, and the same files under the
+    content-derived name here. The answer lists the other names."""
+    origin, derived = make_lens(tmp_path, name='first')
+    old_name = renamed(origin, derived, 'custom-lens-' + '5e' * 16)
 
     root = second_workspace(tmp_path)
     description = tmp_path / 'first-source' / 'import.json'
     plan = imports.inspect_source(description, root)
     assert imports.publish(description, root, plan['planSHA256'])['lensID'] == derived
-    before = stamps(root / 'runs')
-    for expected in (None, 'reviewed'):
-        result = lens_transfer.copy(root, old_name, str(origin), expected and lens_transfer.copy(root, old_name, str(origin))['planSHA256'])
-        assert (result['existing'], result['changed'], result['action']) == (True, False, 'none')
-        assert result['existingLensID'] == derived
-        assert lens_transfer.copy_message(result) == f'This workspace already holds this lens as {derived}; nothing was copied.'
-    assert stamps(root / 'runs') == before and not lens_folder(root, old_name).exists()
+    # What a study does with the name it was given finds nothing here yet.
+    with pytest.raises(Exception, match=f"no imported lens '{old_name}'"):
+        lens_store.resolve(old_name, str(root))
+    before = stamps(lens_folder(root, derived))
 
+    preview = lens_transfer.copy(root, old_name, str(origin))
+    assert (preview['action'], preview['existing'], preview['changed']) == ('copy', False, False)
+    assert preview['alsoHeldAs'] == [derived] and 'existingLensID' not in preview
+    assert not lens_folder(root, old_name).exists(), 'a preview writes nothing'
+    assert lens_transfer.copy_message(preview) == (
+        f"Reviewed a copy of lens {old_name} ({len(preview['files'])} files, {preview['bytes']} bytes); nothing "
+        f"was written. Repeat the command with --plan-sha256 {preview['planSHA256']} to copy it. This workspace "
+        f'holds the same lens under another name: {derived}.')
+    result = lens_transfer.copy(root, old_name, str(origin), preview['planSHA256'])
+    assert (result['action'], result['existing'], result['changed']) == ('copy', False, True)
+    assert result['alsoHeldAs'] == [derived] and result['copyMethod'] in ('clone', 'copy')
+    assert lens_transfer.copy_message(result).endswith(
+        f', under the same name and record. This workspace holds the same lens under another name: {derived}.')
+    assert tree(lens_folder(root, old_name)) == tree(lens_folder(origin, old_name))
+    assert stamps(lens_folder(root, derived)) == before, 'the lens under the other name is left as it was'
+
+    # Now the study's lookup resolves: the record under the origin's name, and a layer read through it.
+    found = lens_store.resolve(old_name, str(root))
+    assert found.lensID == old_name and found.converted.sha256 == result['convertedSHA256']
+    twin = lens_store.resolve(derived, str(root))
+    for layer in found.sourceLayers:
+        assert torch.equal(lens_store.load_layer(found, layer, root=str(root)),
+                           lens_store.load_layer(twin, layer, root=str(root)))
+    assert sorted(lens.lensID for lens in lens_store.list_lenses(str(root))) == sorted([derived, old_name])
+
+    # Run again, the lens is here under that name, and the other name is still told.
+    again = lens_transfer.copy(root, old_name, str(origin))
+    assert (again['action'], again['existing'], again['changed'], again['alsoHeldAs']) == ('none', True, False, [derived])
+    assert lens_transfer.copy_message(again) == (
+        f'This workspace already holds lens {old_name}; nothing was copied. This workspace holds the same lens '
+        f'under another name: {derived}.')
     # Where a receipt is missing, the records' three hashes decide.
     (lens_folder(root, derived) / 'import-receipt.json').unlink()
-    assert lens_transfer.copy(root, old_name, str(origin))['existingLensID'] == derived
-    # A workspace that holds a different lens copies this one.
+    assert lens_transfer.copy(root, old_name, str(origin))['alsoHeldAs'] == [derived]
+
+
+def test_the_other_names_are_all_listed_in_order_and_are_part_of_what_was_reviewed(tmp_path):
+    origin, derived = make_lens(tmp_path, name='first')
+    old_name = renamed(origin, derived, 'custom-lens-' + '5e' * 16)
+    description = tmp_path / 'first-source' / 'import.json'
+
+    # A workspace with no lens, and one that holds a different lens: no other name.
+    empty = second_workspace(tmp_path, 'empty')
+    reviewed = lens_transfer.copy(empty, old_name, str(origin))
+    assert reviewed['alsoHeldAs'] == [] and reviewed['action'] == 'copy'
+    assert lens_transfer.copy_message(reviewed).endswith(' to copy it.')
     other, _ = make_lens(tmp_path, name='third', seed=7)
-    assert lens_transfer.copy(other, old_name, str(origin))['action'] == 'copy'
+    assert lens_transfer.copy(other, old_name, str(origin))['alsoHeldAs'] == []
+
+    # The same lens arrives under another name after the review: the review no longer describes the workspace.
+    plan = imports.inspect_source(description, empty)
+    assert imports.publish(description, empty, plan['planSHA256'])['lensID'] == derived
+    with pytest.raises(lens_transfer.LensRefusal, match='changed after the copy was reviewed'):
+        lens_transfer.copy(empty, old_name, str(origin), reviewed['planSHA256'])
+    assert not lens_folder(empty, old_name).exists()
+
+    # Several other names are listed in order. A folder set aside in place (its record names another lens)
+    # is not a lens of this workspace, and neither is one that cannot be read.
+    for name in ('custom-lens-' + 'c3' * 16, 'custom-lens-' + '1b' * 16):
+        copied(empty, old_name, origin)
+        renamed(empty, old_name, name)
+    copied(empty, old_name, origin)
+    lens_folder(empty, old_name).rename(lens_folder(empty, old_name + '.aside'))
+    unreadable = lens_folder(empty, 'custom-lens-' + '00' * 16)
+    unreadable.mkdir()
+    (unreadable / 'lens.json').write_text('{not json')
+    names = sorted(['custom-lens-' + '1b' * 16, 'custom-lens-' + 'c3' * 16, derived])
+    listed = lens_transfer.copy(empty, old_name, str(origin))
+    assert listed['alsoHeldAs'] == names and listed['action'] == 'copy'
+    assert lens_transfer.copy_message(listed).endswith(
+        f' This workspace holds the same lens under other names: {names[0]}, {names[1]}, and {names[2]}.')
+    result = lens_transfer.copy(empty, old_name, str(origin), listed['planSHA256'])
+    assert result['changed'] is True and result['alsoHeldAs'] == names
+    assert lens_store.resolve(old_name, str(empty)).lensID == old_name
+
     for case in FIXTURE['copyMessages']:
         result = {key: value for key, value in case.items() if value is not None}
         assert lens_transfer.copy_message({**result, 'files': [None] * case['fileCount']}) == case['message']
-    assert len(FIXTURE['copyMessages']) == 8
+        assert 'existingLensID' not in case and isinstance(case['alsoHeldAs'], list)
+    assert len(FIXTURE['copyMessages']) == 10
+    assert [len(case['alsoHeldAs']) for case in FIXTURE['copyMessages']] == [0] * 7 + [1, 2, 3]
+    assert lens_transfer.also_held_clause([]) == lens_transfer.also_held_clause(None) == ''
 
 
 def test_a_copy_checks_every_file_before_and_after(tmp_path, monkeypatch):
@@ -1119,12 +1198,13 @@ def test_the_command_line_reviews_then_copies(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv('STEERLAB_ROOT', '')
     monkeypatch.delenv(client_cli.WORKSPACE_ENV, raising=False)
     code, document = cli(capsys, '--root', str(root), 'science', 'lens-copy', lens_id, '--from', str(origin))
-    assert code == 0 and document['changed'] is False
+    assert code == 0 and document['changed'] is False and document['result']['alsoHeldAs'] == []
     digest = document['result']['planSHA256']
     assert document['message'].endswith(f'Repeat the command with --plan-sha256 {digest} to copy it.')
     code, document = cli(capsys, '--root', str(root), 'science', 'lens-copy', lens_id, '--from', str(origin),
                          '--plan-sha256', digest)
     assert code == 0 and document['changed'] is True and document['result']['copyMethod'] in ('clone', 'copy')
+    assert document['result']['alsoHeldAs'] == [] and document['message'].endswith('under the same name and record.')
     assert (lens_folder(root, lens_id) / 'lens.json').is_file()
     code, document = cli(capsys, '--root', str(root), 'science', 'lens-copy', lens_id, '--from', str(origin))
     assert code == 0 and document['message'] == f'This workspace already holds lens {lens_id}; nothing was copied.'

@@ -65,7 +65,7 @@
   },
   "purposes": {
     "lensReference": "With --lens-reference, a request that names a lens refers to the copy in the site's lens library and leaves the lens file out; send the lens once with lens-push first.",
-    "lensCopy": "Copy a lens from another workspace on this machine into this one, under the same name and record. Reviews by default and writes nothing; repeat with the --plan-sha256 the review shows to copy it. Each file is checked before and after, and on macOS the copy is a clone that uses no extra disk space where the filesystem allows. A lens already here is not copied again; its converted file is put back if it is missing.",
+    "lensCopy": "Copy a lens from another workspace on this machine into this one, under the same name and record. Reviews by default and writes nothing; repeat with the --plan-sha256 the review shows to copy it. Each file is checked before and after, and on macOS the copy is a clone that uses no extra disk space where the filesystem allows. A lens already here under that name is not copied again; its converted file is put back if it is missing. The answer lists any other names under which this workspace holds the same lens.",
     "lensPush": "Send a workspace lens to the site's lens library once, in parts that follow its layers, each checked, and register its record there. Sends only what the site lacks, so it can be run again after an interruption. With --adopt, the site checks and keeps a copy already on it, and nothing is uploaded.",
     "lensStatus": "Report whether the site's lens library holds a workspace lens and whether the site has its record. Reads only.",
     "artifactImport": "Import the reviewed instrument into the workspace. A lens is named from its reviewed files, so importing the same files again finds the same lens, and puts its converted file back if it is missing."
@@ -175,7 +175,7 @@
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": null,
       "restored": false,
-      "existingLensID": null,
+      "alsoHeldAs": [],
       "action": "none",
       "existing": true,
       "changed": false,
@@ -188,7 +188,7 @@
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": null,
       "restored": false,
-      "existingLensID": null,
+      "alsoHeldAs": [],
       "action": "copy",
       "existing": false,
       "changed": false,
@@ -201,7 +201,7 @@
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": "clone",
       "restored": false,
-      "existingLensID": null,
+      "alsoHeldAs": [],
       "action": "copy",
       "existing": false,
       "changed": true,
@@ -214,7 +214,7 @@
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": "copy",
       "restored": false,
-      "existingLensID": null,
+      "alsoHeldAs": [],
       "action": "copy",
       "existing": false,
       "changed": true,
@@ -227,7 +227,7 @@
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": null,
       "restored": false,
-      "existingLensID": null,
+      "alsoHeldAs": [],
       "action": "restore",
       "existing": true,
       "changed": false,
@@ -240,7 +240,7 @@
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": "clone",
       "restored": true,
-      "existingLensID": null,
+      "alsoHeldAs": [],
       "action": "restore",
       "existing": true,
       "changed": true,
@@ -253,7 +253,7 @@
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": "copy",
       "restored": true,
-      "existingLensID": null,
+      "alsoHeldAs": [],
       "action": "restore",
       "existing": true,
       "changed": true,
@@ -264,13 +264,48 @@
       "fileCount": 4,
       "bytes": 999,
       "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": "clone",
+      "restored": false,
+      "alsoHeldAs": [
+        "custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+      ],
+      "action": "copy",
+      "existing": false,
+      "changed": true,
+      "message": "Copied lens custom-lens-example into this workspace as a clone that uses no extra disk space, under the same name and record. This workspace holds the same lens under another name: custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       "copyMethod": null,
       "restored": false,
-      "existingLensID": "custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+      "alsoHeldAs": [
+        "custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+        "custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+      ],
+      "action": "copy",
+      "existing": false,
+      "changed": false,
+      "message": "Reviewed a copy of lens custom-lens-example (4 files, 999 bytes); nothing was written. Repeat the command with --plan-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef to copy it. This workspace holds the same lens under other names: custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e and custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": null,
+      "restored": false,
+      "alsoHeldAs": [
+        "custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+        "custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+        "custom-lens-c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      ],
       "action": "none",
       "existing": true,
       "changed": false,
-      "message": "This workspace already holds this lens as custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e; nothing was copied."
+      "message": "This workspace already holds lens custom-lens-example; nothing was copied. This workspace holds the same lens under other names: custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e, custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a, and custom-lens-c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3."
     }
   ],
   "importMessages": [

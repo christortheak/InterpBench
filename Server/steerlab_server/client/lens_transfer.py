@@ -724,14 +724,15 @@ def same_lens(origin, origin_folder, origin_record, root, folder, record):
     return None not in _record_hashes(record)[:2] and _record_hashes(record) == _record_hashes(origin_record)
 
 
-def _same_lens_elsewhere(origin, origin_folder, origin_record, root, lens_id):
-    """The name under which ``root`` already holds the origin's lens, when
-    that is another name than ``lens_id``. Folders that cannot be read are
-    passed over."""
+def _also_held_as(origin, origin_folder, origin_record, root, lens_id):
+    """The other names, sorted, under which ``root`` holds the origin's lens:
+    every lens folder but ``lens_id``'s whose lens is the same one
+    (:func:`same_lens`). Folders that cannot be read are passed over."""
     try:
         folders = sorted(item.name for item in (root / LENS_FOLDER).iterdir() if item.is_dir() and not item.is_symlink())
     except OSError:
-        return None
+        return []
+    names = []
     for name in folders:
         if name == lens_id or name.startswith('.'):
             continue
@@ -743,8 +744,8 @@ def _same_lens_elsewhere(origin, origin_folder, origin_record, root, lens_id):
         # aside (renamed in place), not a lens of this workspace.
         if (isinstance(record, dict) and record.get('lensID') == name
                 and same_lens(origin, origin_folder, origin_record, root, f'{LENS_FOLDER}/{name}', record)):
-            return name
-    return None
+            names.append(name)
+    return names
 
 
 def _copy_plan(root, lens_id, source_root):
@@ -787,7 +788,7 @@ def _copy_plan(root, lens_id, source_root):
             'its record names; nothing was copied.',
             'In that workspace, move that file aside and import the lens again from its source files (the '
             'import puts back the file the record names), then run lens-copy again.', code='lensFileDiffers')
-    action, existing_id = 'copy', None
+    action = 'copy'
     target = _ordinary(root, folder, 'this workspace', missing=True)
     if target.exists():
         try:
@@ -820,15 +821,13 @@ def _copy_plan(root, lens_id, source_root):
                 'workspace.', code='lensFileDiffers')
         else:
             action = 'none'
-    else:
-        existing_id = _same_lens_elsewhere(origin, folder, record, root, lens_id)
-        if existing_id is not None:
-            action = 'none'
+    # A study names a lens by its ID, so the copy is made under the origin's
+    # name even when this workspace holds the same lens under another one.
+    # The answer lists those names: one lens under two names is worth knowing.
     plan = {'schemaVersion': 1, 'lensID': lens_id, 'sourceRoot': str(origin), 'workspaceRoot': str(root),
             'directory': folder, 'files': entries, 'bytes': sum(entry['bytes'] for entry in entries),
-            'convertedSHA256': record['converted']['sha256'], 'action': action}
-    if existing_id is not None:
-        plan['existingLensID'] = existing_id
+            'convertedSHA256': record['converted']['sha256'], 'action': action,
+            'alsoHeldAs': _also_held_as(origin, folder, record, root, lens_id)}
     return {**plan, 'planSHA256': archives.digest(plan)}, origin, root
 
 
@@ -842,11 +841,16 @@ def copy(root, lens_id, source_root, expected=None):
     file is cloned where the filesystem allows; anywhere else, or where a
     clone fails, it is copied. ``copyMethod`` says which.
 
-    A lens already here is not copied again. Under the same name it is
-    checked: intact, nothing changes; its converted file missing, that one
-    file is put back (``restored``); its converted file different, the copy
-    is refused and the file is left alone. Under another name (the same
-    reviewed files), nothing is copied and ``existingLensID`` names it."""
+    A lens already here under that name is not copied again. It is checked:
+    intact, nothing changes; its converted file missing, that one file is put
+    back (``restored``); its converted file different, the copy is refused
+    and the file is left alone.
+
+    A study names a lens by its ID. So when this workspace holds the same
+    lens under another name (the same reviewed files), the copy is still
+    made under the origin's name, as any other copy is. ``alsoHeldAs`` lists
+    those other names, sorted, in the review and in the copy; it is empty
+    when there are none."""
     plan, origin, root = _copy_plan(root, lens_id, source_root)
     existing = plan['action'] != 'copy'
     if expected is None:
@@ -891,22 +895,36 @@ def copy(root, lens_id, source_root, expected=None):
             'outputDirectory': str(parent / lens_id)}
 
 
+def also_held_clause(names):
+    """What a ``lens-copy`` answer adds when this workspace holds the same
+    lens under other names (``alsoHeldAs``), and nothing when it holds none.
+    True before the copy and after it. Swift twin
+    ``LensLibrary.alsoHeldClause``."""
+    names = list(names or ())
+    if not names:
+        return ''
+    listed = ' and '.join(names) if len(names) <= 2 else ', '.join(names[:-1]) + ', and ' + names[-1]
+    return (' This workspace holds the same lens under '
+            + ('another name: ' if len(names) == 1 else 'other names: ') + listed + '.')
+
+
 def copy_message(result):
-    """One true sentence about a ``lens-copy`` answer. Swift twin
-    ``LensLibrary.copyMessage``."""
+    """What a ``lens-copy`` answer says, true in every case; it ends by
+    naming any other names under which this workspace holds the same lens.
+    Swift twin ``LensLibrary.copyMessage``."""
     lens = result['lensID']
     again = f"Repeat the command with --plan-sha256 {result['planSHA256']}"
     how = 'as a clone that uses no extra disk space' if result.get('copyMethod') == 'clone' else 'as a full copy'
-    if result.get('existingLensID'):
-        return f"This workspace already holds this lens as {result['existingLensID']}; nothing was copied."
     if result.get('restored'):
-        return f'Lens {lens} was already in this workspace; its missing converted file was put back {how}.'
-    if result.get('action') == 'restore':
-        return (f'Lens {lens} is already in this workspace, but its converted file is missing; nothing was '
+        said = f'Lens {lens} was already in this workspace; its missing converted file was put back {how}.'
+    elif result.get('action') == 'restore':
+        said = (f'Lens {lens} is already in this workspace, but its converted file is missing; nothing was '
                 f'written. {again} to put that file back.')
-    if result['existing']:
-        return f'This workspace already holds lens {lens}; nothing was copied.'
-    if not result['changed']:
-        return (f"Reviewed a copy of lens {lens} ({len(result['files'])} files, {result['bytes']} bytes); "
+    elif result['existing']:
+        said = f'This workspace already holds lens {lens}; nothing was copied.'
+    elif not result['changed']:
+        said = (f"Reviewed a copy of lens {lens} ({len(result['files'])} files, {result['bytes']} bytes); "
                 f'nothing was written. {again} to copy it.')
-    return f'Copied lens {lens} into this workspace {how}, under the same name and record.'
+    else:
+        said = f'Copied lens {lens} into this workspace {how}, under the same name and record.'
+    return said + also_held_clause(result.get('alsoHeldAs'))

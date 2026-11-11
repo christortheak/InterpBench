@@ -28,7 +28,9 @@ LENS_COPY_PURPOSE = ('Copy a lens from another workspace on this machine into th
                      'and record. Reviews by default and writes nothing; repeat with the --plan-sha256 the '
                      'review shows to copy it. Each file is checked before and after, and on macOS the copy '
                      'is a clone that uses no extra disk space where the filesystem allows. A lens already '
-                     'here is not copied again; its converted file is put back if it is missing.')
+                     'here under that name is not copied again; its converted file is put back if it is '
+                     'missing. The answer lists any other names under which this workspace holds the same '
+                     'lens.')
 
 VERB_SPECS = (
     VerbSpec('science', 'evidence-analyze', positional='<path>', purpose='Compare retained probe readings and requested/applied policy actions in a run.'),

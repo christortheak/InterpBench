@@ -483,7 +483,7 @@ import Testing
         let statuses = try Self.rows(fixture, "statusMessages")
         let copies = try Self.rows(fixture, "copyMessages")
         let imports = try Self.rows(fixture, "importMessages")
-        #expect(pushes.count == 6 && statuses.count == 5 && copies.count == 8 && imports.count == 2)
+        #expect(pushes.count == 6 && statuses.count == 5 && copies.count == 10 && imports.count == 2)
         for row in pushes {
             guard case .string(let lens)? = row["lensID"], let parts = LensLibrary.whole(row["uploadedParts"]),
                 let bytes = LensLibrary.whole(row["uploadedBytes"]), case .bool(let adopted)? = row["adopted"],
@@ -504,15 +504,17 @@ import Testing
             guard case .string(let lens)? = row["lensID"], case .string(let action)? = row["action"],
                 case .bool(let existing)? = row["existing"], case .bool(let changed)? = row["changed"],
                 case .bool(let restored)? = row["restored"], let files = LensLibrary.whole(row["fileCount"]),
-                let bytes = LensLibrary.whole(row["bytes"]), case .string(let digest)? = row["planSHA256"]
+                let bytes = LensLibrary.whole(row["bytes"]), case .string(let digest)? = row["planSHA256"],
+                case .array(let listed)? = row["alsoHeldAs"]
             else { Issue.record("malformed copy row"); continue }
             var method: String?
             if case .string(let named)? = row["copyMethod"] { method = named }
-            var other: String?
-            if case .string(let named)? = row["existingLensID"] { other = named }
+            var others: [String] = []
+            for case .string(let name) in listed { others.append(name) }
+            #expect(others.count == listed.count && row["existingLensID"] == nil)
             #expect(.string(LensLibrary.copyMessage(
                 lensID: lens, action: action, existing: existing, changed: changed, restored: restored,
-                existingLensID: other, fileCount: files, bytes: bytes, planSHA256: digest, copyMethod: method))
+                alsoHeldAs: others, fileCount: files, bytes: bytes, planSHA256: digest, copyMethod: method))
                 == row["message"])
             // …and from the answer the Python client gives the command line,
             // where a field that does not apply is absent.
@@ -521,6 +523,15 @@ import Testing
             if !restored { answer["restored"] = nil }
             #expect(LensLibrary.copyMessage(for: .object(answer)).map(JSONValue.string) == row["message"])
         }
+        // The other names a copy tells of: none, one, two, and three, in the fixture's rows.
+        #expect(copies.map { row -> Int in
+            if case .array(let listed)? = row["alsoHeldAs"] { return listed.count }
+            return -1
+        } == Array(repeating: 0, count: 7) + [1, 2, 3])
+        #expect(LensLibrary.alsoHeldClause([]) == "")
+        #expect(LensLibrary.alsoHeldClause(["a"]) == " This workspace holds the same lens under another name: a.")
+        #expect(LensLibrary.alsoHeldClause(["a", "b", "c"])
+            == " This workspace holds the same lens under other names: a, b, and c.")
         for row in imports {
             guard case .string(let lens)? = row["lensID"], case .bool(let restored)? = row["restored"]
             else { Issue.record("malformed import row"); continue }
@@ -1195,8 +1206,9 @@ import Testing
 
     /// A two-layer lens is imported, planned, and copied into a second
     /// workspace through the real bridge; its missing converted file is put
-    /// back by an import and by a copy; and a record that holds numbers that
-    /// are not finite still reaches this Mac.
+    /// back by an import and by a copy; a workspace that holds the lens under
+    /// another name still gets the copy a study's name needs; and a record
+    /// that holds numbers that are not finite still reaches this Mac.
     @Test func theRealBridgePlansAPushAndCopiesALens() async throws {
         let python = URL(filePath: try #require(
             ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"],
@@ -1332,6 +1344,86 @@ import Testing
         } catch let refusal as DiagnosticWorkspace.Refusal {
             #expect(refusal.code == "lensNotFound")
         }
+        #expect(again["alsoHeldAs"] == .array([]) && preview["alsoHeldAs"] == .array([])
+            && copied["alsoHeldAs"] == .array([]))
+
+        // A study names a lens by its ID. A third workspace holds this lens
+        // under an older name, and the second already holds it under the
+        // name its files give it. The copy is still made under the older
+        // name, and the answer lists the name the workspace already had.
+        let oldName = "custom-lens-" + String(repeating: "5e", count: 16)
+        let third = directory.appending(component: "third")
+        try FileManager.default.createDirectory(
+            at: third.appending(path: "runs/jlens-lenses"), withIntermediateDirectories: true)
+        let older = third.appending(path: "runs/jlens-lenses/\(oldName)")
+        try FileManager.default.copyItem(at: folder, to: older)
+        let olderRecord = older.appending(component: "lens.json")
+        var renamed = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: olderRecord)) as? [String: Any])
+        var convertedBlock = try #require(renamed["converted"] as? [String: Any])
+        renamed["lensID"] = oldName
+        convertedBlock["path"] = "runs/jlens-lenses/\(oldName)/jacobians.safetensors"
+        renamed["converted"] = convertedBlock
+        try JSONSerialization.data(withJSONObject: renamed).write(to: olderRecord)
+        // What a study does with a lens name: the engine's own lookup, in
+        // the real Python client.
+        func studyFinds(_ name: String) throws -> String {
+            let process = Process()
+            process.executableURL = python
+            process.arguments = [
+                "-c",
+                "import sys\nfrom steerlab_server.jlens import lens_store\n"
+                    + "record = lens_store.resolve(sys.argv[1], sys.argv[2])\n"
+                    + "print(record.lensID, record.converted.sha256)",
+                name, second.path,
+            ]
+            process.currentDirectoryURL = source
+            var environment = ProcessInfo.processInfo.environment
+            environment["PYTHONPATH"] = source.path
+            process.environment = environment
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            let answer = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+                ? String(decoding: answer, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                : "not found"
+        }
+        #expect(try studyFinds(oldName) == "not found")
+        #expect(try studyFinds(lensID) == "\(lensID) \(plan.convertedSHA256)")
+        var naming: [String: JSONValue] = [
+            "workspaceRoot": .string(second.path), "lensID": .string(oldName), "fromWorkspace": .string(third.path),
+        ]
+        let namedPreview = try await perform("lens-copy", naming)
+        #expect(namedPreview["action"] == .string("copy") && namedPreview["existing"] == .bool(false)
+            && namedPreview["changed"] == .bool(false))
+        #expect(namedPreview["alsoHeldAs"] == .array([.string(lensID)]) && namedPreview["existingLensID"] == nil)
+        #expect(LensLibrary.copyMessage(for: .object(namedPreview))?.hasSuffix(
+            " to copy it. This workspace holds the same lens under another name: \(lensID).") == true)
+        #expect(try studyFinds(oldName) == "not found", "a review writes nothing")
+        naming["planSHA256"] = namedPreview["planSHA256"]
+        let named = try await perform("lens-copy", naming)
+        #expect(named["changed"] == .bool(true) && named["existing"] == .bool(false)
+            && named["alsoHeldAs"] == .array([.string(lensID)]))
+        #expect(LensLibrary.copyMessage(for: .object(named))
+            == "Copied lens \(oldName) into this workspace as a clone that uses no extra disk space, under the "
+            + "same name and record. This workspace holds the same lens under another name: \(lensID).")
+        // The study's name now resolves in the second workspace, and the
+        // lens under it is whole: the same parts as the first workspace's.
+        #expect(try studyFinds(oldName) == "\(oldName) \(plan.convertedSHA256)")
+        let resolved = try LensLibrary.Plan(.object(try await perform("lens-push-plan", [
+            "workspaceRoot": .string(second.path), "lensID": .string(oldName), "partMaxBytes": .number(1_048_576),
+        ])))
+        #expect(resolved.file == "runs/jlens-lenses/\(oldName)/jacobians.safetensors")
+        #expect(resolved.parts.map(\.sha256) == plan.parts.map(\.sha256))
+        #expect(resolved.recordJSON.contains(#""lensID": ""# + oldName + "\""))
+        naming["planSHA256"] = nil
+        let namedAgain = try await perform("lens-copy", naming)
+        #expect(LensLibrary.copyMessage(for: .object(namedAgain))
+            == "This workspace already holds lens \(oldName); nothing was copied. This workspace holds the same "
+            + "lens under another name: \(lensID).")
 
         // A record that holds numbers that are not finite (a qualification's
         // measured values): the bridge's answer is strict JSON, so it decodes

@@ -222,30 +222,47 @@ public enum LensLibrary {
         return lead + "; " + (recordClauses[siteRecord] ?? recordClauses["unknown"]!) + "."
     }
 
-    /// Python twin: `lens_transfer.copy_message`.
+    /// What a `lens-copy` answer adds when this workspace holds the same lens
+    /// under other names (`alsoHeldAs`), and nothing when it holds none. True
+    /// before the copy and after it. Python twin:
+    /// `lens_transfer.also_held_clause`.
+    public static func alsoHeldClause(_ names: [String]) -> String {
+        guard let last = names.last else { return "" }
+        let listed: String
+        switch names.count {
+        case 1: listed = last
+        case 2: listed = names[0] + " and " + last
+        default: listed = names.dropLast().joined(separator: ", ") + ", and " + last
+        }
+        return " This workspace holds the same lens under "
+            + (names.count == 1 ? "another name: " : "other names: ") + listed + "."
+    }
+
+    /// What a `lens-copy` answer says, true in every case; it ends by naming
+    /// any other names under which this workspace holds the same lens. Python
+    /// twin: `lens_transfer.copy_message`.
     public static func copyMessage(
         lensID: String, action: String, existing: Bool, changed: Bool, restored: Bool = false,
-        existingLensID: String? = nil, fileCount: Int, bytes: Int, planSHA256: String,
+        alsoHeldAs: [String] = [], fileCount: Int, bytes: Int, planSHA256: String,
         copyMethod: String?
     ) -> String {
         let again = "Repeat the command with --plan-sha256 \(planSHA256)"
         let how = copyMethod == "clone" ? "as a clone that uses no extra disk space" : "as a full copy"
-        if let existingLensID {
-            return "This workspace already holds this lens as \(existingLensID); nothing was copied."
-        }
+        let said: String
         if restored {
-            return "Lens \(lensID) was already in this workspace; its missing converted file was put back \(how)."
-        }
-        if action == "restore" {
-            return "Lens \(lensID) is already in this workspace, but its converted file is missing; "
+            said = "Lens \(lensID) was already in this workspace; its missing converted file was put back \(how)."
+        } else if action == "restore" {
+            said = "Lens \(lensID) is already in this workspace, but its converted file is missing; "
                 + "nothing was written. \(again) to put that file back."
-        }
-        if existing { return "This workspace already holds lens \(lensID); nothing was copied." }
-        if !changed {
-            return "Reviewed a copy of lens \(lensID) (\(fileCount) files, \(bytes) bytes); "
+        } else if existing {
+            said = "This workspace already holds lens \(lensID); nothing was copied."
+        } else if !changed {
+            said = "Reviewed a copy of lens \(lensID) (\(fileCount) files, \(bytes) bytes); "
                 + "nothing was written. \(again) to copy it."
+        } else {
+            said = "Copied lens \(lensID) into this workspace \(how), under the same name and record."
         }
-        return "Copied lens \(lensID) into this workspace \(how), under the same name and record."
+        return said + alsoHeldClause(alsoHeldAs)
     }
 
     /// The sentence for a `science lens-copy` answer from the Python client.
@@ -258,11 +275,13 @@ public enum LensLibrary {
         else { return nil }
         var method: String?
         if case .string(let named)? = object["copyMethod"] { method = named }
-        var other: String?
-        if case .string(let named)? = object["existingLensID"] { other = named }
+        var others: [String] = []
+        if case .array(let names)? = object["alsoHeldAs"] {
+            for case .string(let name) in names { others.append(name) }
+        }
         return copyMessage(
             lensID: lensID, action: action, existing: existing, changed: changed,
-            restored: object["restored"] == .bool(true), existingLensID: other, fileCount: files.count,
+            restored: object["restored"] == .bool(true), alsoHeldAs: others, fileCount: files.count,
             bytes: bytes, planSHA256: digest, copyMethod: method)
     }
 
