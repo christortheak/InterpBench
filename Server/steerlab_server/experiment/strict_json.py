@@ -7,6 +7,9 @@ number: a qualification stores every check's measured values whether it
 passed or not, and a check that could not be scored records NaN.
 
 What leaves this machine, or crosses to the Mac, goes through :func:`strict`.
+
+It lives here because an import's answer needs it too, and the client depends
+on this package, never the reverse.
 """
 import math
 

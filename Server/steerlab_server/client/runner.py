@@ -1475,7 +1475,7 @@ class RunnerClient:
         """``POST /api/lens-library/register``: the lens record, into the
         site's serving workspace. The record is sent as strict JSON: a number
         in it that is not finite goes as null (``strict_json``)."""
-        from .strict_json import strict
+        from ..experiment.strict_json import strict
         return self._lens_library("POST", "/api/lens-library/register",
                                   json_body={"record": strict(record)[0]})
 

@@ -34,7 +34,7 @@ import tarfile
 import tempfile
 
 from ..experiment import diagnostic_archives as archives, paths
-from .strict_json import strict
+from ..experiment.strict_json import strict
 
 RECORD_NAME = 'lens.json'
 RECEIPT_NAME = 'import-receipt.json'

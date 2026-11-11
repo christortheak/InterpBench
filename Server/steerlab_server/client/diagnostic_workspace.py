@@ -53,7 +53,7 @@ def main():
         from ..experiment.diagnostic_archives import Refusal
         repair = Refusal.repair_action
         from .diagnostic_commands import bridge_action
-        from .strict_json import strict
+        from ..experiment.strict_json import strict
         # Strict JSON, whatever the action answers: a number that is not
         # finite (a lens record can hold one) is written as null, because the
         # Mac reads no other spelling and would take the whole answer for no

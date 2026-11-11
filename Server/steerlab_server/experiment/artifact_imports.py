@@ -314,7 +314,7 @@ def existing_lens_state(lens_id, record, root):
 def _existing_result(lens_id, record, plan, root):
     # A record can hold a number that is not finite (a qualification's
     # measured values); what an import answers is strict JSON.
-    from ..client.strict_json import strict
+    from .strict_json import strict
     return {'kind': 'jlens', 'lensID': lens_id, 'record': strict(record.to_dict())[0], 'changed': False,
             'existing': True, 'outputDirectory': str(Path(root) / LENS_FOLDER / lens_id),
             'warnings': plan['warnings']}
