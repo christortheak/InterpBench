@@ -113,16 +113,224 @@ def test_an_older_lens_with_a_random_name_is_found_by_its_bytes(source):
     assert snapshot(root) == before and [lens.lensID for lens in lens_store.list_lenses(str(root))] == [old_name]
 
 
-def test_a_leftover_folder_under_the_name_is_refused_with_its_repair(source):
+def test_a_leftover_folder_under_the_name_is_refused_with_its_repair(source, monkeypatch):
     path, root, _ = source
     plan = imports.inspect_source(path, root)
     leftover = root / 'runs/jlens-lenses' / imports.lens_name(plan)
     leftover.mkdir(parents=True)
     (leftover / 'note.txt').write_text('not a lens')
-    with pytest.raises(ImportRefusal, match='holds no lens record for these files') as caught:
+    # Refused at once: before anything is copied or converted.
+    monkeypatch.setattr(imports, '_capture', lambda *args: pytest.fail('the sources were captured'))
+    with pytest.raises(ImportRefusal, match='holds no lens record for custom-lens-[0-9a-f]{32} with an import receipt for these files') as caught:
         imports.publish(path, root, plan['planSHA256'])
     assert caught.value.repair_action == 'Move that folder aside, then import again.'
     assert sorted(item.name for item in leftover.parent.iterdir()) == [leftover.name]
+
+
+def imported(source):
+    path, root, _ = source
+    plan = imports.inspect_source(path, root)
+    result = imports.publish(path, root, plan['planSHA256'])
+    return plan, result, root / 'runs/jlens-lenses' / result['lensID']
+
+
+def test_a_repeated_import_puts_back_a_missing_converted_file(source):
+    """The repair every lens refusal names: import the lens again. The lens
+    that is found is checked, and its missing file is put back from the
+    reviewed sources, with nothing else in the folder touched."""
+    path, root, _ = source
+    plan, first, folder = imported(source)
+    file = folder / 'jacobians.safetensors'
+    good = file.read_bytes()
+    file.unlink()
+    before = snapshot(folder)
+
+    again = imports.publish(path, root, plan['planSHA256'])
+
+    assert (again['existing'], again['changed'], again['restored']) == (True, True, True)
+    assert again['lensID'] == first['lensID'] and again['record'] == first['record']
+    assert file.read_bytes() == good
+    assert {name: stamp for name, stamp in snapshot(folder).items() if name != 'jacobians.safetensors'} == before
+    assert sorted(item.name for item in folder.parent.iterdir()) == [folder.name], 'no staging folder is left'
+    # The lens works again.
+    record = lens_store.resolve(first['lensID'], str(root))
+    np.testing.assert_array_equal(lens_store.load_layer(record, 1, root=str(root)).numpy(), [[1, 2], [3, 4]])
+    # Intact, an import writes nothing and says so.
+    stamps = snapshot(root)
+    third = imports.publish(path, root, plan['planSHA256'])
+    assert (third['existing'], third['changed']) == (True, False) and 'restored' not in third
+    assert snapshot(root) == stamps
+
+
+def test_a_repeated_import_never_replaces_a_converted_file_that_differs(source):
+    path, root, _ = source
+    plan, first, folder = imported(source)
+    file = folder / 'jacobians.safetensors'
+    good = file.read_bytes()
+    file.write_bytes(good[:-1] + bytes([good[-1] ^ 1]))
+    stamps = snapshot(root)
+    with pytest.raises(ImportRefusal) as caught:
+        imports.publish(path, root, plan['planSHA256'])
+    lens = first['lensID']
+    assert str(caught.value) == (
+        f'This workspace already holds these files as lens {lens}, but its converted file '
+        f'(runs/jlens-lenses/{lens}/jacobians.safetensors) differs from the SHA-256 its record names. '
+        'Nothing was imported, and that file was left as it is.')
+    assert caught.value.repair_action == ('Move that file aside, then import again: the import puts back the '
+                                          'file the record names.')
+    assert snapshot(root) == stamps
+    # The repair, carried out as written.
+    file.rename(folder / 'jacobians.safetensors.aside')
+    assert imports.publish(path, root, plan['planSHA256'])['restored'] is True and file.read_bytes() == good
+
+
+@pytest.mark.parametrize('damage', ['no converted block', 'another path', 'another lens name', 'other bytes'])
+def test_a_lens_that_cannot_be_checked_or_put_back_is_refused_by_name(source, damage):
+    path, root, _ = source
+    plan, first, folder = imported(source)
+    lens = first['lensID']
+    record = json.loads((folder / 'lens.json').read_text())
+    if damage == 'no converted block':
+        record['converted'] = None
+    elif damage == 'another path':
+        record['converted']['path'] = 'runs/elsewhere/jacobians.safetensors'
+    elif damage == 'another lens name':
+        record['lensID'] = 'custom-lens-' + 'ab' * 16
+    else:
+        # The reviewed files convert to bytes the record does not name.
+        record['converted']['sha256'] = 'f' * 64
+        (folder / 'jacobians.safetensors').unlink()
+    (folder / 'lens.json').write_text(json.dumps(record))
+    stamps = snapshot(root)
+    with pytest.raises(ImportRefusal) as caught:
+        imports.publish(path, root, plan['planSHA256'])
+    message = str(caught.value)
+    assert f'runs/jlens-lenses/{lens}' in message or f'lens {lens}' in message
+    if damage == 'other bytes':
+        assert message.startswith('The reviewed files convert to different bytes on this machine than the record of '
+                                  f'lens {lens} names (SHA-256 ')
+        assert message.endswith('so its missing converted file was not put back.')
+    if damage == 'another lens name':
+        # Its record is another lens's, so it is not this lens at all: the folder is in the way.
+        assert caught.value.repair_action == 'Move that folder aside, then import again.'
+    else:
+        assert caught.value.repair_action == (f"Move runs/jlens-lenses/{lens} aside, then import again. That "
+                                              "folder's lens.json holds the lens's qualifications.")
+    assert snapshot(root) == stamps, 'nothing was written'
+    # The repair, carried out as written, gives a working lens.
+    folder.rename(folder.with_name(folder.name + '.aside'))
+    fresh = imports.publish(path, root, plan['planSHA256'])
+    assert fresh['changed'] is True and 'existing' not in fresh and fresh['lensID'] == lens
+
+
+@pytest.mark.parametrize('damaged', [b'[]', b'\xff\xfe not text', b'{"lensID": 7, "source": 3}', b'{'])
+def test_another_lenss_unreadable_record_never_stops_an_import(source, damaged):
+    path, root, _ = source
+    other = root / 'runs/jlens-lenses/custom-lens-damaged'
+    other.mkdir(parents=True)
+    (other / 'lens.json').write_bytes(damaged)
+    (other / 'import-receipt.json').write_bytes(damaged)
+    plan = imports.inspect_source(path, root)
+    result = imports.publish(path, root, plan['planSHA256'])
+    assert result['changed'] is True
+    assert imports.publish(path, root, plan['planSHA256'])['existing'] is True
+
+
+def test_two_imports_of_the_same_files_at_once_give_one_lens(source, monkeypatch):
+    """The name follows the bytes, so the other import published the folder
+    this one was about to. This one finds that lens."""
+    import shutil
+    path, root, _ = source
+    plan = imports.inspect_source(path, root)
+
+    def the_other_import_got_there_first(staged, target):
+        shutil.copytree(staged, target)
+        raise FileExistsError(17, 'File exists', str(target))
+    monkeypatch.setattr(imports.diagnostic_archives, 'publish_directory', the_other_import_got_there_first)
+    result = imports.publish(path, root, plan['planSHA256'])
+    assert (result['existing'], result['changed']) == (True, False) and result['lensID'] == imports.lens_name(plan)
+    assert [lens.lensID for lens in lens_store.list_lenses(str(root))] == [result['lensID']]
+    assert sorted(item.name for item in (root / 'runs/jlens-lenses').iterdir()) == [result['lensID']]
+
+
+def test_a_folder_that_appears_mid_import_and_is_not_the_lens_is_refused(source, monkeypatch):
+    path, root, _ = source
+    plan = imports.inspect_source(path, root)
+
+    def something_else_took_the_name(staged, target):
+        target.mkdir()
+        (target / 'note.txt').write_text('not a lens')
+        raise FileExistsError(17, 'File exists', str(target))
+    monkeypatch.setattr(imports.diagnostic_archives, 'publish_directory', something_else_took_the_name)
+    with pytest.raises(ImportRefusal, match='holds no lens record for custom-lens-[0-9a-f]{32} with an import receipt for these files') as caught:
+        imports.publish(path, root, plan['planSHA256'])
+    assert caught.value.repair_action == 'Move that folder aside, then import again.'
+
+
+def fit_report(path, spec):
+    """A SteerLab fit report for the fixture's tensors, as an import reads one."""
+    import hashlib
+    return {'schemaVersion': 1, 'operation': 'jlens-fit', 'promptsFitted': spec['lens']['promptsFitted'],
+            'tensorSHA256': hashlib.sha256(path.with_name('weights.safetensors').read_bytes()).hexdigest(),
+            'identity': {'modelID': spec['modelID'], 'revision': spec['modelRevision'], 'hiddenSize': spec['hiddenSize'],
+                         'targetLayer': spec['lens']['targetLayer'], 'sourceLayers': [1],
+                         'runtime': {'referenceCommit': 'a' * 40, 'kernelSHA256': 'b' * 64, 'driverSHA256': 'c' * 64}}}
+
+
+def test_the_config_file_is_part_of_the_name_and_of_the_match(source):
+    """A fit report decides the record's fitting provenance, so another report
+    is another lens: the lens an import returns always agrees with the plan
+    that was reviewed."""
+    import hashlib
+    path, root, spec = source
+    config = path.with_name('fit-report.json')
+    spec['configFile'] = 'fit-report.json'
+    path.write_text(json.dumps(spec))
+    config.write_text(json.dumps({'note': 'not yet the fit report'}))
+
+    first_plan = imports.inspect_source(path, root)
+    assert first_plan['details']['fittingProvenance'] == {}
+    # The name, written out by hand: the two hashes as before, and the config file's.
+    hashes = {name: hashlib.sha256(file.read_bytes()).hexdigest()
+              for name, file in (('d', path), ('t', path.with_name('weights.safetensors')), ('c', config))}
+    canonical = ('{"configSHA256":"' + hashes['c'] + '","descriptionSHA256":"' + hashes['d']
+                 + '","kind":"jlens","tensorSHA256":"' + hashes['t'] + '"}').encode()
+    assert imports.lens_name(first_plan) == 'custom-lens-' + hashlib.sha256(canonical).hexdigest()[:32]
+    first = imports.publish(path, root, first_plan['planSHA256'])
+
+    # The right report in place: a different plan, and a different lens.
+    config.write_text(json.dumps(fit_report(path, spec)))
+    second_plan = imports.inspect_source(path, root)
+    provenance = second_plan['details']['fittingProvenance']
+    assert provenance['referenceCommit'] == 'a' * 40 and provenance['fitReportSHA256'] == hashlib.sha256(config.read_bytes()).hexdigest()
+    assert second_plan['planSHA256'] != first_plan['planSHA256']
+    assert imports.lens_name(second_plan) != imports.lens_name(first_plan)
+    second = imports.publish(path, root, second_plan['planSHA256'])
+    assert second['changed'] is True and 'existing' not in second and second['lensID'] != first['lensID']
+    assert len(lens_store.list_lenses(str(root))) == 2
+
+    def agrees(result, plan):
+        fields = ('fitReportSHA256', 'referenceCommit', 'kernelSHA256', 'driverSHA256', 'referencePackage')
+        return {field: result['record'][field] for field in fields} == {
+            field: plan['details']['fittingProvenance'].get(field) for field in fields}
+    assert agrees(first, first_plan) and agrees(second, second_plan)
+    # Each reviewed plan finds its own lens, and that lens agrees with it.
+    again = imports.publish(path, root, second_plan['planSHA256'])
+    assert again['existing'] is True and again['lensID'] == second['lensID'] and agrees(again, second_plan)
+    config.write_text(json.dumps({'note': 'not yet the fit report'}))
+    earlier = imports.publish(path, root, imports.inspect_source(path, root)['planSHA256'])
+    assert earlier['existing'] is True and earlier['lensID'] == first['lensID'] and agrees(earlier, first_plan)
+
+
+def test_a_lens_with_no_readable_receipt_is_not_the_one_being_imported(source):
+    path, root, _ = source
+    plan, first, folder = imported(source)
+    (folder / 'import-receipt.json').unlink()
+    with pytest.raises(ImportRefusal, match='holds no lens record for custom-lens-[0-9a-f]{32} with an import receipt for these files'):
+        imports.publish(path, root, plan['planSHA256'])
+    (folder / 'import-receipt.json').write_text(json.dumps({'files': {'description': {'sha256': 'f' * 64}}}))
+    with pytest.raises(ImportRefusal, match='holds no lens record for custom-lens-[0-9a-f]{32} with an import receipt for these files'):
+        imports.publish(path, root, plan['planSHA256'])
 
 
 def test_sae_imports_still_get_a_fresh_name_each_time(source):
@@ -359,7 +567,13 @@ def test_cli_roundtrip_uses_the_same_review_and_typed_refusal(source):
     code, repeated = call('artifact-import', '--plan-sha256', review['result']['planSHA256'])
     assert code == 0 and repeated['changed'] is False, repeated
     assert repeated['result']['existing'] is True
-    assert repeated['result']['lensID'] == publication['result']['lensID']
+    lens = publication['result']['lensID']
+    assert repeated['result']['lensID'] == lens
+    # A missing converted file is put back, and the command line says so.
+    (root / 'runs/jlens-lenses' / lens / 'jacobians.safetensors').unlink()
+    code, restored = call('artifact-import', '--plan-sha256', review['result']['planSHA256'])
+    assert code == 0 and restored['changed'] is True and restored['result']['restored'] is True, restored
+    assert (root / 'runs/jlens-lenses' / lens / 'jacobians.safetensors').is_file()
     code, rejected = call('artifact-import', '--plan-sha256', '0' * 64)
     assert code == 65 and rejected['error']['code'] == 'artifactImportRefused', rejected
 
