@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -236,10 +237,19 @@ def existing_lens(plan, root):
     description, the tensor file, and the config file when there is one),
     and its record agrees: ``source.tensorSHA256`` is the plan's tensor hash
     and ``source.configSHA256`` the plan's description hash. A receipt that
-    lists these files beside a record of other bytes is not this lens. A
-    lens with no readable receipt is not a match, and neither is a folder
-    whose record names another lens. Several matches give the content-derived
-    name first, then the oldest.
+    lists these files beside a record of other bytes is not this lens, and
+    neither is a folder whose record names another lens. Several matches give
+    the content-derived name first, then the oldest.
+
+    A lens with no receipt at all is this lens in one place only: under the
+    name these files give a lens (:func:`lens_name`), with a record that
+    agrees as above. That name is a hash over every reviewed file, so the
+    folder's name is the witness a receipt would have been. An engine that
+    was sent a lens (``lens_library.register``) holds exactly that: the
+    lens's record under its own name, and no receipt, because an import is
+    what writes one. Importing the same files in that engine's workspace
+    finds that record. Under any other name a lens still needs its receipt,
+    and a receipt that is there must list these files whatever the name.
 
     The lens folders are read here, one at a time, and a record or receipt
     that cannot be read is passed over: another lens's damaged record must
@@ -252,12 +262,16 @@ def existing_lens(plan, root):
         folders = sorted(item for item in library.iterdir() if item.is_dir() and not item.is_symlink())
     except OSError:
         folders = []
+    derived = lens_name(plan)
     matches = []
     for folder in folders:
         try:
-            receipt = json.loads((folder / 'import-receipt.json').read_bytes())
-            if not isinstance(receipt, dict) or file_hashes(receipt.get('files')) != wanted:
-                continue
+            if os.path.lexists(folder / 'import-receipt.json'):
+                receipt = json.loads((folder / 'import-receipt.json').read_bytes())
+                if not isinstance(receipt, dict) or file_hashes(receipt.get('files')) != wanted:
+                    continue
+            elif folder.name != derived:
+                continue          # no receipt, and not the name these files give a lens
             document = json.loads((folder / 'lens.json').read_bytes())
             # A folder whose record names another lens is a copy someone set
             # aside (renamed in place), not a lens of this workspace.
@@ -269,7 +283,6 @@ def existing_lens(plan, root):
             matches.append((folder.name, record))
         except Exception:   # noqa: BLE001 - unreadable is "not this lens", whatever the reason
             continue
-    derived = lens_name(plan)
     return min(matches, key=lambda match: (match[0] != derived, str(match[1].importedAt), match[0]), default=None)
 
 
@@ -290,7 +303,16 @@ def existing_lens_state(lens_id, record, root):
     record names. False when that file is absent, which an import can put
     back. Anything else is refused by name, and nothing is changed: a record
     that names no converted file, or not the lens's own, and a converted file
-    that differs from its record."""
+    that differs from its record.
+
+    On an engine with a lens library, a converted file that is absent from
+    the workspace and held by that library under the record's hash is in
+    place: that is where a site keeps a lens's bytes, once, and every reader
+    of the lens resolves them there (``artifact_paths.converted_file``).
+    The answer is True, nothing is put back, and no second copy is made. The
+    library's file is not hashed here; whatever reads the lens hashes what it
+    resolves, as it always has. A machine with no library (a researcher's
+    own) answers exactly as before."""
     folder = f'{LENS_FOLDER}/{lens_id}'
     canonical = f'{folder}/{CONVERTED_NAME}'
     held = f'This workspace already holds these files as lens {lens_id}, but '
@@ -311,7 +333,8 @@ def existing_lens_state(lens_id, record, root):
         raise _refusal(held + 'its name has a character a workspace path cannot have (a backslash), so its '
                        'converted file cannot be checked. Nothing was imported.', _move_aside(folder)) from None
     if path is not None and not path.exists():
-        return False
+        from ..jlens import lens_library
+        return lens_library.held_file(converted.sha256) is not None
     if path is None or not path.is_file():
         raise _refusal(held + f'{canonical} is not an ordinary file inside the workspace (it is a folder or '
                        'something else that is not a file, or is reached through a symbolic link), so it '
@@ -349,8 +372,8 @@ def _taken(target, root):
         return _refusal(f'{name} already exists and is not a folder, so nothing was imported.',
                         'Move it aside, then import again.')
     return _refusal(f'A folder named {name} already exists and does not hold the lens these files make (a record '
-                    f'for {target.name} that names these files, with an import receipt for them), so nothing '
-                    'was imported.', 'Move that folder aside, then import again.')
+                    f'for {target.name} that names these files, and no import receipt for other files), so '
+                    'nothing was imported.', 'Move that folder aside, then import again.')
 
 
 def _missing_again(lens_id):

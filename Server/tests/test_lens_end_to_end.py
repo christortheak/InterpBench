@@ -20,7 +20,10 @@ import io
 import json
 import os
 import re
+import shutil
 import tarfile
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -62,8 +65,12 @@ def digest(data):
 
 @contextmanager
 def environment(values):
-    """This process's environment is exactly `values` inside, and what it was afterwards."""
+    """This process's environment is exactly `values` inside, and what it was afterwards. Where it already is
+    `values`, nothing is touched: a job of the engine's may be reading it on another thread."""
     saved = dict(os.environ)
+    if saved == values:
+        yield
+        return
     os.environ.clear()
     os.environ.update(values)
     try:
@@ -756,6 +763,93 @@ def test_a_lens_that_cannot_be_referred_to_is_refused_at_packaging_by_name(world
     # Without the flag the same lens is carried, as it always was.
     code, plan = world.cli(None, '--root', str(root), 'science', 'input-plan', str(request_file))
     assert code == 0 and f'runs/jlens-lenses/{lens_id}/renamed.safetensors' in [e['path'] for e in plan['result']['files']]
+
+
+# --- a lens the site was sent, then imported there --------------------------------
+
+def tree(*folders):
+    """Every file beneath these folders, with its size and when it last changed."""
+    return {str(path): (path.stat().st_size, path.stat().st_mtime_ns)
+            for folder in folders for path in sorted(Path(folder).rglob('*')) if path.is_file()}
+
+
+def finished(engine, job_id, deadline=30.0):
+    """The engine's record of a job once it has stopped, with its worker thread gone."""
+    limit = time.monotonic() + deadline
+    record = engine.get(f'/api/jobs/{job_id}').json()
+    while record.get('status') not in ('succeeded', 'failed', 'cancelled'):
+        assert time.monotonic() < limit, record
+        time.sleep(0.02)
+        record = engine.get(f'/api/jobs/{job_id}').json()
+    for thread in threading.enumerate():
+        if thread.name.startswith('job-'):
+            thread.join(timeout=10.0)
+    return record
+
+
+def test_a_lens_the_site_was_sent_is_found_when_its_files_are_imported_in_the_engines_workspace(world):
+    """`register` writes a lens's record with no import receipt, and the bytes stay in the site's lens library.
+    Importing the same files in that engine's workspace (the app's "Import my own lens files" on a connected
+    workbench) finds that lens: nothing is written, no second copy of the bytes is made, and the site's record,
+    with its qualifications, is the one that stays."""
+    root, lens_id, description = world.researcher()
+    engine = world.engine(limit=1 << 20)        # room to stage the source tensor file whole
+    data = converted(root, lens_id).read_bytes()
+    sha = digest(data)
+    held = engine.entry(sha) / 'jacobians.safetensors'
+    assert push(world, engine, root, lens_id)[0] == 0
+    folder = engine.root / 'runs/jlens-lenses' / lens_id
+    assert sorted(path.name for path in folder.iterdir()) == ['lens.json']      # a record: no receipt, and no bytes
+
+    with environment(engine.env):      # the import is a job of the engine's, and runs after its request returns
+        source = 'a' * 32
+        for name in ('import.json', 'weights.safetensors'):
+            content = (description.parent / name).read_bytes()
+            staged = engine.post(f'/api/artifact-imports/stage/{source}/{name}', content=content,
+                                 headers={'X-Content-SHA256': digest(content)})
+            assert staged.status_code == 200, staged.text
+        reference = f'.steerlab/artifact-inputs/{source}/import.json'
+        review = engine.post('/api/artifact-imports/plan', json={'descriptionFile': reference})
+        assert review.status_code == 200, review.text
+        assert artifact_imports.lens_name(review.json()) == lens_id          # one lens, one name, on any machine
+        before = tree(engine.root / 'runs', engine.library)
+        submitted = engine.post('/api/artifact-imports/import',
+                                json={'descriptionFile': reference, 'planSHA256': review.json()['planSHA256']})
+        assert submitted.status_code == 200, submitted.text
+        job = finished(engine, submitted.json()['jobId'])
+    assert job['status'] == 'succeeded', job.get('error')
+    result = job['result']
+    assert (result['lensID'], result['existing'], result['changed']) == (lens_id, True, False)
+    assert 'restored' not in result
+    assert result['record'] == json.loads(record_file(engine.root, lens_id).read_bytes())
+    # Nothing was written: no receipt, no converted file in the workspace, and the record and the entry as they were.
+    assert tree(engine.root / 'runs', engine.library) == before
+    assert sorted(path.name for path in folder.iterdir()) == ['lens.json']
+    assert engine.lens_files() == [str(held)]
+
+    # A study-style lookup of the lens on the engine: its record by name, and the library's bytes, which are
+    # the bytes the record names and the researcher's own.
+    with environment(engine.env):
+        record = lens_store.resolve(lens_id)
+        assert artifact_paths.converted_file(record.lensID, record.converted.path) == str(held.resolve())
+        qualifications.verify_converted(record)
+        mine = lens_store.resolve(lens_id, str(root))
+        for layer in record.sourceLayers:
+            assert torch.equal(lens_store.load_layer(record, layer), lens_store.load_layer(mine, layer, root=str(root)))
+    code, answered = status(world, engine, root, lens_id)
+    assert code == 0 and answered['result']['response']['siteRecord'] == 'registered'
+
+    # The library is a cache. If it loses the entry, the same import puts the lens's file back in the engine's
+    # workspace from the reviewed files, and the lookup reads that.
+    shutil.rmtree(engine.entry(sha))
+    with environment(engine.env):
+        submitted = engine.post('/api/artifact-imports/import',
+                                json={'descriptionFile': reference, 'planSHA256': review.json()['planSHA256']})
+        job = finished(engine, submitted.json()['jobId'])
+        assert job['status'] == 'succeeded' and job['result']['restored'] is True, job
+        assert (folder / 'jacobians.safetensors').read_bytes() == data
+        assert artifact_paths.converted_file(lens_id, record.converted.path) == str((folder / 'jacobians.safetensors').resolve())
+    assert sorted(path.name for path in folder.iterdir()) == ['jacobians.safetensors', 'lens.json']
 
 
 # --- one place says which numbers are not finite ---------------------------------

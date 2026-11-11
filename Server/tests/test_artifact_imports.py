@@ -56,7 +56,7 @@ def test_sparse_lens_roundtrip_preserves_matrices_and_unknown_revision(source):
 
 #: The refusal for a folder under a lens's name that is not that lens.
 TAKEN = (r'A folder named runs/jlens-lenses/(custom-lens-[0-9a-f]{32}) already exists and does not hold the lens '
-         r'these files make \(a record for \1 that names these files, with an import receipt for them\), so '
+         r'these files make \(a record for \1 that names these files, and no import receipt for other files\), so '
          r'nothing was imported\.')
 
 
@@ -328,15 +328,126 @@ def test_the_config_file_is_part_of_the_name_and_of_the_match(source):
     assert earlier['existing'] is True and earlier['lensID'] == first['lensID'] and agrees(earlier, first_plan)
 
 
-def test_a_lens_with_no_readable_receipt_is_not_the_one_being_imported(source):
+def test_a_lens_with_no_receipt_is_found_only_under_the_name_its_files_give_it(source):
+    """An engine that was sent a lens holds the lens's record under its own
+    name and no import receipt: an import is what writes one. The name is a
+    hash over every reviewed file, so under that name the record is enough.
+    Under any other name a lens needs its receipt, and a receipt that is
+    there must list these files whatever the folder is called."""
     path, root, _ = source
     plan, first, folder = imported(source)
-    (folder / 'import-receipt.json').unlink()
-    with pytest.raises(ImportRefusal, match=TAKEN):
-        imports.publish(path, root, plan['planSHA256'])
-    (folder / 'import-receipt.json').write_text(json.dumps({'files': {'description': {'sha256': 'f' * 64}}}))
-    with pytest.raises(ImportRefusal, match=TAKEN):
-        imports.publish(path, root, plan['planSHA256'])
+    assert first['lensID'] == imports.lens_name(plan)
+    receipt = folder / 'import-receipt.json'
+    receipt.unlink()
+    before = snapshot(root)
+    found = imports.publish(path, root, plan['planSHA256'])
+    assert found['existing'] is True and found['changed'] is False and found['lensID'] == first['lensID']
+    assert found['record'] == first['record'] and 'restored' not in found
+    assert snapshot(root) == before, 'an import that finds its lens writes nothing, and no receipt either'
+
+    # A receipt for other files, one that cannot be read, and a link that leads nowhere: not this lens.
+    for write in (lambda: receipt.write_text(json.dumps({'files': {'description': {'sha256': 'f' * 64}}})),
+                  lambda: receipt.write_text('{'),
+                  lambda: receipt.symlink_to(folder / 'absent.json')):
+        write()
+        assert imports.existing_lens(plan, root) is None
+        with pytest.raises(ImportRefusal, match=TAKEN) as caught:
+            imports.publish(path, root, plan['planSHA256'])
+        assert caught.value.repair_action == 'Move that folder aside, then import again.'
+        receipt.unlink()
+
+    # Under another name, a lens with no receipt is not the one being imported: these files make their own.
+    other = renamed(folder, 'custom-lens-' + '5e' * 16)
+    assert imports.existing_lens(plan, root) is None
+    made = imports.publish(path, root, plan['planSHA256'])
+    assert made['changed'] is True and 'existing' not in made and made['lensID'] == imports.lens_name(plan)
+    assert (other / 'lens.json').is_file() and len(lens_store.list_lenses(str(root))) == 2
+
+
+def library_entry(library, sha, data):
+    """A lens library entry, written out by hand as its layout is documented:
+    the converted file and its record, in a folder named by the file's hash."""
+    entry = library / sha
+    entry.mkdir(parents=True)
+    (entry / 'jacobians.safetensors').write_bytes(data)
+    (entry / 'entry.json').write_text(json.dumps({'schemaVersion': 1, 'convertedSHA256': sha, 'bytes': len(data),
+                                                  'origin': 'pushed', 'addedAt': '2026-11-01T00:00:00Z'}))
+    return entry
+
+
+@pytest.mark.parametrize('receipt', [True, False], ids=['imported here', 'registered here'])
+def test_a_found_lens_whose_bytes_the_engines_lens_library_holds_is_intact(source, tmp_path, monkeypatch, receipt):
+    """A site keeps a lens's converted file once, in its lens library, and a
+    reader of the lens resolves it there. An import on that engine that finds
+    the lens with no file in the workspace answers that the lens is here: it
+    puts nothing back and makes no second copy."""
+    import hashlib
+    from steerlab_server.jlens import artifact_paths, lens_library
+    path, root, _ = source
+    plan, first, folder = imported(source)
+    file = folder / 'jacobians.safetensors'
+    data = file.read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    assert first['record']['converted']['sha256'] == sha
+    file.unlink()
+    if not receipt:
+        (folder / 'import-receipt.json').unlink()
+    library = tmp_path / 'lens-library'
+    monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(library))
+    monkeypatch.setenv('STEERLAB_ROOT', str(root))
+    entry = library_entry(library, sha, data)
+    before, held = snapshot(root), snapshot(library)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(imports, '_capture', lambda *args: pytest.fail('the sources were captured to put a file back'))
+        patched.setattr(imports.artifact_sources, 'digest',
+                        lambda target: pytest.fail('a file was hashed') if Path(target).name == 'jacobians.safetensors'
+                        else hashlib.sha256(Path(target).read_bytes()).hexdigest())
+        found = imports.publish(path, root, plan['planSHA256'])
+    assert found['existing'] is True and found['changed'] is False and 'restored' not in found
+    assert found['lensID'] == first['lensID'] and found['record'] == first['record']
+    assert snapshot(root) == before and not file.exists(), 'nothing was written in the workspace'
+    assert snapshot(library) == held, 'and nothing in the library'
+    # What a study does with the lens's name on this engine: its record, and the library's bytes.
+    record = lens_store.resolve(first['lensID'], str(root))
+    assert artifact_paths.converted_file(record.lensID, record.converted.path, str(root)) == str(
+        (entry / 'jacobians.safetensors').resolve())
+    np.testing.assert_array_equal(lens_store.load_layer(record, 1, root=str(root)).numpy(), [[1, 2], [3, 4]])
+
+    # A library that does not hold the file under that hash: the file is put back, as on any machine.
+    (entry / 'jacobians.safetensors').write_bytes(data + b'x')        # not the size its record names: not an entry
+    assert lens_library.held_file(sha) is None
+    restored = imports.publish(path, root, plan['planSHA256'])
+    assert restored['existing'] is True and restored['changed'] is True and restored['restored'] is True
+    assert file.read_bytes() == data
+
+
+@pytest.mark.parametrize('library', ['none', 'empty', 'another lens'])
+def test_a_missing_converted_file_is_still_put_back_where_no_library_holds_it(source, tmp_path, monkeypatch, library):
+    """A researcher's own machine has no lens library, and nothing about a
+    repeated import changes there. Neither does it on an engine whose library
+    holds other lenses and not this one."""
+    import hashlib
+    from steerlab_server.jlens import lens_library
+    path, root, _ = source
+    plan, first, folder = imported(source)
+    file = folder / 'jacobians.safetensors'
+    data = file.read_bytes()
+    file.unlink()
+    monkeypatch.setenv('STEERLAB_ROOT', str(root))
+    for name in ('STEERLAB_LENS_LIBRARY_ROOT', 'STEERLAB_SERVICE_ROLE', 'SLURM_JOB_ID'):
+        monkeypatch.delenv(name, raising=False)
+    if library == 'none':
+        assert lens_library.root() is None
+        monkeypatch.setattr(lens_library, '_entry', lambda *args: pytest.fail('a machine with no library looked in one'))
+    else:
+        monkeypatch.setenv('STEERLAB_LENS_LIBRARY_ROOT', str(tmp_path / 'lens-library'))
+        if library == 'another lens':
+            other = data[:-1] + bytes([data[-1] ^ 1])
+            library_entry(tmp_path / 'lens-library', hashlib.sha256(other).hexdigest(), other)
+    restored = imports.publish(path, root, plan['planSHA256'])
+    assert restored['existing'] is True and restored['changed'] is True and restored['restored'] is True
+    assert file.read_bytes() == data
 
 
 def renamed(folder, name, **fields):
@@ -385,10 +496,13 @@ def test_a_receipt_for_these_files_beside_a_record_of_other_bytes_is_not_this_le
     assert caught.value.repair_action == 'Move that folder aside, then import again.'
 
 
+@pytest.mark.parametrize('receipt', [True, False], ids=['with its receipt', 'with no receipt'])
 @pytest.mark.parametrize('field', ['tensorSHA256', 'configSHA256'])
-def test_each_hash_in_the_record_must_be_the_plans(source, field):
+def test_each_hash_in_the_record_must_be_the_plans(source, field, receipt):
     path, root, _ = source
     plan, first, folder = imported(source)
+    if not receipt:
+        (folder / 'import-receipt.json').unlink()       # as a site's registered record has none
     record = json.loads((folder / 'lens.json').read_text())
     assert record['source']['tensorSHA256'] == plan['files']['tensorFile']['sha256']
     assert record['source']['configSHA256'] == plan['files']['description']['sha256']
