@@ -26,6 +26,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import numpy as np
@@ -735,6 +736,47 @@ def test_an_engine_refusal_reaches_the_client_with_the_engines_code_sentence_and
     assert code == 0 and answered['result']['response']['siteRecord'] == 'different'
     assert answered['message'] == (f"The site's lens library holds lens {lens_id}; the site has a different lens "
                                    'under that name.')
+
+
+@pytest.mark.parametrize('state, code', [
+    ('a folder that is being published', 'lensLibraryEntryBusy'),
+    ('a folder dated in the future', 'lensLibraryTimeAhead'),
+    ('no room', 'lensLibraryNoSpace'),
+    ('another plan in progress', 'lensUploadPlanDiffers'),
+])
+def test_what_the_engine_says_of_a_push_it_refuses_is_what_the_researcher_reads(world, monkeypatch, state, code):
+    """Whatever the library's state, the client adds nothing and drops nothing: the code, the sentence, and the
+    repair in the command's answer are the ones in the engine's own answer to the same request."""
+    from steerlab_server.client import lens_transfer
+    root, lens_id, _ = world.researcher()
+    engine = world.engine()
+    data = converted(root, lens_id).read_bytes()
+    sha = digest(data)
+    plan = lens_transfer.push_plan(root, lens_id, 8192)
+    manifest = {'bytes': plan['bytes'], 'parts': plan['parts']}
+    if state == 'a folder that is being published':
+        engine.entry(sha).mkdir(parents=True)                       # claimed a moment ago, and not yet an entry
+    elif state == 'a folder dated in the future':
+        engine.entry(sha).mkdir(parents=True)
+        ahead = time.time() + 30 * 24 * 3600
+        os.utime(engine.entry(sha), (ahead, ahead))
+    elif state == 'no room':
+        monkeypatch.setattr(lens_library.shutil, 'disk_usage', lambda path: SimpleNamespace(total=10**9, used=10**9, free=0))
+    else:
+        # Another sender began this lens with a different part size, and is still sending.
+        other = lens_transfer.push_plan(root, lens_id, 1024)
+        assert other['parts'] != plan['parts']
+        begun = engine.post(f'/api/lens-library/{sha}/begin', json={'bytes': other['bytes'], 'parts': other['parts']})
+        assert begun.status_code == 200, begun.text
+    said = engine.post(f'/api/lens-library/{sha}/begin', json=manifest)
+    assert said.status_code == 409 and said.json()['detail']['code'] == code, said.text
+    detail = said.json()['detail']
+    engine.calls.clear()
+    code_, refused = push(world, engine, root, lens_id)
+    assert (code_, refused['state']) == (65, 'refused')
+    assert (refused['error']['code'], refused['error']['reason'], refused['error']['repairAction']) == (
+        detail['code'], detail['message'], detail['repairAction'])
+    assert engine.sent('PUT') == [] and not record_file(engine.root, lens_id).exists()
 
 
 def test_an_entry_a_newer_engine_wrote_is_reported_by_status_and_refused_by_name_on_a_push(world):
