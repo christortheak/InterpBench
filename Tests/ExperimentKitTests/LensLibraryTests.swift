@@ -1375,8 +1375,13 @@ import Testing
             in: directory, name: "referring",
             context: ["request": [String: Any](), "lensReference": true, "libraryLenses": lenses])
         let carrying = try Self.archive(in: directory, name: "carrying", context: ["request": [String: Any]()])
+        // Packaged with the flag, a request that reads no lens refers to none.
+        let namingNone = try Self.archive(
+            in: directory, name: "naming-none",
+            context: ["request": [String: Any](), "lensReference": true, "libraryLenses": [Any]()])
         #expect(LensLibrary.archiveRefersToLibrary(referring))
         #expect(!LensLibrary.archiveRefersToLibrary(carrying))
+        #expect(!LensLibrary.archiveRefersToLibrary(namingNone))
         #expect(!LensLibrary.archiveRefersToLibrary(directory.appending(component: "absent.tar.gz")))
         let notAnArchive = directory.appending(component: "plain.tar.gz")
         try Data("not an archive".utf8).write(to: notAnArchive)
@@ -1396,9 +1401,13 @@ import Testing
                 #expect(refusal.repairAction == (try Self.text(fixture["unavailable"], "archiveRepairAction")))
             }
             #expect(site.sent("POST").isEmpty, "nothing may be sent")
-            // A request that carries its lens goes to any engine, as before.
+            // A request that carries its lens goes to any engine, as before,
+            // and so does one that names no lens at all: there is no lens
+            // for the engine to lack.
             _ = try await client.uploadBundle(carrying)
             #expect(site.sent("POST") == ["POST /api/bundles/upload"])
+            _ = try await client.uploadBundle(namingNone)
+            #expect(site.sent("POST") == ["POST /api/bundles/upload", "POST /api/bundles/upload"])
         }
         let site = Site()
         _ = try await site.client().uploadBundle(referring)

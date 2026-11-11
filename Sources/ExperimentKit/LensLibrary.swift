@@ -428,18 +428,24 @@ public enum LensLibrary {
     @TaskLocal static var archiveInspectorOverride: (@Sendable (URL) -> Bool)?
 
     /// Whether a file is a request archive whose metadata says it refers to
-    /// its lens instead of carrying it (`context.lensReference`). Any other
-    /// file, and any archive this cannot read, is not judged here: the server
-    /// inspects every upload. Python twin: `lens_transfer.archive_library_lenses`.
+    /// a lens instead of carrying it: `context.lensReference`, with at least
+    /// one lens under `context.libraryLenses`. A request that reads no lens,
+    /// packaged with `--lens-reference`, refers to none (the list is empty),
+    /// and an engine with no library stages it like any other, so it is not
+    /// one of these. Any other file, and any archive this cannot read, is
+    /// not judged here: the server inspects every upload. Python twin:
+    /// `lens_transfer.archive_library_lenses`, as `require_library_for_archive`
+    /// reads it.
     ///
     /// The metadata is the archive's last member, so this reads the whole
     /// archive. An upload asks it only of an engine with no lens library.
     static func archiveRefersToLibrary(_ url: URL) -> Bool {
         guard let data = archiveMetadata(url),
             case .object(let metadata)? = try? JSONDecoder().decode(JSONValue.self, from: data),
-            case .object(let context)? = metadata["context"]
+            case .object(let context)? = metadata["context"], context["lensReference"] == .bool(true),
+            case .array(let lenses)? = context["libraryLenses"]
         else { return false }
-        return context["lensReference"] == .bool(true)
+        return !lenses.isEmpty
     }
 
     /// The archive's `steerlab-bundle.json`, read by the system `tar` (as the

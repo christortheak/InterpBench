@@ -442,6 +442,8 @@ def push_plan(root, lens_id, part_max_bytes):
 def archive_library_lenses(path):
     """The lenses a diagnostic input archive refers to instead of carrying
     (its metadata's ``context.libraryLenses``), or None for any other file.
+    The list is empty for a request that was packaged with ``--lens-reference``
+    and reads no lens: it refers to none.
 
     An archive this cannot read is not judged here: the engine inspects every
     upload and says what is wrong with it."""
@@ -471,12 +473,17 @@ def require_library_for_archive(where, capabilities, path):
     The capability is asked first, from the snapshot the upload already has:
     an engine with a library takes any archive, so the archive is not opened
     at all. It is read (its metadata is its last member, so that is the whole
-    archive) only for an engine without one. Swift twin: the same check in
-    ``ClusterClient.uploadBundle``."""
+    archive) only for an engine without one.
+
+    An archive that names no lens goes to any engine, whichever way it was
+    packaged: a request that reads no lens, packaged with ``--lens-reference``,
+    refers to none (``libraryLenses`` is empty), and an engine with no library
+    stages it like any other. Swift twin: the same check in
+    ``ClusterClient.uploadBundle`` (``LensLibrary.archiveRefersToLibrary``)."""
     if library_available(capabilities):
         return
     lenses = archive_library_lenses(path)
-    if lenses is None:
+    if not lenses:
         return
     from .runner import RunnerRefusal
     raise RunnerRefusal(library_unavailable_reason(where, archive=True),

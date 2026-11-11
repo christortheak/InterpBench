@@ -1050,8 +1050,11 @@ def test_a_request_that_refers_to_its_lens_is_not_uploaded_to_an_engine_without_
     lenses = [{'lensID': 'custom-lens-example', 'convertedSHA256': 'a' * 64, 'bytes': 7}]
     referring = request_archive(tmp_path, 'referring.tar.gz', {'request': {}, 'lensReference': True, 'libraryLenses': lenses})
     carrying = request_archive(tmp_path, 'carrying.tar.gz', {'request': {}})
+    # Packaged with the flag, a request that reads no lens refers to none.
+    naming_none = request_archive(tmp_path, 'naming-none.tar.gz', {'request': {}, 'lensReference': True, 'libraryLenses': []})
     assert lens_transfer.archive_library_lenses(referring) == lenses
     assert lens_transfer.archive_library_lenses(carrying) is None
+    assert lens_transfer.archive_library_lenses(naming_none) == []
     assert lens_transfer.archive_library_lenses(tmp_path / 'absent.tar.gz') is None
     for library in (None, False):
         site = Site(library=library)
@@ -1063,9 +1066,12 @@ def test_a_request_that_refers_to_its_lens_is_not_uploaded_to_an_engine_without_
             assert caught.value.reason == FIXTURE['unavailable']['archiveReason']
             assert caught.value.repair_action == FIXTURE['unavailable']['archiveRepairAction']
             assert caught.value.detail['libraryLenses'] == lenses
-            # A request that carries its lens goes to any engine, as before.
+            # A request that carries its lens goes to any engine, as before, and so does one that names no
+            # lens at all: there is no lens for the engine to lack.
             client.upload_run_bundle(str(carrying))
-            assert site.sent('POST', '/api/bundles/upload')
+            assert len(site.sent('POST', '/api/bundles/upload')) == 1
+            client.upload_run_bundle(str(naming_none))
+            assert len(site.sent('POST', '/api/bundles/upload')) == 2
     site = Site()
     with site.client() as client:
         client.upload_run_bundle(str(referring))

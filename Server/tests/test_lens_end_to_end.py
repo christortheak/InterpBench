@@ -117,8 +117,6 @@ class Engine:
                 if found is not None:
                     engine.lost.remove(found)
                     if found[2] == 'before':
-                        for chunk in options.get('content') or ():      # the sender had begun to read its file
-                            break
                         raise httpx.ReadError('the connection was lost')
                 engine.calls.append((method, path))
                 with environment(engine.env):
@@ -551,7 +549,7 @@ def test_a_site_that_forbids_http_transfer_adopts_a_copy_placed_beneath_its_run_
     assert engine.sent('POST') == [] and engine.sent('PUT') == []
     # The engine itself refuses a sender that asks anyway, in its own words: a 403 that names a code is the
     # engine's refusal, never a token problem, on the manifest and on a part.
-    with runner_api.RunnerClient(base_url=SERVER, token=TOKEN, http_client=engine.http) as direct:
+    with world.client_class(base_url=SERVER, token=TOKEN, http_client=engine.http) as direct:
         for call in (lambda: direct.lens_library_begin(sha, len(data), [{'index': 0, 'offset': 0, 'bytes': len(data), 'sha256': sha}]),
                      lambda: direct.lens_library_put_part(sha, {'index': 0, 'offset': 0, 'bytes': len(data), 'sha256': sha}, str(lens))):
             with pytest.raises(runner_api.RunnerRefusal) as caught:
@@ -633,12 +631,39 @@ def test_an_engine_with_no_lens_library_is_sent_nothing(world, options):
     assert code == 0, uploaded
     assert stage(world, engine, root, uploaded)[0] == 0
     # The engine says the same of itself to a sender that asks anyway, with its own code and repair.
-    with runner_api.RunnerClient(base_url=SERVER, token=TOKEN, http_client=engine.http) as direct:
+    with world.client_class(base_url=SERVER, token=TOKEN, http_client=engine.http) as direct:
         with pytest.raises(runner_api.RunnerRefusal) as caught:
             direct.lens_library_status(sha)
     assert caught.value.code == 'lensLibraryUnavailable'
     assert caught.value.reason == 'This engine has no lens library: no folder is set for one, or the folder cannot be written.'
     assert '`STEERLAB_LENS_LIBRARY_ROOT`' in caught.value.repair_action
+
+
+def test_a_request_that_names_no_lens_goes_to_any_engine_with_or_without_the_flag(world):
+    """Packaged with --lens-reference, a request that reads no lens refers to none (`libraryLenses: []`), and
+    an engine with no lens library takes it as it takes any archive. So the client sends it: there is no lens
+    for it to say the engine cannot hold."""
+    from test_battery_run import _lines
+    root = world.tmp_path / 'researcher'
+    battery = root / 'prompts/batteries/example.jsonl'
+    battery.parent.mkdir(parents=True)
+    battery.write_text(_lines())
+    request = {'operation': 'battery', 'parameters': {'batteryFile': 'prompts/batteries/example.jsonl',
+                                                      'agents': ['baseline'], 'modelID': 'example/model',
+                                                      'revision': 'a' * 40}}
+    request_file = root / 'request.json'
+    request_file.write_text(json.dumps(request))
+    plan, packed = package(world, root, request_file, world.tmp_path / 'no-lens.tar.gz', '--lens-reference')
+    assert plan['libraryLenses'] == []
+    described = json.loads(description_of(packed['bundlePath'])[0])
+    assert described['context']['lensReference'] is True and described['context']['libraryLenses'] == []
+    for options in ({'role': 'workbench', 'library': None}, {'role': 'runner', 'library': 'empty'}, {}):
+        engine = world.engine(limit=1 << 20, **options)
+        code, uploaded = upload(world, engine, root, packed['bundlePath'])
+        assert code == 0, uploaded
+        code, staged = stage(world, engine, root, uploaded)
+        assert code == 0, staged
+        assert staged['result']['response']['operation'] == 'battery'
 
 
 # --- 7. a record that holds a number that is not finite --------------------------
