@@ -264,6 +264,34 @@ public enum ExperimentCLIParser {
     private static let remoteConnection: Set<String> = ["--site", "--url", "--token"]
     private static let modelPreparationConnection: Set<String> = ["--site", "--url"]
 
+    /// Python twin: `science_commands.LENS_REFERENCE_PURPOSE`.
+    static let lensReferencePurpose =
+        "With --lens-reference, a request that names a lens refers to the copy in the site's lens "
+        + "library and leaves the lens file out; send the lens once with lens-push first."
+    /// Python twin: `science_commands.LENS_COPY_PURPOSE`.
+    static let lensCopyPurpose =
+        "Copy a lens from another workspace on this machine into this one, under the same name and "
+        + "record. Reviews by default and writes nothing; repeat with the --plan-sha256 the review "
+        + "shows to copy it. Each file is checked before and after, and on macOS the copy is a clone "
+        + "that uses no extra disk space where the filesystem allows. A lens already here under that "
+        + "name is not copied again; its converted file is put back if it is missing. The answer lists "
+        + "any other names under which this workspace holds the same lens."
+    /// Python twin: `science_commands.LENS_PUSH_PURPOSE`.
+    static let lensPushPurpose =
+        "Send a workspace lens to the site's lens library once, in parts that follow its layers, each "
+        + "checked, and register its record there. Sends only what the site lacks, so it can be run "
+        + "again after an interruption. With --adopt, the site checks and keeps a copy already on it, "
+        + "and nothing is uploaded."
+    /// Python twin: `science_commands.LENS_STATUS_PURPOSE`.
+    static let lensStatusPurpose =
+        "Report whether the site's lens library holds a workspace lens and whether the site has its "
+        + "record. Reads only."
+    /// Python twin: `science_commands.ARTIFACT_IMPORT_PURPOSE`.
+    static let artifactImportPurpose =
+        "Import the reviewed instrument into the workspace. A lens is named from its reviewed files, "
+        + "so importing the same files again finds the same lens, and puts its converted file back if "
+        + "it is missing."
+
     /// The table. Data on purpose: step 11 generates `--help` and the
     /// reference document's flag rows from it, and a switch statement cannot
     /// be enumerated.
@@ -282,7 +310,7 @@ public enum ExperimentCLIParser {
         .init(namespace: "science", verb: "corpus-preview", positional: "<spec.json>", purpose: "Read chosen data sources and capture a fitting corpus preview; public dataset files may download."),
         .init(namespace: "science", verb: "corpus-publish", positional: "<preview-id>", purpose: "Save the reviewed fitting corpus and provenance in a new directory.", valueFlags: ["--plan-sha256", "--destination"], requiredFlags: ["--plan-sha256", "--destination"]),
         .init(namespace: "science", verb: "artifact-plan", positional: "<description.json>", purpose: "Inspect a custom lens or SAE decoder and hash its source files without publishing."),
-        .init(namespace: "science", verb: "artifact-import", positional: "<description.json>", purpose: "Import the reviewed instrument into a fresh library destination.", valueFlags: ["--plan-sha256"], requiredFlags: ["--plan-sha256"]),
+        .init(namespace: "science", verb: "artifact-import", positional: "<description.json>", purpose: artifactImportPurpose, valueFlags: ["--plan-sha256"], requiredFlags: ["--plan-sha256"]),
         .init(namespace: "science", verb: "sae-check", positional: "<roster-path>", purpose: "Inspect the SAE roster and qualification warnings without a model."),
         .init(namespace: "science", verb: "sae-show", positional: "<qualification-path>", purpose: "Inspect an existing qualification record without changing its scientific status."),
         .init(namespace: "science", verb: "sae-pin-plan", positional: "<roster-path>", purpose: "Review roster and draft bytes before pinning.", valueFlags: ["--experiment"], requiredFlags: ["--experiment"]),
@@ -290,8 +318,9 @@ public enum ExperimentCLIParser {
         .init(namespace: "science", verb: "interview", positional: "<operation>", purpose: "Read the shared method interview and exact form fields."),
         .init(namespace: "science", verb: "draft", positional: "<operation>", purpose: "Review conceptual answers, a machine request and its input hashes.", valueFlags: ["--answers"], requiredFlags: ["--answers"]),
         .init(namespace: "science", verb: "publish", positional: "<operation>", purpose: "Publish the reviewed request and rationale in a new requests directory.", valueFlags: ["--answers", "--destination", "--plan-sha256"], requiredFlags: ["--answers", "--destination", "--plan-sha256"]),
-        .init(namespace: "science", verb: "input-plan", positional: "<request.json>", purpose: "Discover and hash local diagnostic inputs using the portable archive owner."),
-        .init(namespace: "science", verb: "package", positional: "<request.json>", purpose: "Package exactly the reviewed diagnostic inputs for permitted transfer. Inputs that carry custom code need each SHA-256 the input plan shows, in --custom-code-sha256.", valueFlags: ["--archive", "--plan-sha256", "--custom-code-sha256"], requiredFlags: ["--archive", "--plan-sha256"]),
+        .init(namespace: "science", verb: "input-plan", positional: "<request.json>", purpose: "Discover and hash local diagnostic inputs using the portable archive owner. " + lensReferencePurpose, booleanFlags: ["--lens-reference"]),
+        .init(namespace: "science", verb: "package", positional: "<request.json>", purpose: "Package exactly the reviewed diagnostic inputs for permitted transfer. Inputs that carry custom code need each SHA-256 the input plan shows, in --custom-code-sha256. " + lensReferencePurpose, booleanFlags: ["--lens-reference"], valueFlags: ["--archive", "--plan-sha256", "--custom-code-sha256"], requiredFlags: ["--archive", "--plan-sha256"]),
+        .init(namespace: "science", verb: "lens-copy", positional: "<lensID>", purpose: lensCopyPurpose, valueFlags: ["--from", "--plan-sha256"], requiredFlags: ["--from"]),
         .init(namespace: "science", verb: "import", positional: "<archive.tar.gz>", purpose: "Verify and import diagnostic evidence into this workspace without replacing outputs.", valueFlags: ["--sha256"], requiredFlags: ["--sha256"]),
         .init(namespace: "science", verb: "custody", purpose: "Reverify and list local diagnostic evidence receipts for offline inspection."),
         .init(namespace: "science", verb: "verify-custody", positional: "<receipt-sha256>", purpose: "Verify the retained diagnostic archive and every expanded output file."),
@@ -498,6 +527,8 @@ public enum ExperimentCLIParser {
 
         .init(namespace: "remote", verb: "science-call", positional: "<operation>", purpose: "Call a catalogued scientific HTTP action with its existing authority and gates.", valueFlags: modelPreparationConnection.union(["--action", "--request"]), requiredFlags: ["--action", "--request"]),
         .init(namespace: "remote", verb: "science-stage", positional: "<server-archive-path>", purpose: "Stage a verified diagnostic execution copy without editing workbench sources.", valueFlags: modelPreparationConnection.union(["--sha256"]), requiredFlags: ["--sha256"]),
+        .init(namespace: "remote", verb: "lens-push", positional: "<lensID>", purpose: lensPushPurpose, valueFlags: modelPreparationConnection.union(["--adopt"])),
+        .init(namespace: "remote", verb: "lens-status", positional: "<lensID>", purpose: lensStatusPurpose, valueFlags: modelPreparationConnection),
         .init(namespace: "remote", verb: "science-export", positional: "<job-id>", purpose: "Package completed diagnostic output and return its hash for permitted transfer.", valueFlags: modelPreparationConnection),
         .init(namespace: "remote", verb: "science-fetch", positional: "<job-id>", purpose: "Download and verify diagnostic evidence into the captured workspace, retaining local custody.", valueFlags: modelPreparationConnection),
         .init(namespace: "remote", verb: "cleanup-plan", positional: "<job-id>", purpose: "Reverify local custody and review bounded diagnostic output removal.", valueFlags: modelPreparationConnection.union(["--receipt-sha256"]), requiredFlags: ["--receipt-sha256"]),

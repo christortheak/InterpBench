@@ -52,8 +52,15 @@ def main():
             return 0
         from ..experiment.diagnostic_archives import Refusal
         repair = Refusal.repair_action
-        from .diagnostic_commands import workspace_action
-        print(json.dumps({'ok': True, 'clientSHA256': identity, 'clientRoot': root, 'result': workspace_action(document['action'], document['payload'])}))
+        from .diagnostic_commands import bridge_action
+        from ..experiment.strict_json import strict
+        # Strict JSON, whatever the action answers: a number that is not
+        # finite (a lens record can hold one) is written as null, because the
+        # Mac reads no other spelling and would take the whole answer for no
+        # answer at all.
+        answer, _ = strict({'ok': True, 'clientSHA256': identity, 'clientRoot': root,
+                            'result': bridge_action(document['action'], document['payload'])})
+        print(json.dumps(answer, allow_nan=False))
         return 0
     except Exception as exc:
         repair = getattr(exc, 'repair_action', None) or getattr(exc, 'repair', None) or repair

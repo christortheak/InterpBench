@@ -7,6 +7,31 @@ REPORT_PURPOSE = ('Turn a stored J-lens assessment report into one self-containe
                   'Give the run folder or its assessment-report.json. A run folder is never written to: the page '
                   'goes to reports/ in the workspace, or to --out (read from the workspace unless absolute).')
 
+#: Swift twin: ``ExperimentCLIParser.lensReferencePurpose``.
+LENS_REFERENCE_PURPOSE = ('With --lens-reference, a request that names a lens refers to the copy in the '
+                          "site's lens library and leaves the lens file out; send the lens once with "
+                          'lens-push first.')
+#: Swift twin: ``ExperimentCLIParser.artifactImportPurpose``.
+ARTIFACT_IMPORT_PURPOSE = ('Import the reviewed instrument into the workspace. A lens is named from its reviewed '
+                           'files, so importing the same files again finds the same lens, and puts its converted '
+                           'file back if it is missing.')
+#: Swift twin: ``ExperimentCLIParser.lensPushPurpose``.
+LENS_PUSH_PURPOSE = ("Send a workspace lens to the site's lens library once, in parts that follow its layers, "
+                     'each checked, and register its record there. Sends only what the site lacks, so it can be '
+                     'run again after an interruption. With --adopt, the site checks and keeps a copy already '
+                     'on it, and nothing is uploaded.')
+#: Swift twin: ``ExperimentCLIParser.lensStatusPurpose``.
+LENS_STATUS_PURPOSE = ("Report whether the site's lens library holds a workspace lens and whether the site has "
+                       'its record. Reads only.')
+#: Swift twin: ``ExperimentCLIParser.lensCopyPurpose``.
+LENS_COPY_PURPOSE = ('Copy a lens from another workspace on this machine into this one, under the same name '
+                     'and record. Reviews by default and writes nothing; repeat with the --plan-sha256 the '
+                     'review shows to copy it. Each file is checked before and after, and on macOS the copy '
+                     'is a clone that uses no extra disk space where the filesystem allows. A lens already '
+                     'here under that name is not copied again; its converted file is put back if it is '
+                     'missing. The answer lists any other names under which this workspace holds the same '
+                     'lens.')
+
 VERB_SPECS = (
     VerbSpec('science', 'evidence-analyze', positional='<path>', purpose='Compare retained probe readings and requested/applied policy actions in a run.'),
     VerbSpec('science', 'policy-list', purpose='List saved intervention policies.'),
@@ -22,7 +47,7 @@ VERB_SPECS = (
     VerbSpec('science', 'corpus-preview', positional='<spec.json>', purpose='Read chosen data sources and capture a reproducible fitting corpus preview; public dataset files may download.'),
     VerbSpec('science', 'corpus-publish', positional='<preview-id>', purpose='Save the reviewed fitting corpus and provenance in a new directory.', value_flags=frozenset({'--plan-sha256', '--destination'}), required_flags=frozenset({'--plan-sha256', '--destination'})),
     VerbSpec('science', 'artifact-plan', positional='<description.json>', purpose='Inspect a custom lens or SAE decoder and hash its source files without publishing.'),
-    VerbSpec('science', 'artifact-import', positional='<description.json>', purpose='Import the reviewed instrument into a fresh library destination.', value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
+    VerbSpec('science', 'artifact-import', positional='<description.json>', purpose=ARTIFACT_IMPORT_PURPOSE, value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
     VerbSpec('science', 'sae-check', positional='<roster-path>', purpose='Inspect the SAE roster and surface qualification warnings without a model.'),
     VerbSpec('science', 'sae-show', positional='<qualification-path>', purpose='Inspect an existing qualification record without changing its scientific status.'),
     VerbSpec('science', 'sae-pin-plan', positional='<roster-path>', purpose='Review roster and draft bytes before pinning.', value_flags=frozenset({'--experiment'}), required_flags=frozenset({'--experiment'})),
@@ -30,8 +55,9 @@ VERB_SPECS = (
     VerbSpec('science', 'interview', positional='<operation>', purpose='Read the shared method-specific interview and exact form fields.'),
     VerbSpec('science', 'draft', positional='<operation>', purpose='Resolve conceptual answers into a reviewed request and input hashes without publication.', value_flags=frozenset({'--answers'}), required_flags=frozenset({'--answers'})),
     VerbSpec('science', 'publish', positional='<operation>', purpose='Publish the reviewed request and rationale together in a new requests directory.', value_flags=frozenset({'--answers', '--destination', '--plan-sha256'}), required_flags=frozenset({'--answers', '--destination', '--plan-sha256'})),
-    VerbSpec('science', 'input-plan', positional='<request.json>', purpose='Discover and hash local standalone diagnostic inputs without execution.'),
-    VerbSpec('science', 'package', positional='<request.json>', purpose='Package exactly the reviewed local diagnostic inputs for permitted transport. Inputs that carry custom code need each SHA-256 the input plan shows, in --custom-code-sha256.', value_flags=frozenset({'--archive', '--plan-sha256', '--custom-code-sha256'}), required_flags=frozenset({'--archive', '--plan-sha256'})),
+    VerbSpec('science', 'input-plan', positional='<request.json>', purpose='Discover and hash local standalone diagnostic inputs without execution. ' + LENS_REFERENCE_PURPOSE, boolean_flags=frozenset({'--lens-reference'})),
+    VerbSpec('science', 'package', positional='<request.json>', purpose='Package exactly the reviewed local diagnostic inputs for permitted transport. Inputs that carry custom code need each SHA-256 the input plan shows, in --custom-code-sha256. ' + LENS_REFERENCE_PURPOSE, boolean_flags=frozenset({'--lens-reference'}), value_flags=frozenset({'--archive', '--plan-sha256', '--custom-code-sha256'}), required_flags=frozenset({'--archive', '--plan-sha256'})),
+    VerbSpec('science', 'lens-copy', positional='<lensID>', purpose=LENS_COPY_PURPOSE, value_flags=frozenset({'--from', '--plan-sha256'}), required_flags=frozenset({'--from'})),
     VerbSpec('science', 'import', positional='<archive.tar.gz>', purpose='Verify and import diagnostic evidence into the captured local workspace without replacing outputs.', value_flags=frozenset({'--sha256'}), required_flags=frozenset({'--sha256'})),
     VerbSpec('science', 'custody', purpose='Reverify and list retained diagnostic evidence receipts for offline inspection.'),
     VerbSpec('science', 'verify-custody', positional='<receipt-sha256>', purpose='Re-read the retained archive and every expanded local output before reporting custody.'),
@@ -46,7 +72,7 @@ VERB_SPECS = (
 def run(invocation):
     from ..client_cli import ClientRefusal
     verb, args = invocation.spec.verb, invocation.positionals
-    if verb in {'evidence-analyze', 'policy-list', 'policy-inspect', 'policy-review', 'policy-publish', 'policy-attach-review', 'policy-attach', 'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody', 'report'}:
+    if verb in {'evidence-analyze', 'policy-list', 'policy-inspect', 'policy-review', 'policy-publish', 'policy-attach-review', 'policy-attach', 'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'lens-copy', 'import', 'custody', 'verify-custody', 'report'}:
         from .diagnostic_commands import local
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):

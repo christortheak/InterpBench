@@ -69,10 +69,12 @@ def workspace_action(action, payload):
     }
     if action not in required or not isinstance(payload, dict): raise archives.MalformedRequest('Unknown diagnostic workspace operation.')
     fields = required[action] | {'workspaceRoot'}
-    optional = {'import': {'expectedContext'}, 'report': {'out'}, 'package': {'customCodeSHA256', 'lensReference'},
-                'input-plan': {'lensReference'}}.get(action, set())
+    optional = {'import': {'expectedContext'}, 'report': {'out'}, 'input-plan': {'lensReference'},
+                'package': {'customCodeSHA256', 'lensReference'}}.get(action, set())
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.MalformedRequest('Supply exactly the declared action fields as nonempty strings.')
+    if type(payload.get('lensReference', False)) is not bool:
+        raise archives.MalformedRequest('lensReference is true or false.')
     root = str(Path(payload['workspaceRoot']).resolve())
     if action == 'report':
         # Reads stored JSON and writes one page outside any run folder; no model, no statistics.
@@ -125,25 +127,79 @@ def workspace_action(action, payload):
         return method_authoring.publish(payload['operation'], answers, root, payload['destination'], payload['planSHA256'])
     if action in ('input-plan', 'package'):
         from ..experiment import diagnostic_inputs
-        # `lensReference: true` (`--lens-reference`): each lens is named by its
-        # hash for a site that holds it, and its converted file is left out.
-        # Absent or false, the request carries its lenses, as before.
-        reference = payload.get('lensReference', False)
-        if type(reference) is not bool: raise archives.MalformedRequest('lensReference is true or false.')
         request = json.loads(Path(payload['requestFile']).read_bytes())
-        if action == 'input-plan': return diagnostic_inputs.plan(request, root, lens_reference=reference)
+        # A request that refers to its lens (`--lens-reference`). Absent or
+        # false is carry mode, called exactly as before the flag existed.
+        mode = {'lens_reference': True} if payload.get('lensReference') is True else {}
+        if action == 'input-plan': return diagnostic_inputs.plan(request, root, **mode)
         return diagnostic_inputs.package(request, root, payload['archivePath'], payload['planSHA256'],
-                                         acknowledge=payload.get('customCodeSHA256'), lens_reference=reference)
+                                         acknowledge=payload.get('customCodeSHA256'), **mode)
     if action == 'import': return archives.import_evidence(payload['archivePath'], payload['archiveSHA256'], root, expected_context=payload.get('expectedContext'))
     if action == 'verify-custody': return {'verified': True, 'receipt': archives.verify(payload['receiptSHA256'], root), 'receiptSHA256': payload['receiptSHA256']}
     if action == 'custody': return archives.inventory(root)
     raise archives.MalformedRequest('Unknown diagnostic workspace operation.')
 
 
+#: Actions only this machine's own command lines and app reach, through the
+#: local bridge (``diagnostic_workspace``) and :func:`local`. They are not
+#: :func:`workspace_action`'s, so no HTTP route serves them: ``lens-copy``
+#: reads a second folder on this machine, which a served workspace must not
+#: let a remote caller name.
+LOCAL_ACTIONS = ('lens-push-plan', 'lens-record', 'lens-copy')
+
+
+def bridge_action(action, payload):
+    """What the local bridge runs: a :data:`LOCAL_ACTIONS` action, or any
+    :func:`workspace_action`."""
+    if action in LOCAL_ACTIONS:
+        return _lens_action(action, payload)
+    return workspace_action(action, payload)
+
+
+def _lens_action(action, payload):
+    """The three lens actions (``lens_transfer``). Their fields are not all
+    strings, so they are checked here and not by the table above."""
+    from . import lens_transfer
+    fields = {'lens-push-plan': {'workspaceRoot', 'lensID', 'partMaxBytes'},
+              'lens-record': {'workspaceRoot', 'lensID'},
+              'lens-copy': {'workspaceRoot', 'lensID', 'fromWorkspace'}}[action]
+    optional = {'planSHA256'} if action == 'lens-copy' else set()
+    if (not isinstance(payload, dict) or not fields <= payload.keys() or payload.keys() - fields - optional
+            or any(not isinstance(payload[k], str) or not payload[k] for k in payload.keys() - {'partMaxBytes'})):
+        malformed = archives.MalformedRequest('Supply exactly the declared lens action fields.')
+        malformed.repair_action = ('Use the lens verbs, which build this request: lens-push, lens-status, and '
+                                   'science lens-copy.')
+        raise malformed
+    root = str(Path(payload['workspaceRoot']).resolve())
+    if action == 'lens-push-plan':
+        return lens_transfer.push_plan(root, payload['lensID'], payload['partMaxBytes'])
+    if action == 'lens-record':
+        return lens_transfer.lens_record(root, payload['lensID'])
+    return lens_transfer.copy(root, payload['lensID'], payload['fromWorkspace'], payload.get('planSHA256'))
+
+
+def _lens_copy_arguments(invocation):
+    """``science lens-copy`` says what is missing in its own words, before the
+    family's one sentence for every malformed request. It also needs a named
+    workspace: the family runs without one, and this verb writes into it."""
+    from ..client_cli import ClientRefusal
+    from . import lens_transfer
+    usage = 'steerlab --root <workspace directory> science lens-copy <lensID> --from <workspace directory>'
+    if len(invocation.positionals) != 1:
+        raise ClientRefusal(code='usage', repair_action=usage, reason=lens_transfer.COPY_NEEDS_LENS)
+    if not invocation.one('--from'):
+        raise ClientRefusal(code='usage', repair_action=usage, reason=lens_transfer.COPY_NEEDS_FROM)
+    if invocation.workspace_root is None:
+        raise ClientRefusal(code='usage', repair_action=usage, reason=(
+            'science lens-copy copies the lens into a workspace, and none was named.'))
+
+
 def local(invocation):
     from ..client_cli import ClientRefusal
     from ..experiment.artifact_sources import ImportRefusal
     from ..experiment.corpus_sources import CorpusError
+    if invocation.spec.verb == 'lens-copy':
+        _lens_copy_arguments(invocation)
     try:
         verb = invocation.spec.verb; validate(invocation, 0 if verb in ('custody', 'probe-list', 'policy-list') else 1)
         value = invocation.positionals[0] if invocation.positionals else None
@@ -165,7 +221,12 @@ def local(invocation):
         if verb in ('interview', 'draft', 'publish'): payload['operation'] = value
         if verb in ('draft', 'publish'): payload['answersText'] = Path(invocation.one('--answers')).read_text()
         if verb == 'publish': payload.update(destination=invocation.one('--destination'), planSHA256=invocation.one('--plan-sha256'))
-        if verb in ('input-plan', 'package'): payload['requestFile'] = value
+        if verb in ('input-plan', 'package'):
+            payload['requestFile'] = value
+            if invocation.has('--lens-reference'): payload['lensReference'] = True
+        if verb == 'lens-copy':
+            payload.update(lensID=value, fromWorkspace=str(Path(invocation.one('--from')).expanduser().absolute()))
+            if invocation.has('--plan-sha256'): payload['planSHA256'] = invocation.one('--plan-sha256')
         if verb == 'package':
             payload.update(archivePath=invocation.one('--archive'), planSHA256=invocation.one('--plan-sha256'))
             if invocation.has('--custom-code-sha256'): payload['customCodeSHA256'] = invocation.one('--custom-code-sha256')
@@ -174,11 +235,21 @@ def local(invocation):
         if verb == 'report':
             payload['path'] = value
             if invocation.has('--out'): payload['out'] = invocation.one('--out')
-        result = workspace_action(verb, payload)
+        result = bridge_action(verb, payload)
         print(json.dumps(result, indent=2))
         if verb == 'report':
             return CLIResult(message=result['message'] + ' Open ' + result['htmlPath'] + ' in a browser.',
                              changed=result['changed'], payload=result)
+        if verb == 'lens-copy':
+            from . import lens_transfer
+            return CLIResult(message=lens_transfer.copy_message(result), changed=result['changed'], payload=result)
+        if verb == 'artifact-import':
+            # A lens the workspace already held: say so, and say when its
+            # converted file was put back.
+            from . import lens_transfer
+            found = lens_transfer.import_message(result)
+            if found:
+                return CLIResult(message=found, changed=result['changed'], payload=result)
         return CLIResult(message='Diagnostic workspace operation completed; custody is byte verification, not scientific qualification.',
                          changed=result.get('changed', verb in ('package', 'import')), payload=result)
     except CorpusError as exc:

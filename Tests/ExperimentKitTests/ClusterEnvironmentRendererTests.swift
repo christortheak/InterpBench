@@ -949,7 +949,7 @@ struct ClusterEnvironmentRendererTests {
     /// sets every key to a distinguishable value to catch a dropped or renamed
     /// field, not to describe a site anyone would run).
     static let crossEngineFixtures = [
-        "v1-maximal", "v2-maximal", "v2-neutral", "example-slurm-site",
+        "v1-maximal", "v2-maximal", "v2-neutral", "example-slurm-site", "v2-lens-library",
     ]
 
     /// Repo-root-anchored fixture directory (same anchor as
@@ -1054,6 +1054,34 @@ struct ClusterEnvironmentRendererTests {
         // A v1 file keeps its stamp through decode — that is what selects the
         // legacy default set (commit 84a6a60).
         #expect(try fixtureProfile("v1-maximal").schemaVersion == 1)
+    }
+
+    /// The lens library role (public issue #14). Declared, the site's folder
+    /// renders as its own key beside the other declared roots. Undeclared,
+    /// the file is byte for byte what it was: an engine never guesses a
+    /// folder on cluster storage. `v2-lens-library` is `v2-neutral` plus the
+    /// role, so the two renders differ by that one line. Python twin:
+    /// `test_the_lens_library_role_renders_only_when_declared`.
+    @Test func theLensLibraryRoleRendersOnlyWhenDeclared() throws {
+        let declared = try fixtureProfile("v2-lens-library")
+        let neutral = try fixtureProfile("v2-neutral")
+        #expect(declared.constraints.storageRoots == ["lensLibrary": "~/steerlab-lens-library"])
+        #expect(
+            ClusterEnvironmentRenderer.resolvedEnvironment(declared)["STEERLAB_LENS_LIBRARY_ROOT"]
+                == "$HOME/steerlab-lens-library")
+        let line = #"export STEERLAB_LENS_LIBRARY_ROOT="$HOME/steerlab-lens-library""# + "\n"
+        let rendered = ClusterEnvironmentRenderer.renderEnvFile(declared)
+        #expect(rendered.components(separatedBy: line).count == 2, "the line is rendered once")
+        #expect(
+            rendered.replacingOccurrences(of: line, with: "")
+                .replacingOccurrences(of: declared.name, with: neutral.name)
+                == ClusterEnvironmentRenderer.renderEnvFile(neutral))
+        for fixture in Self.crossEngineFixtures where fixture != "v2-lens-library" {
+            let profile = try fixtureProfile(fixture)
+            #expect(
+                ClusterEnvironmentRenderer.resolvedEnvironment(profile)["STEERLAB_LENS_LIBRARY_ROOT"] == nil)
+            #expect(!ClusterEnvironmentRenderer.renderEnvFile(profile).contains("LENS_LIBRARY"))
+        }
     }
 
     /// No institutional identifiers ship in the public tree (WP5 §4.2,

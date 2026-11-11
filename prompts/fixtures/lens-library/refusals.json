@@ -1,0 +1,462 @@
+{
+  "comment": "What both clients say about the site lens library, held to the same bytes: the Python client (steerlab_server.client.lens_transfer, Server/tests/test_lens_transfer.py) and the Mac (LensLibrary.swift, LensLibraryTests.swift). Every value is fictional.",
+  "server": "http://runner.example.invalid:8080",
+  "file": "runs/jlens-lenses/custom-lens-example/jacobians.safetensors",
+  "unavailable": {
+    "code": "lensLibraryUnavailable",
+    "pushReason": "The engine at http://runner.example.invalid:8080 does not offer a lens library (its capabilities do not report lensLibrary.available as true). Nothing was sent.",
+    "pushRepairAction": "Give the engine a lens library folder it can write (on a cluster, the site profile's lensLibrary folder; on any other engine, STEERLAB_LENS_LIBRARY_ROOT), then run the command again. An engine from before the lens library must be updated first.",
+    "archiveReason": "This archive refers to its lens instead of carrying it, and the engine at http://runner.example.invalid:8080 does not offer a lens library (its capabilities do not report lensLibrary.available as true). Nothing was sent.",
+    "archiveRepairAction": "Package the request without --lens-reference so it carries its lens, or give the engine a lens library folder it can write (on a cluster, the site profile's lensLibrary folder; on any other engine, STEERLAB_LENS_LIBRARY_ROOT) and upload the request again. An engine from before the lens library must be updated first."
+  },
+  "externalTransfer": {
+    "code": "externalTransferRequired",
+    "reason": "The engine at http://runner.example.invalid:8080 does not accept file transfers over HTTP, so this client cannot send the lens's bytes. Nothing was sent.",
+    "repairAction": "Copy runs/jlens-lenses/custom-lens-example/jacobians.safetensors to the site with the site's own transfer tool, then run lens-push again with --adopt <the path of that copy on the site>: the site checks the copy against the lens's hash and keeps it."
+  },
+  "oversize": {
+    "advice": "A request that carries a lens can refer to it instead: send the lens once with lens-push, then package the request with --lens-reference.",
+    "pythonRepair": "the runner refused the body as oversize — raise its STEERLAB_MAX_UPLOAD_BYTES, or package a smaller bundle. A request that carries a lens can refer to it instead: send the lens once with lens-push, then package the request with --lens-reference. Nothing was staged.",
+    "macRepair": "Raise the server's STEERLAB_MAX_UPLOAD_BYTES, or package a smaller bundle. A request that carries a lens can refer to it instead: send the lens once with lens-push, then package the request with --lens-reference. Nothing was staged."
+  },
+  "entryDiffers": {
+    "code": "lensLibraryEntryDiffers",
+    "heldBytes": 4096,
+    "workspaceBytes": 4102,
+    "reason": "The site holds 4096 bytes under this lens's hash, and the workspace file is 4102 bytes. Nothing was sent.",
+    "repairAction": "Ask the site's operator to inspect that library entry; the workspace copy is the one its record describes."
+  },
+  "refusalFallback": {
+    "code": "lensLibraryRefused",
+    "status": 409,
+    "reason": "The engine refused the lens library request (409) without saying why.",
+    "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request.",
+    "textLimit": 2000
+  },
+  "refusalBodies": [
+    {
+      "note": "the ruled shape: a code, a message, and a repair",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"lensRecordDiffers\", \"reason\": \"The site has another record under this lens name.\", \"message\": \"The site has another record under this lens name.\", \"repairAction\": \"Compare the two records, then register the one you mean.\"}}",
+      "engineRefusal": true,
+      "code": "lensRecordDiffers",
+      "reason": "The site has another record under this lens name.",
+      "repairAction": "Compare the two records, then register the one you mean."
+    },
+    {
+      "note": "a reason and no message; no repair",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"lensNotInLibrary\", \"reason\": \"The site's lens library does not hold this lens.\"}}",
+      "engineRefusal": true,
+      "code": "lensNotInLibrary",
+      "reason": "The site's lens library does not hold this lens.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "a sentence for a detail, and a repair beside it",
+      "status": 400,
+      "body": "{\"detail\": \"The part manifest is malformed.\", \"repairAction\": \"Send the manifest again.\"}",
+      "engineRefusal": true,
+      "code": "lensLibraryRefused",
+      "reason": "The part manifest is malformed.",
+      "repairAction": "Send the manifest again."
+    },
+    {
+      "note": "a repair beside a detail object that names none",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"lensUploadPlanDiffers\", \"message\": \"Another upload of this lens has a different manifest.\"}, \"repairAction\": \"Wait for the other upload, then run the command again.\"}",
+      "engineRefusal": true,
+      "code": "lensUploadPlanDiffers",
+      "reason": "Another upload of this lens has a different manifest.",
+      "repairAction": "Wait for the other upload, then run the command again."
+    },
+    {
+      "note": "a code and nothing else",
+      "status": 409,
+      "body": "{\"detail\": {\"code\": \"lensUploadPartCorrupt\"}}",
+      "engineRefusal": true,
+      "code": "lensUploadPartCorrupt",
+      "reason": "The engine refused the lens library request (409) without saying why.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "a list for a detail",
+      "status": 422,
+      "body": "{\"detail\": [{\"loc\": [\"body\", \"bytes\"], \"msg\": \"field required\"}]}",
+      "engineRefusal": true,
+      "code": "lensLibraryRefused",
+      "reason": "The engine refused the lens library request (422) without saying why.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "space around a sentence is dropped",
+      "status": 409,
+      "body": "{\"detail\": \"  Padded on both sides.  \"}",
+      "engineRefusal": true,
+      "code": "lensLibraryRefused",
+      "reason": "Padded on both sides.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "a body that is not JSON is its own sentence",
+      "status": 404,
+      "body": "<html><body><h1>404 Not Found</h1></body></html>",
+      "engineRefusal": true,
+      "code": "lensLibraryRefused",
+      "reason": "<html><body><h1>404 Not Found</h1></body></html>",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "JSON that is not an object is its own sentence",
+      "status": 409,
+      "body": "[\"not\", \"an\", \"object\"]",
+      "engineRefusal": true,
+      "code": "lensLibraryRefused",
+      "reason": "[\"not\", \"an\", \"object\"]",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "no body",
+      "status": 409,
+      "body": "",
+      "engineRefusal": true,
+      "code": "lensLibraryRefused",
+      "reason": "The engine refused the lens library request (409) without saying why.",
+      "repairAction": "The engine named no repair. If its reason does not say what to change, look in the engine's log for this request."
+    },
+    {
+      "note": "a 403 that names a code is the engine refusing, not a missing token",
+      "status": 403,
+      "body": "{\"detail\": {\"code\": \"external_transfer_required\", \"message\": \"This site takes files only through its own transfer tool.\", \"repairAction\": \"Copy the file with the site's transfer tool, then run lens-push with --adopt.\"}}",
+      "engineRefusal": true,
+      "code": "external_transfer_required",
+      "reason": "This site takes files only through its own transfer tool.",
+      "repairAction": "Copy the file with the site's transfer tool, then run lens-push with --adopt."
+    },
+    {
+      "note": "a 403 that names no code is about the token",
+      "status": 403,
+      "body": "{\"detail\": \"Forbidden\"}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a 403 that is not JSON is about the token",
+      "status": 403,
+      "body": "Forbidden",
+      "engineRefusal": false
+    },
+    {
+      "note": "every 401 is about the token, whatever its body",
+      "status": 401,
+      "body": "{\"detail\": {\"code\": \"unauthorized\", \"message\": \"A token is required.\"}}",
+      "engineRefusal": false
+    },
+    {
+      "note": "a failure is not a refusal",
+      "status": 500,
+      "body": "{\"detail\": \"The engine stopped.\"}",
+      "engineRefusal": false
+    }
+  ],
+  "protocol": {
+    "code": "lensLibraryProtocol",
+    "cases": [
+      {
+        "kind": "partLimit",
+        "reason": "The engine at http://runner.example.invalid:8080 reports a lens library with no usable partMaxBytes.",
+        "repairAction": "Update the engine; its capabilities must state the largest part it accepts."
+      },
+      {
+        "kind": "missingParts",
+        "reason": "The engine named parts to send that are not in the manifest it was given.",
+        "repairAction": "Run the command again; if it repeats, update the engine."
+      },
+      {
+        "kind": "notConfirmed",
+        "reason": "The engine did not confirm that it holds the whole lens after the upload.",
+        "repairAction": "Run the command again: it sends only what the site still lacks."
+      },
+      {
+        "kind": "otherLens",
+        "reason": "The engine registered a record under another lens name than the one sent.",
+        "repairAction": "Run lens-status for this lens, and update the engine if it repeats."
+      }
+    ]
+  },
+  "interrupted": {
+    "code": "lensUploadInterrupted",
+    "lensID": "custom-lens-example",
+    "cause": "the connection was lost.",
+    "reason": "Sending lens custom-lens-example to the site was interrupted before the site confirmed that it holds the whole lens and has its record (the connection was lost).",
+    "repairAction": "Run the command again: it sends only what the site still lacks."
+  },
+  "statusUnanswered": {
+    "code": "lensStatusUnanswered",
+    "lensID": "custom-lens-example",
+    "cause": "the connection was lost.",
+    "reason": "The engine did not answer lens-status about lens custom-lens-example (the connection was lost). Nothing was changed.",
+    "repairAction": "Run the command again: lens-status only reads."
+  },
+  "changed": {
+    "code": "lensRefused",
+    "reason": "The converted lens file changed after it was checked. Nothing more was sent.",
+    "repairAction": "Run lens-push again once nothing else is writing the lens folder: it sends only what the site still lacks."
+  },
+  "purposes": {
+    "lensReference": "With --lens-reference, a request that names a lens refers to the copy in the site's lens library and leaves the lens file out; send the lens once with lens-push first.",
+    "lensCopy": "Copy a lens from another workspace on this machine into this one, under the same name and record. Reviews by default and writes nothing; repeat with the --plan-sha256 the review shows to copy it. Each file is checked before and after, and on macOS the copy is a clone that uses no extra disk space where the filesystem allows. A lens already here under that name is not copied again; its converted file is put back if it is missing. The answer lists any other names under which this workspace holds the same lens.",
+    "lensPush": "Send a workspace lens to the site's lens library once, in parts that follow its layers, each checked, and register its record there. Sends only what the site lacks, so it can be run again after an interruption. With --adopt, the site checks and keeps a copy already on it, and nothing is uploaded.",
+    "lensStatus": "Report whether the site's lens library holds a workspace lens and whether the site has its record. Reads only.",
+    "artifactImport": "Import the reviewed instrument into the workspace. A lens is named from its reviewed files, so importing the same files again finds the same lens, and puts its converted file back if it is missing."
+  },
+  "copyArguments": {
+    "lensID": "science lens-copy takes one lens ID: the name of the lens's folder under runs/jlens-lenses/ in the workspace that holds it.",
+    "from": "science lens-copy needs --from <workspace directory>: the workspace that holds the lens."
+  },
+  "pushMessages": [
+    {
+      "lensID": "custom-lens-example",
+      "uploadedParts": 5,
+      "uploadedBytes": 1234,
+      "adopted": false,
+      "alreadyHeld": false,
+      "recordNonFiniteNumbers": 0,
+      "message": "Sent lens custom-lens-example to the site's lens library (5 parts, 1234 bytes); the site has its record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "uploadedParts": 0,
+      "uploadedBytes": 0,
+      "adopted": true,
+      "alreadyHeld": false,
+      "recordNonFiniteNumbers": 0,
+      "message": "The site checked its copy of lens custom-lens-example and keeps it in its lens library; the site has its record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "uploadedParts": 0,
+      "uploadedBytes": 0,
+      "adopted": false,
+      "alreadyHeld": true,
+      "recordNonFiniteNumbers": 0,
+      "message": "The site's lens library already holds lens custom-lens-example, so nothing was uploaded; the site has its record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "uploadedParts": 0,
+      "uploadedBytes": 0,
+      "adopted": false,
+      "alreadyHeld": false,
+      "recordNonFiniteNumbers": 0,
+      "message": "The site had already received every part of lens custom-lens-example and now holds it in its lens library, so nothing was uploaded; the site has its record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "uploadedParts": 5,
+      "uploadedBytes": 1234,
+      "adopted": false,
+      "alreadyHeld": false,
+      "recordNonFiniteNumbers": 1,
+      "message": "Sent lens custom-lens-example to the site's lens library (5 parts, 1234 bytes); the site has its record, with 1 number in the record that is not finite stored as null."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "uploadedParts": 0,
+      "uploadedBytes": 0,
+      "adopted": false,
+      "alreadyHeld": true,
+      "recordNonFiniteNumbers": 3,
+      "message": "The site's lens library already holds lens custom-lens-example, so nothing was uploaded; the site has its record, with 3 numbers in the record that are not finite stored as null."
+    }
+  ],
+  "statusMessages": [
+    {
+      "lensID": "custom-lens-example",
+      "libraryAvailable": true,
+      "held": true,
+      "siteRecord": "registered",
+      "message": "The site's lens library holds lens custom-lens-example; the site has its record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "libraryAvailable": true,
+      "held": true,
+      "siteRecord": "absent",
+      "message": "The site's lens library holds lens custom-lens-example; the site does not have its record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "libraryAvailable": true,
+      "held": false,
+      "siteRecord": "different",
+      "message": "The site's lens library does not hold lens custom-lens-example; the site has a different lens under that name."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "libraryAvailable": true,
+      "held": false,
+      "siteRecord": "unknown",
+      "message": "The site's lens library does not hold lens custom-lens-example; this engine does not show its lens records here, so whether it has the record is not known."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "libraryAvailable": false,
+      "held": false,
+      "siteRecord": "absent",
+      "message": "The engine does not offer a lens library, so lens custom-lens-example is not held in one; the site does not have its record."
+    }
+  ],
+  "copyMessages": [
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": null,
+      "restored": false,
+      "alsoHeldAs": [],
+      "action": "none",
+      "existing": true,
+      "changed": false,
+      "message": "This workspace already holds lens custom-lens-example; nothing was copied."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": null,
+      "restored": false,
+      "alsoHeldAs": [],
+      "action": "copy",
+      "existing": false,
+      "changed": false,
+      "message": "Reviewed a copy of lens custom-lens-example (4 files, 999 bytes); nothing was written. Repeat the command with --plan-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef to copy it."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": "clone",
+      "restored": false,
+      "alsoHeldAs": [],
+      "action": "copy",
+      "existing": false,
+      "changed": true,
+      "message": "Copied lens custom-lens-example into this workspace as a clone that uses no extra disk space, under the same name and record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": "copy",
+      "restored": false,
+      "alsoHeldAs": [],
+      "action": "copy",
+      "existing": false,
+      "changed": true,
+      "message": "Copied lens custom-lens-example into this workspace as a full copy, under the same name and record."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": null,
+      "restored": false,
+      "alsoHeldAs": [],
+      "action": "restore",
+      "existing": true,
+      "changed": false,
+      "message": "Lens custom-lens-example is already in this workspace, but its converted file is missing; nothing was written. Repeat the command with --plan-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef to put that file back."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": "clone",
+      "restored": true,
+      "alsoHeldAs": [],
+      "action": "restore",
+      "existing": true,
+      "changed": true,
+      "message": "Lens custom-lens-example was already in this workspace; its missing converted file was put back as a clone that uses no extra disk space."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": "copy",
+      "restored": true,
+      "alsoHeldAs": [],
+      "action": "restore",
+      "existing": true,
+      "changed": true,
+      "message": "Lens custom-lens-example was already in this workspace; its missing converted file was put back as a full copy."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": "clone",
+      "restored": false,
+      "alsoHeldAs": [
+        "custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+      ],
+      "action": "copy",
+      "existing": false,
+      "changed": true,
+      "message": "Copied lens custom-lens-example into this workspace as a clone that uses no extra disk space, under the same name and record. This workspace holds the same lens under another name: custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e. Each name has its own record and qualifications."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": null,
+      "restored": false,
+      "alsoHeldAs": [
+        "custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+        "custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+      ],
+      "action": "copy",
+      "existing": false,
+      "changed": false,
+      "message": "Reviewed a copy of lens custom-lens-example (4 files, 999 bytes); nothing was written. Repeat the command with --plan-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef to copy it. This workspace holds the same lens under other names: custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e and custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a. Each name has its own record and qualifications."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "fileCount": 4,
+      "bytes": 999,
+      "planSHA256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "copyMethod": null,
+      "restored": false,
+      "alsoHeldAs": [
+        "custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+        "custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+        "custom-lens-c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+      ],
+      "action": "none",
+      "existing": true,
+      "changed": false,
+      "message": "This workspace already holds lens custom-lens-example; nothing was copied. This workspace holds the same lens under other names: custom-lens-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e, custom-lens-7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a, and custom-lens-c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3. Each name has its own record and qualifications."
+    }
+  ],
+  "importMessages": [
+    {
+      "lensID": "custom-lens-example",
+      "restored": false,
+      "message": "This workspace already holds these files as lens custom-lens-example, so nothing was imported."
+    },
+    {
+      "lensID": "custom-lens-example",
+      "restored": true,
+      "message": "This workspace already holds these files as lens custom-lens-example; its converted file was missing and was put back."
+    }
+  ]
+}

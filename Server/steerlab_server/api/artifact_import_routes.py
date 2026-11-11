@@ -95,8 +95,18 @@ def build_router(state):
                 if not re.fullmatch('[0-9a-f]{64}', body['planSHA256']):
                     raise artifact_sources.ImportRefusal('Supply the hash returned by source review.')
                 def work(job):
-                    job.log('Importing reviewed source files into a fresh library destination.')
-                    return artifact_imports.publish(path, root, body['planSHA256'])
+                    job.log('Importing reviewed source files into the workspace.')
+                    try:
+                        return artifact_imports.publish(path, root, body['planSHA256'])
+                    except artifact_sources.ImportRefusal as exc:
+                        # A job's error is one string, and the app's dialog
+                        # shows it. A refusal that carries its own repair
+                        # says it there, after its sentence, as both command
+                        # lines show it.
+                        repair = vars(exc).get('repair_action')
+                        if not isinstance(repair, str) or not repair:
+                            raise
+                        raise artifact_sources.ImportRefusal(f'{exc} {repair}') from exc
                 return {'jobId': state.jobs.submit('artifact-import', work).id}
         except (ValueError, OSError, KeyError, TypeError) as exc:
             raise refusal(exc) from exc

@@ -14,7 +14,7 @@ from steerlab_server.client.housekeeping_commands import VERB_SPECS as HOUSEKEEP
 from steerlab_server.client.agent_creation import VERB_SPECS as AGENT_CREATION_SPECS
 MODEL_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "model" and s.verb in ("plan", "install", "status", "cancel"))
 from steerlab_server.client.science_commands import VERB_SPECS as SCIENCE_SPECS
-REMOTE_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "runner" and s.verb in ("science-stage", "science-export", "science-fetch", "science-call", "cleanup-plan", "cleanup-apply", "science-plan", "science-submit", "recovery", "recover", "resubmit", "reconcile"))
+REMOTE_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "runner" and s.verb in ("science-stage", "lens-push", "lens-status", "science-export", "science-fetch", "science-call", "cleanup-plan", "cleanup-apply", "science-plan", "science-submit", "recovery", "recover", "resubmit", "reconcile"))
 from steerlab_server.client.bootstrap_commands import VERB_SPECS as BOOTSTRAP_SPECS
 from steerlab_server.client.setup_commands import VERB_SPECS as SETUP_SPECS
 from steerlab_server.client.results_commands import VERB_SPECS as RESULTS_SPECS

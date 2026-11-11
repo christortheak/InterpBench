@@ -192,34 +192,266 @@ def sae_details(spec, tensors, root, files):
             'conversion': 'decoder row × measured residual norm / decoder norm (float32)'}
 
 
+#: Where a workspace keeps its lenses, and the file every lens consumer reads.
+LENS_FOLDER = 'runs/jlens-lenses'
+CONVERTED_NAME = 'jacobians.safetensors'
+
+
+def lens_name(plan):
+    """One lens, one name: a custom lens is named from the bytes that were
+    reviewed, so the same reviewed import gives the same name on any machine.
+    The name is ``custom-lens-`` and the first 32 hex characters of the
+    SHA-256 of the canonical JSON of the description and tensor file hashes.
+    When the description declares a config file, its hash is in that JSON
+    too: a fit report decides the record's fitting provenance, so another
+    report is another lens. With no config file the name is unchanged."""
+    files = plan['files']
+    identity = {'descriptionSHA256': files['description']['sha256'], 'kind': 'jlens',
+                'tensorSHA256': files['tensorFile']['sha256']}
+    if 'configFile' in files:
+        identity['configSHA256'] = files['configFile']['sha256']
+    return 'custom-lens-' + diagnostic_archives.digest(identity)[:32]
+
+
+def file_hashes(files):
+    """Role to SHA-256 for the ``files`` of a plan or of an import receipt, or
+    None when ``files`` is not in that shape."""
+    if not isinstance(files, dict) or not files:
+        return None
+    hashes = {}
+    for role, entry in files.items():
+        if not isinstance(entry, dict) or not isinstance(entry.get('sha256'), str):
+            return None
+        hashes[role] = entry['sha256']
+    return hashes
+
+
+def existing_lens(plan, root):
+    """``(lensID, record)`` for the lens this workspace already holds for the
+    reviewed files, under any name (one imported before names followed the
+    bytes has a random one), or None.
+
+    A lens is the one being imported when its ``import-receipt.json`` lists
+    the same files as the plan, role for role, with the same SHA-256 (the
+    description, the tensor file, and the config file when there is one),
+    and its record agrees: ``source.tensorSHA256`` is the plan's tensor hash
+    and ``source.configSHA256`` the plan's description hash. A receipt that
+    lists these files beside a record of other bytes is not this lens. A
+    lens with no readable receipt is not a match, and neither is a folder
+    whose record names another lens. Several matches give the content-derived
+    name first, then the oldest.
+
+    The lens folders are read here, one at a time, and a record or receipt
+    that cannot be read is passed over: another lens's damaged record must
+    never stop this import."""
+    from ..jlens.schemas import JLensRecord
+    wanted = file_hashes(plan['files'])
+    tensor, description = plan['files']['tensorFile']['sha256'], plan['files']['description']['sha256']
+    library = Path(root) / LENS_FOLDER
+    try:
+        folders = sorted(item for item in library.iterdir() if item.is_dir() and not item.is_symlink())
+    except OSError:
+        folders = []
+    matches = []
+    for folder in folders:
+        try:
+            receipt = json.loads((folder / 'import-receipt.json').read_bytes())
+            if not isinstance(receipt, dict) or file_hashes(receipt.get('files')) != wanted:
+                continue
+            document = json.loads((folder / 'lens.json').read_bytes())
+            # A folder whose record names another lens is a copy someone set
+            # aside (renamed in place), not a lens of this workspace.
+            if not isinstance(document, dict) or document.get('lensID') != folder.name:
+                continue
+            record = JLensRecord.from_dict(document)
+            if record.source.tensorSHA256 != tensor or record.source.configSHA256 != description:
+                continue
+            matches.append((folder.name, record))
+        except Exception:   # noqa: BLE001 - unreadable is "not this lens", whatever the reason
+            continue
+    derived = lens_name(plan)
+    return min(matches, key=lambda match: (match[0] != derived, str(match[1].importedAt), match[0]), default=None)
+
+
+def _refusal(message, repair):
+    refusal = ImportRefusal(message)
+    refusal.repair_action = repair
+    return refusal
+
+
+def _move_aside(folder):
+    return (f"Move {folder} aside, then import again. That folder's lens.json holds the lens's "
+            'qualifications.')
+
+
+def existing_lens_state(lens_id, record, root):
+    """Check the lens an import found before answering that it is already
+    here. True when its converted file is in place and has the SHA-256 the
+    record names. False when that file is absent, which an import can put
+    back. Anything else is refused by name, and nothing is changed: a record
+    that names no converted file, or not the lens's own, and a converted file
+    that differs from its record."""
+    folder = f'{LENS_FOLDER}/{lens_id}'
+    canonical = f'{folder}/{CONVERTED_NAME}'
+    held = f'This workspace already holds these files as lens {lens_id}, but '
+    converted = record.converted
+    if converted is None or not isinstance(converted.sha256, str) or not re.fullmatch('[0-9a-f]{64}', converted.sha256):
+        raise _refusal(held + 'its record names no converted file with a SHA-256. Nothing was imported.',
+                       _move_aside(folder))
+    if not isinstance(converted.path, str) or Path(converted.path).parts[-4:] != Path(canonical).parts:
+        raise _refusal(held + f'its record names a converted file other than {canonical}. Nothing was imported.',
+                       _move_aside(folder))
+    try:
+        path = diagnostic_archives.ordinary(root, canonical, missing=True)
+    except diagnostic_archives.PathRefusal:
+        path = None
+    except diagnostic_archives.Refusal:
+        # Not a link and not a folder: the name itself. A folder name can
+        # hold a backslash; a workspace path cannot.
+        raise _refusal(held + 'its name has a character a workspace path cannot have (a backslash), so its '
+                       'converted file cannot be checked. Nothing was imported.', _move_aside(folder)) from None
+    if path is not None and not path.exists():
+        return False
+    if path is None or not path.is_file():
+        raise _refusal(held + f'{canonical} is not an ordinary file inside the workspace (it is a folder or '
+                       'something else that is not a file, or is reached through a symbolic link), so it '
+                       'cannot be checked. Nothing was imported.',
+                       'Put an ordinary file or nothing at that path, then import again.')
+    if artifact_sources.digest(path) != converted.sha256:
+        raise _refusal(held + f'its converted file ({canonical}) differs from the SHA-256 its record names. '
+                       'Nothing was imported, and that file was left as it is.',
+                       'Move that file aside, then import again: the import puts back the file the record names.')
+    return True
+
+
+def _existing_result(lens_id, record, plan, root):
+    # A record can hold a number that is not finite (a qualification's
+    # measured values); what an import answers is strict JSON.
+    # ``recordNonFiniteNumbers`` counts the numbers that are null in it.
+    from .strict_json import strict
+    stored, count = strict(record.to_dict())
+    return {'kind': 'jlens', 'lensID': lens_id, 'record': stored, 'recordNonFiniteNumbers': count,
+            'changed': False, 'existing': True, 'outputDirectory': str(Path(root) / LENS_FOLDER / lens_id),
+            'warnings': plan['warnings']}
+
+
+def _taken(target, root):
+    """The refusal for a lens name that something else already has. Said as
+    what is there: a symbolic link, a file, or a folder that is not the lens
+    these files make."""
+    name = target.relative_to(root).as_posix()
+    if target.is_symlink():
+        return _refusal(f'{name} is a symbolic link, and a lens is read only from an ordinary folder inside '
+                        'the workspace, so nothing was imported.',
+                        'Move that link aside, or put the lens folder itself there in place of the link; then '
+                        'import again.')
+    if not target.is_dir():
+        return _refusal(f'{name} already exists and is not a folder, so nothing was imported.',
+                        'Move it aside, then import again.')
+    return _refusal(f'A folder named {name} already exists and does not hold the lens these files make (a record '
+                    f'for {target.name} that names these files, with an import receipt for them), so nothing '
+                    'was imported.', 'Move that folder aside, then import again.')
+
+
+def _missing_again(lens_id):
+    """Another import held the lens's name, or its converted file's, and the
+    file is not there now."""
+    return _refusal(f'This workspace already holds these files as lens {lens_id}, but its converted file '
+                    'is missing. Nothing was imported.', 'Import again: the import puts that file back.')
+
+
+def _capture(plan, staged):
+    """Copy the reviewed sources into staging and read them back from those
+    copies: the bytes an import, or the restoring of a converted file, works
+    from. Returns ``(spec, tensors, captured)``."""
+    source_dir = staged / 'source'
+    source_dir.mkdir(parents=True)
+    captured = {}
+    for name, item in plan['files'].items():
+        extension = Path(item['path']).suffix
+        copied = source_dir / (name + extension)
+        shutil.copyfile(artifact_sources.ordinary(item['path']), copied)
+        if artifact_sources.digest(copied) != item['sha256']:
+            raise ImportRefusal('A source changed while being copied. No artifact was published; review again.')
+        captured[name] = copied
+    spec = json.loads(captured['description'].read_bytes())
+    tensors = artifact_sources.read_tensors(captured['tensorFile'], tensor_keys(spec))
+    if spec != plan['description']:
+        raise ImportRefusal('Captured description differs from its review.')
+    return spec, tensors, captured
+
+
+def _restore(lens_id, record, spec, plan, tensors, captured, staged, root):
+    """Put back the missing converted file of a lens this workspace already
+    holds. The reviewed sources are converted exactly as a fresh import
+    converts them; the result is published, create-only, only when its
+    SHA-256 is the one the record names. Nothing else in the folder changes."""
+    folder = f'{LENS_FOLDER}/{lens_id}'
+    details = lens_details(spec, tensors)
+    details['fittingProvenance'] = fit_artifact_provenance.read(spec, captured, plan['files']['tensorFile']['sha256'])
+    if details != plan['details']:
+        raise ImportRefusal('The captured lens metadata differs from the review. Review these source bytes again.')
+    converted = staged / CONVERTED_NAME
+    convert_lens(spec, tensors, converted)
+    produced = artifact_sources.digest(converted)
+    if produced != record.converted.sha256:
+        raise _refusal(
+            f'The reviewed files convert to different bytes on this machine than the record of lens {lens_id} names '
+            f'(SHA-256 {produced} here, {record.converted.sha256} in the record), so its missing converted file '
+            'was not put back.', _move_aside(folder))
+    try:
+        diagnostic_archives.publish_file(converted, diagnostic_archives.ordinary(root, f'{folder}/{CONVERTED_NAME}', missing=True))
+    except FileExistsError:
+        # A file appeared there meanwhile. It is checked like any other, and
+        # never replaced; if it is gone again, there is no lens file to
+        # answer "already here" about.
+        if not existing_lens_state(lens_id, record, root):
+            raise _missing_again(lens_id) from None
+        return _existing_result(lens_id, record, plan, root)
+    except OSError as exc:
+        # The one file is published with a hard link, which some disks do
+        # not have (ExFAT). A whole lens folder is published another way, so
+        # importing afresh works there.
+        raise _refusal(f'This workspace already holds these files as lens {lens_id}, but its missing '
+                       f'converted file could not be put back: a single file cannot be added to {folder} on '
+                       'this disk. Nothing was changed.', _move_aside(folder)) from exc
+    return {**_existing_result(lens_id, record, plan, root), 'changed': True, 'restored': True}
+
+
 def publish(description_file, root, expected):
-    """Capture immutable input bytes, validate those copies, and publish once."""
+    """Capture immutable input bytes, validate those copies, and publish once.
+
+    A lens whose reviewed files this workspace already holds is not imported
+    again. The lens that is found is checked first. When its converted file
+    is in place and matches its record, it is returned with ``existing`` true
+    and ``changed`` false, and nothing is written. When that file is missing
+    it is put back from the reviewed sources (``restored`` true, ``changed``
+    true). A lens that is damaged in any other way is refused by name. SAE
+    imports are unchanged."""
     plan = inspect_source(description_file, root)
     if expected != plan['planSHA256']:
         raise ImportRefusal('The reviewed description, source files, or calibration changed. Review a fresh plan before importing.')
     root = Path(plan['workspaceRoot'])
     kind = plan['kind']
-    relative_parent = 'runs/jlens-lenses' if kind == 'jlens' else 'runs'
+    held = None
+    if kind == 'jlens':
+        held = existing_lens(plan, root)
+        if held is not None and existing_lens_state(*held, root):
+            return _existing_result(*held, plan, root)
+    relative_parent = LENS_FOLDER if kind == 'jlens' else 'runs'
     parent = diagnostic_archives.ordinary(root, relative_parent, missing=True)
-    parent.mkdir(parents=True, exist_ok=True)
-    artifact_id = ('custom-lens-' if kind == 'jlens' else 'sae-import-') + uuid.uuid4().hex
+    artifact_id = lens_name(plan) if kind == 'jlens' else 'sae-import-' + uuid.uuid4().hex
     target = parent / artifact_id
+    if kind == 'jlens' and held is None and (target.exists() or target.is_symlink()):
+        # Refused before anything is copied or converted: the name follows
+        # the bytes, so this folder is in the way of every import of them.
+        raise _taken(target, root)
+    parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.artifact-import-', dir=parent) as temporary:
         staged = Path(temporary) / 'result'
-        source_dir = staged / 'source'
-        source_dir.mkdir(parents=True)
-        captured = {}
-        for name, item in plan['files'].items():
-            extension = Path(item['path']).suffix
-            copied = source_dir / (name + extension)
-            shutil.copyfile(artifact_sources.ordinary(item['path']), copied)
-            if artifact_sources.digest(copied) != item['sha256']:
-                raise ImportRefusal('A source changed while being copied. No artifact was published; review again.')
-            captured[name] = copied
-        spec = json.loads(captured['description'].read_bytes())
-        tensors = artifact_sources.read_tensors(captured['tensorFile'], tensor_keys(spec))
-        if spec != plan['description']:
-            raise ImportRefusal('Captured description differs from its review.')
+        spec, tensors, captured = _capture(plan, staged)
+        if held is not None:
+            return _restore(*held, spec, plan, tensors, captured, staged, root)
         if kind == 'jlens':
             result = publish_lens(spec, plan, tensors, captured, staged, target, root, artifact_id)
         else:
@@ -227,7 +459,19 @@ def publish(description_file, root, expected):
         receipt = {**plan, 'changed': True, 'outputRelative': target.relative_to(root).as_posix(),
                    'retainedSources': {k: str(v.relative_to(staged)) for k, v in captured.items()}}
         (staged / 'import-receipt.json').write_bytes(diagnostic_archives.encoded(receipt))
-        diagnostic_archives.publish_directory(staged, target)
+        try:
+            diagnostic_archives.publish_directory(staged, target)
+        except FileExistsError:
+            if kind != 'jlens':
+                raise
+            # The name follows the bytes, so only another import of the same
+            # files can have taken it while this one was copying.
+            held = existing_lens(plan, root)
+            if held is None:
+                raise _taken(target, root) from None
+            if not existing_lens_state(*held, root):
+                raise _missing_again(held[0]) from None
+            return _existing_result(*held, plan, root)
     return {**result, 'changed': True, 'outputDirectory': str(target), 'warnings': plan['warnings']}
 
 

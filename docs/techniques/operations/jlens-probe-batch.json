@@ -61,7 +61,7 @@
         "label": "Imported J-lens ID",
         "kind": "text",
         "required": true,
-        "help": "A lens from this workspace's lens library. The lens travels with the request."
+        "help": "A lens this workspace holds. The lens travels with the request, or the request refers to the site's copy when it is packaged with --lens-reference."
       },
       {
         "id": "prompts",

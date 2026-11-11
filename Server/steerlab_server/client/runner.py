@@ -172,6 +172,8 @@ UPLOAD_CHUNK_BYTES = 1024 * 1024
 #: The route accepts a RAW body precisely so the core server needs no
 #: ``python-multipart``; this header is how the name travels instead.
 FILENAME_HEADER = "X-SteerLab-Filename"
+#: The route a run bundle or a request archive is uploaded to.
+BUNDLE_UPLOAD_PATH = "/api/bundles/upload"
 
 #: What the runner reports as its own identity, for the submit envelope. Read
 #: off ``GET /api/info`` (``routes._info_payload``).
@@ -891,12 +893,19 @@ class RunnerClient:
                     "from a runner that has since restarted with a different "
                     "STEERLAB_JOBS_DB is gone, not hidden."))
         if status == 413:
+            # For a bundle upload only, the lens advice: a request that
+            # carries a lens is the usual bundle over the cap (public issue
+            # #13). The same sentence on the Mac (`LensLibrary.oversizeAdvice`).
+            advice = ""
+            if urlsplit(url).path.endswith(BUNDLE_UPLOAD_PATH):
+                from .lens_transfer import OVERSIZE_LENS_ADVICE
+                advice = OVERSIZE_LENS_ADVICE + " "
             raise RunnerHTTPError(
                 status, detail, url=url, code="runnerRefused", state="refused",
                 repair_action=(
                     "the runner refused the body as oversize — raise its "
                     "STEERLAB_MAX_UPLOAD_BYTES, or package a smaller bundle. "
-                    "Nothing was staged."))
+                    + advice + "Nothing was staged."))
         if status == 503:
             raise RunnerHTTPError(
                 status, detail, url=url, code="runnerUnavailable",
@@ -920,8 +929,70 @@ class RunnerClient:
                 "traceback; nothing was necessarily left undone, so check "
                 "`steerlab runner jobs` before resubmitting anything."))
 
+    def _refusal_of(self, response) -> tuple:
+        """``(code, sentence, repair)`` from an engine's refusal body, each
+        None when the body gives none: FastAPI's ``{"detail": …}``, where the
+        detail is a sentence or an object with a ``code``, a ``message`` (or
+        ``reason``), and a ``repairAction``; a repair may also sit beside the
+        detail. A body that is not a JSON object (a proxy's page) is its own
+        sentence. No more than ``REFUSAL_TEXT_LIMIT`` characters of any of
+        them are kept. Swift twin: ``ClusterClient.refusalDetail``."""
+        from .lens_transfer import REFUSAL_TEXT_LIMIT
+
+        def text(value):
+            if not isinstance(value, str) or not value.strip():
+                return None
+            return self.scrub(value.strip()[:REFUSAL_TEXT_LIMIT])
+        try:
+            response.read()
+            body = response.json()
+        except Exception:      # noqa: BLE001 - an unreadable body is no body
+            return None, text(getattr(response, "text", "")), None
+        if not isinstance(body, dict):
+            return None, text(response.text), None
+        detail, outer = body.get("detail"), text(body.get("repairAction"))
+        if isinstance(detail, dict):
+            return (text(detail.get("code")), text(detail.get("message")) or text(detail.get("reason")),
+                    text(detail.get("repairAction")) or outer)
+        return None, text(detail), outer
+
+    def _raise_for_lens_library(self, response, *, url: str) -> None:
+        """Status handling for the lens-library routes alone. A refusal there
+        is reported as the engine gave it: its code, its sentence, and its
+        repair, as the Mac reports it (``ClusterClient.lensLibraryRefusal``).
+        That is every 4xx but 401, and a 403 only when its body names a
+        ``code`` (the engine's own "HTTP transfer is not permitted" is one);
+        a 403 with no code, and every 401, are about the token. What the
+        engine leaves out is filled with one sentence and one repair, the
+        same on both clients. Everything else is this adapter's usual
+        handling."""
+        status = response.status_code
+        if status < 400:
+            return
+        if status == 401 or status >= 500:
+            self._raise_for_status(response, url=url)
+        code, sentence, repair = self._refusal_of(response)
+        if status == 403 and not code:
+            self._raise_for_status(response, url=url)
+        from . import lens_transfer
+        raise RunnerRefusal(
+            sentence or lens_transfer.refusal_fallback_reason(status),
+            code=code or lens_transfer.REFUSAL_FALLBACK_CODE,
+            repair_action=repair or lens_transfer.REFUSAL_FALLBACK_REPAIR,
+            detail={"status": status, "url": url})
+
+    def _lens_library(self, method: str, path: str, *, whole_file: bool = False, **kwargs) -> dict:
+        """One lens-library call. ``whole_file`` marks the calls that make the
+        engine hash a whole file before it answers (a part, the whole-file
+        check, an adoption): those wait as long as a bundle upload does. The
+        others (the status read, the manifest, the record) answer at once and
+        keep this client's ordinary timeout."""
+        if whole_file:
+            kwargs["timeout"] = self.diagnostic_timeout
+        return self._json(method, path, raise_for_status=self._raise_for_lens_library, **kwargs)
+
     def _request(self, method: str, path: str, *, params=None, json_body=None,
-                 content=None, headers=None, timeout=None):
+                 content=None, headers=None, timeout=None, raise_for_status=None):
         url = self._url(path)
         import httpx
         try:
@@ -944,7 +1015,7 @@ class RunnerClient:
                 exc, (httpx.ConnectError, httpx.ConnectTimeout,
                       httpx.PoolTimeout, httpx.UnsupportedProtocol))
             raise unreachable from exc
-        self._raise_for_status(response, url=url)
+        (raise_for_status or self._raise_for_status)(response, url=url)
         return response
 
     def _json(self, method: str, path: str, **kwargs) -> dict:
@@ -1008,8 +1079,12 @@ class RunnerClient:
 
     # -- run bundles -------------------------------------------------------
 
-    def require_http_transfer(self) -> None:
-        remote = self.capabilities().get("remoteStudy") or {}
+    def require_http_transfer(self, capabilities: dict | None = None) -> None:
+        """Refuse when the runner forbids HTTP transfer. ``capabilities`` is a
+        snapshot the caller already read; absent, it is read here."""
+        if capabilities is None:
+            capabilities = self.capabilities()
+        remote = capabilities.get("remoteStudy") or {}
         if remote.get("externalTransferRequired") or remote.get("httpTransfer") is False:
             raise RunnerRefusal(
                 "This runner requires external artifact transfer.",
@@ -1034,11 +1109,17 @@ class RunnerClient:
         ``localSha256``, so a caller keeps both numbers rather than trusting
         that the comparison happened.
         """
-        self.require_http_transfer()
+        capabilities = self.capabilities()
+        self.require_http_transfer(capabilities)
         source = os.path.abspath(os.path.expanduser(path))
         if not os.path.isfile(source):
             raise FileNotFoundError(2, "no such bundle", source)
         filename = os.path.basename(source)
+        # A request that refers to its lens needs the engine's lens library.
+        # Asked of the snapshot just read, before a byte is sent; the archive
+        # is opened only when the engine reports no library (`lens_transfer`).
+        from . import lens_transfer
+        lens_transfer.require_library_for_archive(self.base_url, capabilities, source)
         local = sha256_file(source)
         local_bytes = os.path.getsize(source)
 
@@ -1050,10 +1131,14 @@ class RunnerClient:
                         return
                     yield block
 
+        # The runner inspects and hashes the whole archive before it answers,
+        # which for a large one takes minutes: the wait for that answer gets
+        # the science routes' hour (an explicit --timeout still decides).
         document = self._json(
-            "POST", "/api/bundles/upload", content=chunks(),
+            "POST", BUNDLE_UPLOAD_PATH, content=chunks(),
             headers={FILENAME_HEADER: filename,
-                     "Content-Type": "application/octet-stream"})
+                     "Content-Type": "application/octet-stream"},
+            timeout=self.diagnostic_timeout)
         reported = str(document.get("sha256") or "")
         if reported != local:
             raise RunnerRefusal(
@@ -1336,6 +1421,90 @@ class RunnerClient:
         # Hashing/compressing multi-gigabyte evidence may produce no response
         # bytes for minutes. Explicit caller budgets still take precedence.
         return self._diagnostic_timeout
+
+    # -- the lens library ----------------------------------------------------
+    #
+    # A site keeps converted lens files once, filed under their SHA-256
+    # (`converted.sha256`), outside any workspace. `lens_transfer.push` holds
+    # the order these are called in; each method here is one route.
+
+    def lens_library_status(self, sha256: str) -> dict:
+        """``GET /api/lens-library/{sha}``: whether the site holds the bytes,
+        and the parts of an upload in progress."""
+        return self._lens_library("GET", f"/api/lens-library/{quote(sha256, safe='')}")
+
+    def lens_library_begin(self, sha256: str, size: int, parts: list) -> dict:
+        """``POST …/begin``: the part manifest. Answers the parts still to
+        send; idempotent for an identical manifest."""
+        return self._lens_library(
+            "POST", f"/api/lens-library/{quote(sha256, safe='')}/begin",
+            json_body={"bytes": size, "parts": parts})
+
+    def lens_library_put_part(self, sha256: str, part: dict, source: str) -> dict:
+        """``PUT …/parts/{index}``: one part's bytes, streamed from its place
+        in the file.
+
+        The file is read a block at a time, from the part's first byte to its
+        last and no further: never the whole lens, and never the whole part.
+        Each block is hashed as it is read, and the part's last block leaves
+        only once the part is known to be the one that was planned. A file
+        that changed since the plan, or that ends early, stops the upload
+        there (``lens_transfer.changed_after_check``), so the site never
+        receives a whole part of other bytes."""
+        from . import lens_transfer
+
+        def chunks():
+            digest = hashlib.sha256()
+            remaining, held = part["bytes"], b""
+            with open(source, "rb") as handle:
+                handle.seek(part["offset"])
+                while remaining:
+                    block = handle.read(min(UPLOAD_CHUNK_BYTES, remaining))
+                    if not block:
+                        raise lens_transfer.changed_after_check()
+                    digest.update(block)
+                    remaining -= len(block)
+                    if held:
+                        yield held
+                    held = block
+            if digest.hexdigest() != part["sha256"]:
+                raise lens_transfer.changed_after_check()
+            if held:
+                yield held
+
+        return self._lens_library(
+            "PUT",
+            f"/api/lens-library/{quote(sha256, safe='')}/parts/{int(part['index'])}",
+            whole_file=True, content=chunks(),
+            headers={"Content-Type": "application/octet-stream",
+                     "Content-Length": str(part["bytes"]),
+                     "X-Content-SHA256": part["sha256"]})
+
+    def lens_library_complete(self, sha256: str) -> dict:
+        """``POST …/complete``: the site hashes the whole file and publishes
+        the entry. Repeating it is safe."""
+        return self._lens_library(
+            "POST", f"/api/lens-library/{quote(sha256, safe='')}/complete",
+            whole_file=True, json_body={})
+
+    def lens_library_register(self, record: dict) -> dict:
+        """``POST /api/lens-library/register``: the lens record, into the
+        site's serving workspace. The record is sent as strict JSON: a number
+        in it that is not finite goes as null (``strict_json``)."""
+        from ..experiment.strict_json import strict
+        return self._lens_library("POST", "/api/lens-library/register",
+                                  json_body={"record": strict(record)[0]})
+
+    def lens_library_adopt(self, path: str, sha256: str) -> dict:
+        """``POST /api/lens-library/adopt``: a copy already on the site. The
+        site hashes it and keeps it; the copy is left alone."""
+        return self._lens_library("POST", "/api/lens-library/adopt", whole_file=True,
+                                  json_body={"path": path, "sha256": sha256})
+
+    def lens_record(self, lens_id: str) -> dict:
+        """``GET /api/jlens/lenses/{lensID}``: the site workspace's record of
+        one lens."""
+        return self._json("GET", f"/api/jlens/lenses/{quote(lens_id, safe='')}")
 
     def stage_diagnostic(self, path: str, sha256: str) -> dict:
         return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256}, timeout=self.diagnostic_timeout)

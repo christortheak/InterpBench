@@ -346,8 +346,10 @@ public struct ClusterSiteProfile: Codable, Sendable, Equatable, Hashable {
         /// "metadata" additionally locates the daemon-in-a-job hostname file
         /// (defaults to `~/.steerlab` when absent). Schema 2 additionally
         /// DECLARES "run" (`STEERLAB_RUN_ROOT`), "asset" (`STEERLAB_ASSET_ROOT`),
-        /// and "nodeCache" (`STEERLAB_NODE_CACHE_ROOT`) — the map shape is
-        /// unchanged, and extra roles are still carried verbatim.
+        /// "nodeCache" (`STEERLAB_NODE_CACHE_ROOT`), and "lensLibrary"
+        /// (`STEERLAB_LENS_LIBRARY_ROOT`, the folder the site keeps lens
+        /// files in) — the map shape is unchanged, and extra roles are
+        /// still carried verbatim.
         public var storageRoots: [String: String]
         /// Days until untouched files are purged from the workspace root
         /// (a scratch filesystem's retention window, commonly 30). Drives WS3

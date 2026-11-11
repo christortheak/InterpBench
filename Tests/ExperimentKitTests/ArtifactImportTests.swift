@@ -3,6 +3,59 @@ import Testing
 @testable import ExperimentKit
 
 @Suite(.serialized) struct ArtifactImportTests {
+    /// The dialog's last line is true whether the lens was imported or found.
+    @Test func theDialogNamesALensTheWorkspaceAlreadyHolds() {
+        let imported: [String: JSONValue] = [
+            "kind": .string("jlens"), "lensID": .string("custom-lens-example"), "changed": .bool(true),
+        ]
+        #expect(ArtifactImportSelection.completionStatus(
+            result: imported, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            == "Imported into /workspace. Refresh the J-lens library for example/model and select the new lens.")
+        let found = imported.merging(["existing": .bool(true), "changed": .bool(false)]) { _, new in new }
+        #expect(ArtifactImportSelection.completionStatus(
+            result: found, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            == "This workspace already holds these files as lens custom-lens-example, so nothing was "
+            + "imported. Refresh the lenses for example/model and select that lens.")
+        // Its converted file was missing, and the import put it back.
+        let restored = found.merging(["kind": .string("jlens"), "restored": .bool(true), "changed": .bool(true)]) { _, new in new }
+        #expect(ArtifactImportSelection.completionStatus(
+            result: restored, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            == "This workspace already holds these files as lens custom-lens-example; its converted file was "
+            + "missing and was put back. Refresh the lenses for example/model and select that lens.")
+        // An SAE decoder import is always new, and a job with no result reads as before.
+        for result in [found, nil] as [[String: JSONValue]?] {
+            #expect(ArtifactImportSelection.completionStatus(
+                result: result, workspaceRoot: "/workspace", modelID: "example/model", isLens: false)
+                == "Imported into /workspace. Refresh Data → Concepts & Vectors or Playground → "
+                + "Steering Vectors for example/model.")
+        }
+        #expect(ArtifactImportSelection.completionStatus(
+            result: nil, workspaceRoot: "/workspace", modelID: "example/model", isLens: true)
+            .hasSuffix("select the new lens."))
+    }
+
+    /// A failed import's job error is the refusal's sentence, then its
+    /// repair, behind the name of the error's class (the engine's test:
+    /// `test_a_refused_imports_job_error_is_its_sentence_then_its_repair`).
+    /// The dialog shows the sentence and the repair, and not that name.
+    @Test func theDialogShowsARefusalWithItsRepairAndWithoutAClassName() {
+        let sentence = "This workspace already holds these files as lens custom-lens-example, but its converted "
+            + "file (runs/jlens-lenses/custom-lens-example/jacobians.safetensors) differs from the SHA-256 its "
+            + "record names. Nothing was imported, and that file was left as it is."
+        let repair = "Move that file aside, then import again: the import puts back the file the record names."
+        #expect(ArtifactImportSelection.failureStatus(
+            jobStatus: "failed", error: "ImportRefusal: \(sentence) \(repair)")
+            == "Import failed: \(sentence) \(repair)")
+        // Only that name, and only in front: any other error reads as before.
+        #expect(ArtifactImportSelection.failureStatus(jobStatus: "failed", error: "RuntimeError: out of memory")
+            == "Import failed: RuntimeError: out of memory")
+        #expect(ArtifactImportSelection.failureStatus(
+            jobStatus: "failed", error: "ValueError: an ImportRefusal: was raised")
+            == "Import failed: ValueError: an ImportRefusal: was raised")
+        #expect(ArtifactImportSelection.failureStatus(jobStatus: "cancelled", error: nil)
+            == "Import cancelled: See the job log.")
+    }
+
     @Test func localDescriptionPlansAndPublishesThroughThePortableOwner() async throws {
         let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let python = URL(filePath: try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"]))

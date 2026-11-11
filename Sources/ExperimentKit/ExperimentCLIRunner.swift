@@ -296,7 +296,9 @@ public struct ExperimentCLIRunner: Sendable {
             case "design": result = try StudyDesignCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "docs": result = try runDocsCommand(invocation)
             case "science":
-                if DiagnosticWorkspace.actions.contains(invocation.verb ?? "") {
+                if DiagnosticWorkspace.actions.contains(invocation.verb ?? "")
+                    || invocation.verb == "lens-copy"
+                {
                     result = try await DiagnosticWorkspaceCLI.run(invocation, sink: sink)
                 } else { result = try ScienceCatalog.run(invocation, sink: sink) }
             case "results":
@@ -364,6 +366,9 @@ public struct ExperimentCLIRunner: Sendable {
                 envelope: envelope)
 
         } catch let refusal as DiagnosticWorkspace.Refusal {
+            return outcome(for: refusal, namespace: namespace, verb: verb)
+
+        } catch let refusal as LensLibrary.Refusal {
             return outcome(for: refusal, namespace: namespace, verb: verb)
 
         } catch let refusal as CommandLineUpdate.Refusal {
@@ -826,6 +831,20 @@ public struct ExperimentCLIRunner: Sendable {
     ) -> ExperimentCLIOutcome {
         outcome(
             namespace: namespace, verb: verb, state: .refused, exitCode: 1,
+            failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
+            code: refusal.code, repairAction: refusal.repairAction)
+    }
+
+    /// A lens, a request that refers to one, or an upload this client or the
+    /// server would not take: `refused` (65) with its code and repair. An
+    /// upload that was interrupted, or an engine that broke the contract,
+    /// declined nothing and says so in its state: `failed` (70). Human mode
+    /// keeps exit 1 either way.
+    func outcome(
+        for refusal: LensLibrary.Refusal, namespace: String, verb: String
+    ) -> ExperimentCLIOutcome {
+        outcome(
+            namespace: namespace, verb: verb, state: refusal.state, exitCode: 1,
             failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
             code: refusal.code, repairAction: refusal.repairAction)
     }
@@ -2787,6 +2806,7 @@ public struct ExperimentCLIRunner: Sendable {
         let serverIdentity: String
         let remoteWorkspaceRoot = ExperimentStore.workspaceRoot
         let scientificWorkflow = RemoteScientificWorkflowsCLI.verbs.contains(verb) || DiagnosticRemoteCLI.verbs.contains(verb)
+            || LensLibraryRemoteCLI.verbs.contains(verb)
         if scientificWorkflow, flag("--site") == nil, flag("--url") == nil {
             throw ExperimentError.malformed("Choose the original server explicitly for this workflow.", repair: "Pass --site <id> or --url <server>; do not borrow a different active target for a reviewed plan or job.")
         }
@@ -2842,6 +2862,9 @@ public struct ExperimentCLIRunner: Sendable {
         }
         if DiagnosticRemoteCLI.verbs.contains(verb) {
             return try await DiagnosticRemoteCLI.run(args, client: client, root: remoteWorkspaceRoot, sink: sink)
+        }
+        if LensLibraryRemoteCLI.verbs.contains(verb) {
+            return try await LensLibraryRemoteCLI.run(args, client: client, root: remoteWorkspaceRoot, sink: sink)
         }
         if scientificWorkflow {
             let result = try await RemoteScientificWorkflowsCLI.run(args, client: client, endpoint: url, sink: sink)

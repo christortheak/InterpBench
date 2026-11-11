@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "name": "Example HPC (v2 lens library)",
+  "notes": "FICTIONAL site that declares a lens library folder and almost nothing else. The render must state STEERLAB_LENS_LIBRARY_ROOT, with a tilde normalized to $HOME as for every other root. v2-neutral is the same site without the role, and renders no such line.",
+  "transport": {
+    "kind": "ssh",
+    "host": "slurm.example.edu",
+    "remotePort": 8080,
+    "vpnExpected": false
+  },
+  "topology": "daemonInJob",
+  "scheduler": {
+    "kind": "slurm",
+    "slurm": {}
+  },
+  "constraints": {
+    "computeEgress": "unknown",
+    "storageRoots": {
+      "lensLibrary": "~/steerlab-lens-library"
+    }
+  }
+}

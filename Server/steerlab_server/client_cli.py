@@ -548,6 +548,8 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     # a command line.
     VerbSpec("runner", "science-call", positional="<operation>", purpose="Call a catalogued scientific HTTP action on its existing owner; unsupported surfaces return a typed routing repair.", value_flags=_RUNNER_FLAGS | {"--action", "--request"}, required_flags=frozenset({"--runner", "--action", "--request"})),
     VerbSpec("runner", "science-stage", positional="<server-archive-path>", purpose="Verify an uploaded or externally transferred input archive and stage an isolated execution copy.", value_flags=_RUNNER_FLAGS | {"--sha256"}, required_flags=frozenset({"--runner", "--sha256"})),
+    VerbSpec("runner", "lens-push", positional="<lensID>", purpose=science_commands.LENS_PUSH_PURPOSE, value_flags=_RUNNER_FLAGS | {"--adopt"}, required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "lens-status", positional="<lensID>", purpose=science_commands.LENS_STATUS_PURPOSE, value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
     VerbSpec("runner", "science-export", positional="<job-id>", purpose="Package completed diagnostic output and return its hash for permitted transfer.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
     VerbSpec("runner", "science-fetch", positional="<job-id>", purpose="Download, verify and import diagnostic evidence into the local workspace, retaining a custody receipt.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
     VerbSpec("runner", "cleanup-plan", positional="<job-id>", purpose="Reverify local diagnostic custody and review policy-bounded remote output removal.", value_flags=_RUNNER_FLAGS | {"--receipt-sha256"}, required_flags=frozenset({"--runner", "--receipt-sha256"})),
@@ -793,6 +795,9 @@ METAVARS: dict = {
 #: where it is the folder the export is written into.
 VERB_METAVARS: dict = {
     "results export --out": "<dir>",
+    "science lens-copy --from": "<workspace-dir>",
+    "science lens-copy --plan-sha256": "<digest>",
+    "runner lens-push --adopt": "<path-on-the-site>",
     "concept import-chat --positive": "<chat.jsonl>",
     "concept import-chat --negative": "<chat.jsonl>",
     "concept import-chat --validation-pairs": "<n>",
@@ -3649,6 +3654,10 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
     if verb in {"science-plan", "science-submit", "resubmit", "recovery", "recover", "reconcile"}:
         from .client.remote_workflows import run
         return run(client, invocation, common)
+
+    if verb in {"lens-push", "lens-status"}:
+        from .client import lens_transfer
+        return lens_transfer.remote(client, invocation, common)
 
     if verb == "capabilities":
         document = client.info()

@@ -58,6 +58,37 @@ public struct ArtifactImportSelection: Sendable {
         return Self(description: url, kind: value.kind, modelID: value.modelID, files: files)
     }
 
+    /// What the import dialog says when the import job did not succeed. The
+    /// engine's job error is the refusal's sentence, then its repair, behind
+    /// the name of the error's class. The dialog shows the sentence and the
+    /// repair, as the command lines do, and not that name.
+    public static func failureStatus(jobStatus: String, error: String?) -> String {
+        let className = "ImportRefusal: "
+        guard let error, !error.isEmpty else { return "Import \(jobStatus): See the job log." }
+        return "Import \(jobStatus): "
+            + (error.hasPrefix(className) ? String(error.dropFirst(className.count)) : error)
+    }
+
+    /// What the import dialog says once the import job has succeeded. A lens
+    /// is named from its reviewed files, so importing files the workspace
+    /// already holds as a lens finds that lens (the job's result says
+    /// `existing`), and puts its converted file back if it was missing
+    /// (`restored`): the dialog names the lens, and does not call it new.
+    public static func completionStatus(
+        result: [String: JSONValue]?, workspaceRoot: String, modelID: String, isLens: Bool
+    ) -> String {
+        if isLens, let found = LensLibrary.importMessage(for: result) {
+            // The command line's sentence (`LensLibrary.importMessage`): the
+            // lens was already here, and its converted file was put back if
+            // it was missing.
+            return found + " Refresh the lenses for \(modelID) and select that lens."
+        }
+        return "Imported into \(workspaceRoot). "
+            + (isLens
+                ? "Refresh the J-lens library for \(modelID) and select the new lens."
+                : "Refresh Data → Concepts & Vectors or Playground → Steering Vectors for \(modelID).")
+    }
+
     public static func fileSHA256(_ url: URL) throws -> String {
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
