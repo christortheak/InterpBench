@@ -410,16 +410,17 @@ def test_a_request_that_refers_to_its_lens_is_small_and_runs_on_the_librarys_byt
     assert described['context']['lensReference'] is True and described['context']['libraryLenses'] == named
 
     # The site does not hold the lens yet. The upload is accepted (the engine has a library), and staging is
-    # refused by the engine, by name, with the repair that works.
+    # refused by the engine, by name, with the repair that works. The researcher reads the engine's own
+    # refusal: its code, its plain sentence, and its repair.
+    not_held = (f"This engine's lens library does not hold the lens '{lens_id}' (converted SHA-256 {sha}).")
+    push_first = f'Send the lens once with `remote lens-push {lens_id}` (or `runner lens-push`), then stage the request again.'
     code, uploaded = upload(world, engine, root, packed['bundlePath'])
     assert code == 0 and uploaded['result']['sha256'] == packed['bundleSha256'], uploaded
     code, refused = stage(world, engine, root, uploaded)
-    assert code == 65 and refused['state'] == 'refused', refused
-    assert 'lensNotInLibrary' in refused['error']['reason']
-    assert (f"This engine's lens library does not hold the lens '{lens_id}' (converted SHA-256 {sha})."
-            in refused['error']['reason'])
-    assert refused['error']['repairAction'] == (
-        f'Send the lens once with `remote lens-push {lens_id}` (or `runner lens-push`), then stage the request again.')
+    assert (code, refused['state']) == (65, 'refused'), refused
+    assert refused['error']['code'] == 'lensNotInLibrary'
+    assert refused['error']['reason'] == not_held
+    assert refused['error']['repairAction'] == push_first
     assert not list((engine.root / 'runs').glob('diagnostic-input-*'))
 
     # The repair, carried out: send the lens once, then stage the same upload again.
@@ -450,6 +451,20 @@ def test_a_request_that_refers_to_its_lens_is_small_and_runs_on_the_librarys_byt
     assert resolved and set(resolved) == {str(held.resolve())}
     assert readings(record['result']) == expected
     assert engine.lens_files() == [str(held)]                      # and the job made no copy of it
+
+    # The library is a cache. When it has lost the lens, planning and submitting the staged request are
+    # refused in the same engine's own words, typed, and not as a general runner refusal.
+    shutil.rmtree(engine.entry(sha))
+    request_path = staged['result']['response']['localRequestPath']
+    for arguments in (('science-plan', request_path), ('science-submit', request_path, '--plan-sha256', admitted['planSHA256'])):
+        code, refused = world.cli(engine, '--root', str(root), 'runner', *arguments, '--runner', SERVER)
+        assert (code, refused['state']) == (65, 'refused'), refused
+        assert (refused['error']['code'], refused['error']['reason'], refused['error']['repairAction']) == (
+            'lensNotInLibrary', not_held, push_first), arguments[0]
+    # A refusal on those calls that is not about a lens reads as it always did: the adapter's own code.
+    code, refused = world.cli(engine, '--root', str(root), 'runner', 'science-stage', uploaded['result']['runnerPath'],
+                              '--sha256', 'f' * 64, '--runner', SERVER)
+    assert (code, refused['error']['code']) == (65, 'runnerRefused') and 'diagnosticTransportRefused' in refused['error']['reason']
 
 
 # --- 3. a request packaged without the flag is the request it always was ---------

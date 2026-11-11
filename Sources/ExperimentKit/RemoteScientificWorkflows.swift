@@ -35,13 +35,17 @@ extension ClusterClient {
             if let walltime { wrapped["walltime"] = .string(walltime) }
             body = .object(wrapped)
         }
-        return try await post("/api/science/plan", body: body, timeout: 3600)
+        // A refusal about a lens (the site's library has lost one this
+        // request refers to) is the engine's own (`relayingLensRefusal`).
+        return try await relayingLensRefusal { try await post("/api/science/plan", body: body, timeout: 3600) }
     }
     public func scientificSubmit(_ request: JSONValue, planSHA256: String, gpuType: String? = nil, walltime: String? = nil) async throws -> JSONValue {
         var body: [String: JSONValue] = ["request": request, "planSHA256": .string(planSHA256)]
         if let gpuType { body["gpuType"] = .string(gpuType) }
         if let walltime { body["walltime"] = .string(walltime) }
-        let response: JSONValue = try await post("/api/science/submit", body: JSONValue.object(body), timeout: 3600)
+        let response: JSONValue = try await relayingLensRefusal {
+            try await post("/api/science/submit", body: JSONValue.object(body), timeout: 3600)
+        }
         guard case .object(let object) = response, case .string(let id) = object["jobId"], !id.isEmpty else {
             throw ExperimentError(reason: "Diagnostic submission returned no job ID. Its outcome is uncertain; inspect jobs on this endpoint before any retry.")
         }

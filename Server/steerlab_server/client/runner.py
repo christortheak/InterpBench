@@ -981,6 +981,31 @@ class RunnerClient:
             repair_action=repair or lens_transfer.REFUSAL_FALLBACK_REPAIR,
             detail={"status": status, "url": url})
 
+    def _raise_for_science(self, response, *, url: str) -> None:
+        """Status handling for the science stage, plan, and submit calls.
+
+        One kind of answer is reported as the engine gave it: a refusal about
+        a LENS, which is a refusal whose ``detail.code`` begins with ``lens``.
+        The one a researcher meets is ``lensNotInLibrary``: the request
+        refers to a lens that was never sent to this site. It arrives with
+        the engine's code, its sentence, and its repair, as a refusal on a
+        lens-library route does, and not as this adapter's general
+        ``runnerRefused`` with the engine's whole answer quoted inside the
+        reason. Swift twin: ``ClusterClient.relayingLensRefusal``.
+
+        Every other answer on these routes, a refusal with any other code
+        among them, is this adapter's usual handling, unchanged."""
+        status = response.status_code
+        if 400 <= status < 500 and status != 401:
+            code, sentence, repair = self._refusal_of(response)
+            if code and code.startswith("lens"):
+                from . import lens_transfer
+                raise RunnerRefusal(
+                    sentence or lens_transfer.refusal_fallback_reason(status), code=code,
+                    repair_action=repair or lens_transfer.REFUSAL_FALLBACK_REPAIR,
+                    detail={"status": status, "url": url})
+        self._raise_for_status(response, url=url)
+
     def _lens_library(self, method: str, path: str, *, whole_file: bool = False, **kwargs) -> dict:
         """One lens-library call. ``whole_file`` marks the calls that make the
         engine hash a whole file before it answers (a part, the whole-file
@@ -1507,7 +1532,8 @@ class RunnerClient:
         return self._json("GET", f"/api/jlens/lenses/{quote(lens_id, safe='')}")
 
     def stage_diagnostic(self, path: str, sha256: str) -> dict:
-        return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256}, timeout=self.diagnostic_timeout)
+        return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256},
+                          timeout=self.diagnostic_timeout, raise_for_status=self._raise_for_science)
 
     def export_diagnostic(self, job_id: str) -> dict:
         try:
@@ -1531,7 +1557,8 @@ class RunnerClient:
             body["gpuType"] = gpu_type
         if walltime is not None:
             body["walltime"] = walltime
-        return self._json("POST", "/api/science/plan", json_body=body, timeout=self.diagnostic_timeout)
+        return self._json("POST", "/api/science/plan", json_body=body, timeout=self.diagnostic_timeout,
+                          raise_for_status=self._raise_for_science)
 
     def scientific_submit(self, request: dict, plan_sha256: str, gpu_type: str | None = None, walltime: str | None = None) -> dict:
         # Exactly one POST. Inspect jobs after ambiguous transport failure.
@@ -1542,7 +1569,8 @@ class RunnerClient:
             body["gpuType"] = gpu_type
         if walltime is not None:
             body["walltime"] = walltime
-        response = self._json("POST", "/api/science/submit", json_body=body, timeout=self.diagnostic_timeout)
+        response = self._json("POST", "/api/science/submit", json_body=body, timeout=self.diagnostic_timeout,
+                              raise_for_status=self._raise_for_science)
         if not isinstance(response, dict) or not isinstance(response.get("jobId"), str) or not response["jobId"]:
             raise RunnerError("Diagnostic submission returned no job ID; its outcome is uncertain.", repair_action="Inspect runner jobs on the same endpoint before considering another submission.")
         return response

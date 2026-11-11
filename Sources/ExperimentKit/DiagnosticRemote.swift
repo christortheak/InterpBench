@@ -2,7 +2,11 @@ import Foundation
 
 extension ClusterClient {
     public func stageDiagnostic(path: String, sha256: String) async throws -> JSONValue {
-        try await post("/api/science/stage", body: JSONValue.object(["bundlePath": .string(path), "bundleSHA256": .string(sha256)]), timeout: 3600)
+        // A request that refers to a lens this site was never sent is refused
+        // here, and that refusal is the engine's own (`relayingLensRefusal`).
+        try await relayingLensRefusal {
+            try await post("/api/science/stage", body: JSONValue.object(["bundlePath": .string(path), "bundleSHA256": .string(sha256)]), timeout: 3600)
+        }
     }
     /// An export tars and hashes the job's whole output ON the controller
     /// (12 GB in the 2026-09-13 incident). Only explicit fetches reach this,

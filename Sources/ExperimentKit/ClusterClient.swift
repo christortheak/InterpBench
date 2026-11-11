@@ -5971,6 +5971,32 @@ extension ClusterClient {
             repairAction: detail.repair ?? LensLibrary.refusalFallbackRepair)
     }
 
+    /// One of the science calls (stage, plan, submit), with one kind of
+    /// answer reported as the engine gave it: a refusal about a LENS, which
+    /// is a refusal whose `detail.code` begins with `lens`. The one a
+    /// researcher meets is `lensNotInLibrary`: the request refers to a lens
+    /// that was never sent to this site. It is thrown with the engine's
+    /// code, its sentence, and its repair, as a refusal on a lens-library
+    /// route is, and not as a bare bad response that quotes the engine's
+    /// whole answer. Every other answer on those calls, a refusal with any
+    /// other code among them, is thrown exactly as it was. Python twin:
+    /// `RunnerClient._raise_for_science`.
+    func relayingLensRefusal<T>(_ call: () async throws -> T) async throws -> T {
+        do {
+            return try await call()
+        } catch let error as ClientError {
+            if case .badResponse(let status, let body) = error {
+                let data = Data(body.utf8)
+                if Self.refusalDetail(data).code?.hasPrefix("lens") == true,
+                    let refusal = Self.lensLibraryRefusal(status: status, data: data)
+                {
+                    throw refusal
+                }
+            }
+            throw error
+        }
+    }
+
     /// A lens-library answer: a refusal becomes the engine's own sentence,
     /// code, and repair. Any other answer that is not a success (a failure,
     /// or a token problem) is the error every route gives, with no more of

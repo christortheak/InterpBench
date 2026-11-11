@@ -139,6 +139,9 @@ import Testing
         var partMax = 100
         var external = false
         var servesRecords = true
+        /// What the engine answers a science call (stage, plan, submit): a
+        /// status and a body. None is a success.
+        var science: (status: Int, body: [String: Any])?
         /// The library has an entry for this lens that a newer engine wrote:
         /// the status read says so beside `held: false`, as the engine does,
         /// and the manifest is refused in the engine's words.
@@ -226,6 +229,10 @@ import Testing
                     "path": "/staged/x.tar.gz", "filename": "x.tar.gz", "sha256": "", "bytes": count,
                     "executable": true, "stagingDirectory": "/staged",
                 ])
+            }
+            if path.hasPrefix("/api/science/") {
+                if let science { return try json(science.body, science.status) }
+                return try json(["jobId": "job-1", "request": ["inputBundleSHA256": String(repeating: "a", count: 64)]])
             }
             if path.hasPrefix("/api/jlens/lenses/") {
                 if let failed = try planned("record") { return failed }
@@ -960,6 +967,120 @@ import Testing
             && onlyReason.repair == "Compare the two records.")
         let bare = ClusterClient.refusalDetail(Data(#"{"detail": "the body is too large"}"#.utf8))
         #expect(bare.code == nil && bare.message == "the body is too large" && bare.repair == nil)
+    }
+
+    /// The refusal a researcher meets when a request refers to a lens the
+    /// site was never sent. The engine refuses the stage, the plan, or the
+    /// submission with `lensNotInLibrary`, as the science routes write a
+    /// refusal (a `reason`, and no `message`). The Mac throws the engine's
+    /// own code, sentence, and repair, and the command line reports them as
+    /// a refusal (65). Every other answer on those calls is thrown exactly
+    /// as it was. Python twin:
+    /// `test_a_refusal_about_a_lens_on_a_science_call_is_the_engines_own`.
+    @Test(arguments: ["stage", "plan", "submit"])
+    func aRefusalAboutALensOnAScienceCallIsTheEnginesOwn(_ call: String) async throws {
+        let site = Site()
+        let client = site.client()
+        let staged = String(repeating: "a", count: 64)
+        let sentence = "This engine's lens library does not hold the lens 'custom-lens-example' (converted SHA-256 "
+            + String(repeating: "c", count: 64) + ")."
+        let repair = "Send the lens once with `remote lens-push custom-lens-example` (or `runner lens-push`), then "
+            + "stage the request again."
+        func invoke() async throws {
+            switch call {
+            case "stage": _ = try await client.stageDiagnostic(path: "/staged/request.tar.gz", sha256: staged)
+            case "plan": _ = try await client.scientificPlan(.object(["inputBundleSHA256": .string(staged)]))
+            default:
+                _ = try await client.scientificSubmit(
+                    .object(["inputBundleSHA256": .string(staged)]), planSHA256: String(repeating: "b", count: 64))
+            }
+        }
+        // A success is untouched.
+        try await invoke()
+        #expect(site.sent("POST") == ["POST /api/science/\(call)"])
+
+        for detail in [
+            ["code": "lensNotInLibrary", "reason": sentence, "repairAction": repair],
+            ["code": "lensNotInLibrary", "reason": sentence, "message": sentence, "repairAction": repair],
+        ] {
+            site.science = (409, ["detail": detail])
+            do {
+                try await invoke()
+                Issue.record("a request that refers to a lens the site lacks must be refused")
+            } catch let refusal as LensLibrary.Refusal {
+                #expect(refusal.code == "lensNotInLibrary" && refusal.state == .refused)
+                #expect(refusal.reason == sentence && refusal.repairAction == repair)
+            }
+        }
+        // Any code that begins with `lens`, with what it leaves out filled in.
+        site.science = (400, ["detail": ["code": "lensNotReferable", "reason": "It cannot be referred to."]])
+        do {
+            try await invoke()
+            Issue.record("a lens refusal must be thrown")
+        } catch let refusal as LensLibrary.Refusal {
+            #expect(refusal.code == "lensNotReferable" && refusal.reason == "It cannot be referred to.")
+            #expect(refusal.repairAction == LensLibrary.refusalFallbackRepair)
+        }
+
+        // Everything else is thrown as it always was: another code, no code,
+        // a code that only contains the word, a missing token, and a failure.
+        let others: [(Int, [String: Any], String)] = [
+            (409, ["detail": ["code": "diagnosticTransportRefused", "reason": "The archive is damaged."]], "damaged"),
+            (409, ["detail": ["code": "scientificExecutionRefused", "reason": "Inputs changed."]], "Inputs changed"),
+            (409, ["detail": ["code": "notALensCode", "reason": sentence]], "notALensCode"),
+            (409, ["detail": ["reason": sentence, "repairAction": repair]], "does not hold"),
+            (409, ["detail": sentence], "does not hold"),
+            (401, ["detail": ["code": "lensNotInLibrary", "reason": sentence]], "lensNotInLibrary"),
+            (500, ["detail": ["code": "lensNotInLibrary", "reason": sentence]], "lensNotInLibrary"),
+        ]
+        for (status, body, quoted) in others {
+            site.science = (status, body)
+            do {
+                try await invoke()
+                Issue.record("a refused science call must throw")
+            } catch let error as ClusterClient.ClientError {
+                guard case .badResponse(let code, let text) = error else {
+                    Issue.record("not the bad response it always was: \(error)")
+                    continue
+                }
+                #expect(code == status && text.contains(quoted), "\(status) \(text)")
+            } catch {
+                Issue.record("\(status) \(body): thrown as \(type(of: error)), not as the bad response it always was")
+            }
+        }
+
+        // On the command line: each verb lets the refusal through as it is
+        // (`science-stage` after its local identity check), and the runner
+        // reports it as a refusal (65) with the engine's code, sentence, and
+        // repair.
+        site.science = (409, ["detail": ["code": "lensNotInLibrary", "reason": sentence, "repairAction": repair]])
+        let runner = ExperimentCLIRunner(sink: .discarding)
+        let outcome: ExperimentCLIOutcome
+        do {
+            if call == "stage" {
+                _ = try await DiagnosticRemote.stage(
+                    path: "/staged/request.tar.gz", sha256: staged, client: client,
+                    root: URL(filePath: "/workspace"), confirm: {}, record: { _ in .object([:]) })
+            } else {
+                let directory = try Self.temporary()
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let request = directory.appending(component: "request.json")
+                try Data(#"{"inputBundleSHA256": "\#(staged)"}"#.utf8).write(to: request)
+                var arguments = ["science-\(call)", request.path, "--url", Self.server]
+                if call == "submit" { arguments += ["--plan-sha256", String(repeating: "b", count: 64)] }
+                _ = try await RemoteScientificWorkflowsCLI.run(
+                    arguments, client: client, endpoint: URL(string: Self.server)!, sink: .discarding)
+            }
+            Issue.record("science-\(call) must be refused")
+            return
+        } catch let refusal as LensLibrary.Refusal {
+            outcome = runner.outcome(for: refusal, namespace: "remote", verb: "remote science-\(call)")
+        }
+        #expect(outcome.envelope.state == .refused)
+        #expect(outcome.exitCode(json: true) == 65 && outcome.exitCode(json: false) == 1)
+        #expect(outcome.envelope.error?.code == "lensNotInLibrary")
+        #expect(outcome.envelope.error?.reason == sentence)
+        #expect(outcome.envelope.error?.repairAction == repair)
     }
 
     /// What the engine says of an entry whose record names a later schema

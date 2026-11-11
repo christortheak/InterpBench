@@ -795,6 +795,72 @@ def test_a_lens_library_refusal_is_reported_as_the_engine_gave_it(tmp_path, wire
     assert document['error']['repairAction'] == 'Wait for it to finish, then send the lens again.'
 
 
+SCIENCE_CALLS = {
+    'stage': ('/api/science/stage', lambda client: client.stage_diagnostic('/staged/request.tar.gz', 'a' * 64)),
+    'plan': ('/api/science/plan', lambda client: client.scientific_plan({'inputBundleSHA256': 'a' * 64})),
+    'submit': ('/api/science/submit', lambda client: client.scientific_submit({'inputBundleSHA256': 'a' * 64}, 'b' * 64)),
+}
+
+
+@pytest.mark.parametrize('call', sorted(SCIENCE_CALLS))
+def test_a_refusal_about_a_lens_on_a_science_call_is_the_engines_own(call):
+    """Staging, planning, and submitting a request that refers to a lens the
+    site was never sent: the engine refuses with `lensNotInLibrary`, as the
+    science routes write a refusal (a `reason`, and no `message`). The
+    client reports the engine's code, sentence, and repair, and exits 65.
+    Every other answer on those routes reads exactly as it did."""
+    path, invoke = SCIENCE_CALLS[call]
+    sentence = "This engine's lens library does not hold the lens 'custom-lens-example' (converted SHA-256 " + 'c' * 64 + ').'
+    repair = 'Send the lens once with `remote lens-push custom-lens-example` (or `runner lens-push`), then stage the request again.'
+    answers = {}
+
+    def handler(request):
+        assert request.url.path == path
+        status, body = answers['now']
+        return httpx.Response(status, json=body) if isinstance(body, (dict, list)) else httpx.Response(status, content=body)
+
+    def refused(status, body):
+        answers['now'] = (status, body)
+        with pytest.raises(runner_api.RunnerError) as caught:
+            invoke(client_for(handler))
+        return caught.value
+
+    # As the engine's science routes write it, and as a lens-library route would.
+    for detail in ({'code': 'lensNotInLibrary', 'reason': sentence, 'repairAction': repair},
+                   {'code': 'lensNotInLibrary', 'reason': sentence, 'message': sentence, 'repairAction': repair}):
+        error = refused(409, {'detail': detail})
+        assert isinstance(error, runner_api.RunnerRefusal)
+        assert (error.code, error.state, error.reason, error.repair_action) == ('lensNotInLibrary', 'refused', sentence, repair)
+        assert error.detail == {'status': 409, 'url': SERVER + path}
+    # Any code that begins with `lens`, on any refusal status but 401, and with what it leaves out filled in.
+    error = refused(400, {'detail': {'code': 'lensNotReferable', 'reason': 'It cannot be referred to.'}})
+    assert (error.code, error.reason, error.repair_action) == (
+        'lensNotReferable', 'It cannot be referred to.', lens_transfer.REFUSAL_FALLBACK_REPAIR)
+
+    # Everything else is the adapter's usual answer, word for word: another code, no code, a code that only
+    # contains the word, a missing token, and a failure.
+    def usual(status, body):
+        answers['now'] = (status, body)
+        response = httpx.Response(status, json=body, request=httpx.Request('POST', SERVER + path))
+        with pytest.raises(runner_api.RunnerHTTPError) as expected:
+            client_for(handler)._raise_for_status(response, url=SERVER + path)
+        return expected.value
+
+    for status, body in ((409, {'detail': {'code': 'diagnosticTransportRefused', 'reason': 'The archive is damaged.',
+                                           'repairAction': 'Package it again.'}}),
+                         (409, {'detail': {'code': 'scientificExecutionRefused', 'reason': 'Inputs changed.'}}),
+                         (409, {'detail': {'code': 'notALensCode', 'reason': sentence}}),
+                         (409, {'detail': {'reason': sentence, 'repairAction': repair}}),
+                         (409, {'detail': sentence}),
+                         (401, {'detail': {'code': 'lensNotInLibrary', 'reason': sentence}}),
+                         (500, {'detail': {'code': 'lensNotInLibrary', 'reason': sentence}})):
+        error, as_before = refused(status, body), usual(status, body)
+        assert type(error) is runner_api.RunnerHTTPError, (status, body)
+        assert (error.code, error.state, error.reason, error.repair_action, error.detail) == (
+            as_before.code, as_before.state, as_before.reason, as_before.repair_action, as_before.detail)
+        assert error.code != 'lensNotInLibrary'
+
+
 def test_an_entry_of_another_size_and_an_answer_the_contract_does_not_allow(tmp_path):
     root, lens_id = make_lens(tmp_path)
     data = converted(root, lens_id).read_bytes()
