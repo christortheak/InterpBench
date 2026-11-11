@@ -145,8 +145,9 @@ between.
 - **Custom instruments:** `science artifact-plan <description.json>` inspects
   a custom lens or SAE decoder and hashes its source files without publishing;
   `science artifact-import <description.json> --plan-sha256 <digest>` imports
-  the reviewed instrument into the workspace library. A lens is named from its
-  reviewed files, so importing the same files again finds the same lens.
+  the reviewed instrument into the workspace. A lens is named from its reviewed
+  files, so importing the same files again finds the same lens, and puts its
+  converted file back if it is missing.
 - **A lens on other hardware, or in a second workspace:** send a lens to a
   site once with `{{remote}} lens-push <lensID>` (`{{remote}} lens-status
   <lensID>` says what the site holds), then add `--lens-reference` to `science

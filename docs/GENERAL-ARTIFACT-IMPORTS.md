@@ -1,7 +1,7 @@
 # Import your own fitted lens or SAE decoder
 
 Use existing artifacts from your own work or another source. Importing a J-lens
-adds a measuring instrument to the lens library. Importing an SAE feature adds
+adds a measuring instrument to the workspace's lenses. Importing an SAE feature adds
 one decoder direction to the vector library. Neither operation trains anything,
 loads a language model, or establishes that a feature has the behavioral meaning
 suggested by its label.
@@ -14,7 +14,7 @@ The source guide includes miniature examples; replace their geometry with the
 artifact's actual dimensions and layer mapping. No researcher dataset is generated.
 
 The app explicitly stages the selected files to the connected Python workbench,
-then displays a plan. After review, Import publishes to the workspace library.
+then displays a plan. After review, Import publishes into the workspace.
 Local original files remain in place. A workbench can run on this Mac; no GPU is
 needed for import. Staged source files remain under `.steerlab/artifact-inputs/`;
 completed artifacts retain their own source copies and an import receipt. This
@@ -112,13 +112,33 @@ HTTP service. Runner-only deployments reject workbench authoring.
 One lens, one name. A custom lens is named from the files that were reviewed:
 `custom-lens-` followed by the first 32 hexadecimal characters of the SHA-256 of
 the canonical JSON `{"descriptionSHA256", "kind": "jlens", "tensorSHA256"}`, the
-two file hashes the plan shows. The same reviewed import therefore gives the
-same lens ID in any workspace and on any machine. Importing files that a
-workspace already holds as a lens returns that lens, with `existing: true` and
-`changed: false`, and writes nothing. The match is on the tensor file's hash and
-the description's hash, so it also finds a lens imported before this rule, which
+file hashes the plan shows. When the description declares a `configFile`, that
+JSON also has `"configSHA256"`: a fit report decides the lens's fitting
+provenance, so another report is another lens. The same reviewed import
+therefore gives the same lens ID in any workspace and on any machine.
+
+Importing files that a workspace already holds as a lens finds that lens. The
+match is on the lens's `import-receipt.json`: the same files, role for role, with
+the same SHA-256. It therefore also finds a lens imported before this rule, which
 keeps the random ID it was given. A different description (a different intended
-use, say) is a different lens with its own name.
+use, say) or a different config file is a different lens with its own name.
+
+The lens that is found is checked before the import answers:
+
+- Its converted file is in place and has the SHA-256 its record names: the import
+  returns the lens with `existing: true` and `changed: false`, and writes nothing.
+- Its converted file is missing: the import converts the reviewed sources again
+  and puts the file back when it has the SHA-256 the record names (`existing:
+  true`, `changed: true`, `restored: true`). Nothing else in the lens folder
+  changes. This is what "import the lens again" does when a lens verb refuses a
+  lens whose file is gone.
+- Its converted file is there with other bytes, or its record names no converted
+  file: the import refuses, names the lens, and says what to move aside. It never
+  overwrites a file.
+
+A folder under the lens's name that holds no such lens is refused at once, before
+anything is copied or converted. One unreadable record elsewhere in
+`runs/jlens-lenses/` does not stop an import.
 
 An SAE decoder import still gets a fresh ID every time. No old lens or vector is
 ever replaced. Lenses start without qualification
@@ -147,15 +167,22 @@ stays its source. Two verbs take it elsewhere without minting another lens:
   with the `--plan-sha256` the review shows to copy. Every file is hashed before
   and after. On macOS each file is cloned where the filesystem allows, so the
   copy uses no extra disk space; elsewhere, or where a clone fails, it is a full
-  copy, and the result's `copyMethod` says which. The same lens already present
-  changes nothing; a different lens under that name is refused.
+  copy, and the result's `copyMethod` says which. A lens already present is
+  checked, not copied again: intact, nothing changes; its converted file
+  missing, that file is put back (`restored: true`); its converted file
+  different, the copy is refused and the file is left alone. The same lens
+  under another name (the same reviewed files) is reported as
+  `existingLensID`, and nothing is copied. A different lens under that name is
+  refused.
 - **A site.** `steerlab-cli remote lens-push <lensID> --site <id>` (or `steerlab
   runner lens-push <lensID> --runner <url>`) sends the converted file to the
   site's lens library once, in parts that follow its layers, each checked, and
   registers the lens's record there. No part is larger than the engine's
   `lensLibrary.partMaxBytes` (256 MiB at most), so the upload limit does not
   stand in the way of a large lens. Run again after an interruption, it sends
-  only what is missing. `lens-status
+  only what is missing. A number in the record that is not finite (a
+  qualification's value that could not be scored) is sent as null, and the
+  result counts them (`recordNonFiniteNumbers`). `lens-status
   <lensID>` says what the site holds. A request packaged with `science package
   --lens-reference` then refers to the site's copy and leaves the converted file
   out. On a site that forbids HTTP transfer, copy the converted file there with

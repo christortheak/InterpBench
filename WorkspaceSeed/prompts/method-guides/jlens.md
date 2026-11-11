@@ -61,11 +61,14 @@ Both clients offer `science artifact-plan <description.json> --json`, then
 Select the destination workspace with the client's usual root/workspace option.
 The app's J-lens dialog offers **Import my own lens files** and explicitly stages
 files to the connected Python workbench before review. Import names the lens
-from the reviewed files (`custom-lens-` and part of their hash), so importing
-the same files again, in this workspace or another, finds the same lens and
-writes nothing. It retains source copies, and does not qualify the lens or
-train anything. Use that explicit lens ID when several fits exist for the same
-model. To use a lens in a second workspace on the same machine, `science
+from the reviewed files (`custom-lens-` and part of their hash). Importing the
+same files again in this workspace finds the same lens: it writes nothing, or,
+when the lens's converted file is missing, puts that file back. In another
+workspace it makes a lens with the same name. A different fit report
+(`configFile`) is a different lens, because the report decides the lens's
+fitting provenance. Import retains source copies, and does not qualify the lens
+or train anything. Use that explicit lens ID when several fits exist for the
+same model. To use a lens in a second workspace on the same machine, `science
 lens-copy <lensID> --from <workspace directory>` copies it under the same name
 and record; review it, then repeat with the `--plan-sha256` it shows.
 
@@ -141,7 +144,7 @@ Completed fits return an immutable run with fit-report.json,
 jacobians.safetensors, artifact-description.json, captured input text, and a
 checkpoint. Use normal science export/fetch/import and verify custody to bring
 the run home. Then review artifact-description.json with artifact-plan and use
-artifact-import to register this particular fit in the lens library. In the app,
+artifact-import to add this particular fit to the workspace's lenses. In the app,
 use **Import my own lens files…** on that returned description. Fitting precision,
 model revision, corpus hash, and original report survive registration. Qualify
 that registered lens for its intended runtime separately; fitting is not

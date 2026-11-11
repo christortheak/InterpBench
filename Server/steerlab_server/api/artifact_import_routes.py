@@ -95,7 +95,7 @@ def build_router(state):
                 if not re.fullmatch('[0-9a-f]{64}', body['planSHA256']):
                     raise artifact_sources.ImportRefusal('Supply the hash returned by source review.')
                 def work(job):
-                    job.log('Importing reviewed source files into the workspace library.')
+                    job.log('Importing reviewed source files into the workspace.')
                     return artifact_imports.publish(path, root, body['planSHA256'])
                 return {'jobId': state.jobs.submit('artifact-import', work).id}
         except (ValueError, OSError, KeyError, TypeError) as exc:
