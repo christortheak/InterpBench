@@ -845,6 +845,16 @@ class Job:
     def cancelled(self) -> bool:
         return self._cancel.is_set()
 
+    def finished_before_cancel(self, message: str) -> None:
+        """Withdraw a cancel that arrived after the work had already finished.
+
+        A worker whose own durable record says the work succeeded calls this
+        before it returns, so a cancel that lost the race does not relabel a
+        finished result as cancelled. It says so in the job's log."""
+        if self._cancel.is_set():
+            self._cancel.clear()
+            self.log(message)
+
     def log(self, message: str) -> None:
         with self._lock:
             self._logs.append(message)

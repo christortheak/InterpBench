@@ -7,11 +7,14 @@ in checked parts (planned here from the safetensors layout alone, as a sender
 plans it), a file adopted from the site, a record registered in the serving
 workspace, and every way a path or a key could reach outside the library.
 """
+import errno
 import hashlib
 import json
 import os
+import stat
 import struct
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,6 +30,9 @@ from steerlab_server.jlens import artifact_paths, lens_library, lens_store, sche
 
 LENS_ID = 'custom-lens-example'
 CANONICAL = f'runs/jlens-lenses/{LENS_ID}/jacobians.safetensors'
+UNAVAILABLE_REPAIR = ('Package the request without `--lens-reference`, or give this engine a lens library: set '
+                      '`STEERLAB_LENS_LIBRARY_ROOT` to a folder it can write (a site profile sets it from its '
+                      '`lensLibrary` folder), then start the engine again.')
 
 
 def digest(data):
@@ -200,8 +206,9 @@ def test_an_engine_without_a_library_refuses_every_route_with_the_repair(site, m
         assert response.status_code == 409, response.text
         detail = refusal(response)
         assert detail['code'] == 'lensLibraryUnavailable'
-        assert detail['repairAction'] == ("Package the request without `--lens-reference`, or set the site "
-                                         "profile's `lensLibrary` folder.")
+        # The repair works with or without a site profile: it names the variable and the profile's folder.
+        assert detail['repairAction'] == UNAVAILABLE_REPAIR
+        assert 'STEERLAB_LENS_LIBRARY_ROOT' in UNAVAILABLE_REPAIR and '`lensLibrary` folder' in UNAVAILABLE_REPAIR
     assert not site.library.exists()
 
 
@@ -497,12 +504,22 @@ def test_a_lens_that_cannot_fit_is_refused_before_it_is_begun(site, monkeypatch)
     assert not (site.library / '.incoming' / site.sha).exists()
 
 
-def test_parts_obey_the_sites_transfer_policy(site, monkeypatch):
+def test_a_site_that_moves_files_itself_refuses_an_upload_before_it_begins(site, monkeypatch):
     plan = part_plan(site.source, 64)
+    monkeypatch.setenv('STEERLAB_TRANSFER_METHOD', 'globus')
+    begun = site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan)
+    assert begun.status_code == 403, begun.text
+    detail = refusal(begun)
+    assert detail['code'] == 'external_transfer_required' and 'a lens cannot be sent to it in parts' in detail['reason']
+    # The repair is about a lens (the policy's own speaks of bundles), and names the verb that takes it.
+    assert detail['repairAction'] == lens_library.ADOPT_REPAIR and 'lens-push <lensID> --adopt' in detail['repairAction']
+    assert not site.library.exists()                      # nothing was created, so nothing is left behind
+    # A part obeys the same policy, with the same answer, even for an upload begun before the policy was set.
+    monkeypatch.delenv('STEERLAB_TRANSFER_METHOD')
     assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).status_code == 200
     monkeypatch.setenv('STEERLAB_TRANSFER_METHOD', 'globus')
     response = send_part(site.client, site.sha, plan, site.source.read_bytes(), 0)
-    assert response.status_code == 403 and response.json()['detail']['code'] == 'external_transfer_required'
+    assert response.status_code == 403 and refusal(response) == detail
     assert site.client.get(f'/api/lens-library/{site.sha}').json()['receivedParts'] == []
 
 
@@ -702,3 +719,380 @@ def test_a_workspace_file_always_wins_and_the_library_is_never_hashed(site, monk
     with pytest.raises(schemas.JLensError, match='missing'):
         lens_store.load_layer(record, 0, root=str(site.root))
     assert [r.lensID for r in lens_store.list_lenses(str(site.root))] == [LENS_ID]
+
+
+def test_only_a_record_in_the_importers_layout_is_answered_by_the_library(site, tmp_path):
+    """One rule decides whether a record's path may be answered by the library, and the reader obeys it:
+    any other path resolves exactly as it did before a library existed, whether or not it exists."""
+    push(site.client, site.source)
+    site.client.post('/api/lens-library/register', json={'record': record_for(site.sha)})
+    library_file = str((site.library / site.sha / 'jacobians.safetensors').resolve())
+    outside = tmp_path / 'a-copy-somewhere.safetensors'
+    outside.write_bytes(site.source.read_bytes())
+    root = str(site.root.resolve())
+    for reference in (CANONICAL, '/elsewhere/workspace/' + CANONICAL, 'nested/' + CANONICAL):
+        assert artifact_paths.library_eligible(LENS_ID, reference)
+        assert artifact_paths.converted_file(LENS_ID, reference, str(site.root)) == library_file
+    for reference in (str(outside),                                   # exists, outside the workspace
+                      '/elsewhere/absent.safetensors',                 # absolute, and nowhere
+                      'somewhere/else.safetensors',                    # relative, and nowhere
+                      'runs/jlens-lenses/another-lens/jacobians.safetensors',
+                      CANONICAL + '.bak', 'runs/jlens-lenses/' + LENS_ID):
+        assert not artifact_paths.library_eligible(LENS_ID, reference)
+        expected = reference if os.path.isabs(reference) else os.path.join(root, reference)
+        assert artifact_paths.converted_file(LENS_ID, reference, str(site.root)) == expected != library_file
+    assert not artifact_paths.library_eligible(LENS_ID, None)
+
+
+# --- fix round 1: where a record is registered ------------------------------------
+
+def test_a_record_is_registered_where_the_engines_lens_routes_and_runs_read(site, monkeypatch, tmp_path):
+    from steerlab_server.api.app import app
+    runs = tmp_path / 'scratch-runs'                       # a declared run root that is not <root>/runs
+    monkeypatch.setenv('STEERLAB_RUN_ROOT', str(runs))
+    push(site.client, site.source)
+    answered = site.client.post('/api/lens-library/register', json={'record': record_for(site.sha)})
+    assert answered.status_code == 200 and answered.json() == {'lensID': LENS_ID, 'registered': True, 'changed': True}
+    assert (runs / 'jlens-lenses' / LENS_ID / 'lens.json').is_file() and not (site.root / 'runs').exists()
+    # The engine's own lens routes, and anything that resolves a lens with no root (a study run), find it.
+    engine = TestClient(app)
+    assert [lens['lensID'] for lens in engine.get('/api/jlens/lenses').json()['lenses']] == [LENS_ID]
+    detail = engine.get(f'/api/jlens/lenses/{LENS_ID}')
+    assert detail.status_code == 200 and detail.json()['converted'] == {
+        'path': CANONICAL, 'dtype': 'float32', 'sha256': site.sha, 'layerCount': 3}
+    layer = lens_store.load_layer(lens_store.resolve(LENS_ID), 1)
+    assert tuple(layer.shape) == (4, 4)                    # read from the library, through the record found there
+    # The same store is where qualifications are added, and where a name already taken is seen.
+    added = site.client.post('/api/lens-library/register',
+                             json={'record': record_for(site.sha, qualifications=[qualification(site.sha)])})
+    assert added.json()['changed'] is True
+    assert [q.qualificationID for q in lens_store.resolve(LENS_ID).qualifications] == ['q-1']
+    taken = schemas.JLensRecord.from_dict(record_for('e' * 64, lens_id='custom-lens-taken'))
+    lens_store.save(taken)                                 # a different lens of that name, imported on the site
+    refused = site.client.post('/api/lens-library/register',
+                               json={'record': record_for(site.sha, lens_id='custom-lens-taken',
+                                                          path='runs/jlens-lenses/custom-lens-taken/jacobians.safetensors')})
+    assert refused.status_code == 409, refused.text
+    detail = refusal(refused)
+    assert detail['code'] == 'lensRecordDiffers' and 'e' * 64 in detail['reason'] and site.sha in detail['reason']
+    # The repair no longer sends the reader to import again for a new name.
+    assert 'import' not in detail['repairAction'] and '--lens-reference' in detail['repairAction']
+    assert lens_store.resolve('custom-lens-taken').converted.sha256 == 'e' * 64
+
+
+# --- fix round 1: a folder under a hash that is not an entry ----------------------
+
+def idle(path, seconds):
+    """Make a folder, and everything in it, look unchanged for this long."""
+    stamp = time.time() - seconds
+    for directory, folders, files in os.walk(path):
+        for name in folders + files:
+            os.utime(os.path.join(directory, name), (stamp, stamp))
+    os.utime(path, (stamp, stamp))
+
+
+@pytest.mark.parametrize('claim', [False, True], ids=['create-only rename', 'mkdir claim'])
+@pytest.mark.parametrize('left', ['record only', 'nothing'])
+def test_a_purged_entry_is_replaced_by_sending_the_lens_again(site, monkeypatch, claim, left):
+    from steerlab_server.experiment import diagnostic_archives as archives
+    if claim:                                              # cluster storage: no no-replace rename
+        monkeypatch.setattr(archives, '_rename_noreplace', lambda source, target: errno.EINVAL)
+    sha = push(site.client, site.source)[0]
+    entry = site.library / sha
+    (entry / 'jacobians.safetensors').unlink()             # storage purged the large, rarely read file
+    if left == 'nothing':
+        (entry / 'entry.json').unlink()                    # or a publisher died having only claimed the name
+    idle(entry, lens_library.STALE_ENTRY_SECONDS + 1)
+    plan = part_plan(site.source, 64)
+    assert site.client.get(f'/api/lens-library/{sha}').json()['held'] is False
+    _, begun, done = push(site.client, site.source)
+    assert begun == {'held': False, 'missingParts': [part['index'] for part in plan['parts']]}
+    assert done.status_code == 200 and done.json() == {'held': True, 'bytes': site.source.stat().st_size}
+    assert digest((entry / 'jacobians.safetensors').read_bytes()) == sha
+    # Nobody removed anything: the folder was set aside inside the library, by itself.
+    (aside,) = [path.name for path in (site.library / '.incoming').iterdir()]
+    assert aside.startswith(f'damaged-{sha}-')
+    # The same for a file already on the site.
+    (entry / 'jacobians.safetensors').unlink()
+    idle(entry, lens_library.STALE_ENTRY_SECONDS + 1)
+    staged = site.root / 'runs/lens.safetensors'
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(site.source.read_bytes())
+    adopted = site.client.post('/api/lens-library/adopt', json={'path': 'lens.safetensors', 'sha256': sha})
+    assert adopted.status_code == 200 and digest((entry / 'jacobians.safetensors').read_bytes()) == sha
+
+
+def test_an_unfinished_folder_that_is_still_changing_is_refused_before_a_byte_is_sent(site):
+    folder = site.library / site.sha
+    folder.mkdir(parents=True)                             # a publisher has just claimed the name
+    plan = part_plan(site.source, 64)
+    staged = site.root / 'runs/lens.safetensors'
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(site.source.read_bytes())
+    for response in (site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan),
+                     site.client.post('/api/lens-library/adopt', json={'path': 'lens.safetensors', 'sha256': site.sha})):
+        assert response.status_code == 409, response.text
+        detail = refusal(response)
+        assert detail['code'] == 'lensLibraryEntryBusy' and 'being published right now' in detail['reason']
+        assert detail['repairAction'].startswith('Try again in a few minutes.')
+    # Nothing was begun or copied, and the folder was left to whoever is filling it.
+    assert not (site.library / '.incoming').exists() and list(folder.iterdir()) == []
+    # A little short of idle is still busy; idle, it makes way.
+    idle(folder, lens_library.STALE_ENTRY_SECONDS - 5)
+    assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).status_code == 409
+    idle(folder, lens_library.STALE_ENTRY_SECONDS + 1)
+    assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).status_code == 200
+    assert lens_library.STALE_ENTRY_SECONDS == 15 * 60
+
+
+# --- fix round 1: a run root reached through a link -------------------------------
+
+def test_adopt_takes_the_sites_own_spelling_of_its_run_root(site, monkeypatch, tmp_path):
+    real = tmp_path / 'scratch'
+    (real / 'runs/transfers').mkdir(parents=True)
+    link = tmp_path / 'scratch-link'
+    link.symlink_to(real)                                  # cluster scratch is often reached through one
+    monkeypatch.setenv('STEERLAB_RUN_ROOT', str(link / 'runs'))
+    (real / 'runs/transfers/lens.safetensors').write_bytes(site.source.read_bytes())
+    for path in (str(link / 'runs/transfers/lens.safetensors'),      # as the site spells it
+                 str(real / 'runs/transfers/lens.safetensors'),      # resolved
+                 'transfers/lens.safetensors'):                      # relative to the run root
+        adopted = site.client.post('/api/lens-library/adopt', json={'path': path, 'sha256': site.sha})
+        assert adopted.status_code == 200, (path, adopted.text)
+    # Below the root a link is still refused, under either spelling.
+    (real / 'runs/alias').symlink_to(real / 'runs/transfers')
+    for path in ('alias/lens.safetensors', str(link / 'runs/alias/lens.safetensors'),
+                 str(real / 'runs/alias/lens.safetensors'), str(link / 'elsewhere.safetensors')):
+        refused = site.client.post('/api/lens-library/adopt', json={'path': path, 'sha256': site.sha})
+        assert refused.status_code == 400 and refusal(refused)['code'] == 'lensAdoptPathInvalid', (path, refused.text)
+        assert refusal(refused)['repairAction'] == lens_library.ADOPT_REPAIR
+
+
+# --- fix round 1: nothing large is left for good ----------------------------------
+
+def test_what_a_killed_process_left_is_swept_and_an_idle_upload_expires(site):
+    incoming = site.library / '.incoming'
+    day, week = lens_library.STALE_STAGING_SECONDS, lens_library.STALE_UPLOAD_SECONDS
+    assert (day, week) == (24 * 3600, 7 * 24 * 3600)
+    ages = {'publish-killed': day + 60, 'publish-working': 60, 'damaged-' + 'c' * 64 + '-0000': day + 60,
+            'begin-killed': day + 60, 'a' * 64: week + 60, 'b' * 64: week - 3600, 'someone-elses-notes': 10 * week}
+    for name, seconds in ages.items():
+        (incoming / name).mkdir(parents=True)
+        (incoming / name / 'jacobians.safetensors').write_bytes(b'x' * 1000)
+        (incoming / name / 'manifest.json').write_text('{}')
+        idle(incoming / name, seconds)
+    push(site.client, site.source)                         # a staging folder is made: the sweep runs
+    assert sorted(path.name for path in incoming.iterdir()) == sorted(['publish-working', 'b' * 64, 'someone-elses-notes'])
+
+
+def test_a_different_plan_replaces_an_upload_that_has_gone_idle(site):
+    first, second = part_plan(site.source, 64), part_plan(site.source, 32)
+    data = site.source.read_bytes()
+    assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=first).status_code == 200
+    assert send_part(site.client, site.sha, first, data, 0).status_code == 200
+    refused = site.client.post(f'/api/lens-library/{site.sha}/begin', json=second)
+    assert refused.status_code == 409, refused.text
+    detail = refusal(refused)
+    assert detail['code'] == 'lensUploadPlanDiffers'
+    assert 'same client and the same part size' in detail['repairAction'] and 'idle for 15 minutes' in detail['repairAction']
+    assert 'operator' not in detail['repairAction']
+    idle(site.library / '.incoming' / site.sha, lens_library.IDLE_UPLOAD_SECONDS + 1)
+    replaced = site.client.post(f'/api/lens-library/{site.sha}/begin', json=second)
+    assert replaced.status_code == 200 and replaced.json() == {
+        'held': False, 'missingParts': [part['index'] for part in second['parts']]}
+    assert site.client.get(f'/api/lens-library/{site.sha}').json()['receivedParts'] == []
+    for part in second['parts']:
+        assert send_part(site.client, site.sha, second, data, part['index']).status_code == 200
+    assert site.client.post(f'/api/lens-library/{site.sha}/complete', json={}).json()['held'] is True
+
+
+def test_an_upload_folder_with_no_plan_or_no_working_files_starts_clean(site, monkeypatch):
+    plan, data = part_plan(site.source, 64), site.source.read_bytes()
+    everything = [part['index'] for part in plan['parts']]
+    upload = site.library / '.incoming' / site.sha
+    # Debris with no plan: nothing in it was ever checked, whatever it claims to have received.
+    (upload / 'received').mkdir(parents=True)
+    (upload / 'received/0').write_text('')
+    (upload / 'data').write_bytes(b'left behind')
+    assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).json() == {'held': False, 'missingParts': everything}
+    assert (upload / 'data').stat().st_size == len(data) and list((upload / 'received').iterdir()) == []
+    # A removal cut short takes the plan first, so what is left reads as no upload, and begins clean.
+    assert send_part(site.client, site.sha, plan, data, 0).status_code == 200
+    with monkeypatch.context() as patched:
+        patched.setattr(lens_library.shutil, 'rmtree', lambda *args, **kwargs: None)      # stopped after its first step
+        lens_library._discard(upload)
+    assert not (upload / 'manifest.json').exists() and (upload / 'received/0').exists()
+    assert site.client.get(f'/api/lens-library/{site.sha}').json() == {'held': False, 'bytes': None, 'receivedParts': None}
+    assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).json()['missingParts'] == everything
+    # A plan whose working files are gone (a removal cut short the old way) cannot be resumed, and is not.
+    assert send_part(site.client, site.sha, plan, data, 0).status_code == 200
+    (upload / 'data').unlink()
+    assert site.client.post(f'/api/lens-library/{site.sha}/begin', json=plan).json()['missingParts'] == everything
+    _, _, done = push(site.client, site.source)
+    assert done.status_code == 200 and done.json()['held'] is True
+
+
+@pytest.mark.filterwarnings('ignore:This process.*is multi-threaded:DeprecationWarning')
+def test_two_engine_processes_on_one_library_never_show_an_error_number_or_a_path(site, tmp_path):
+    """Two engines on one library folder share no lock. Each child here is one engine process sending the same
+    lens over the routes; whichever loses a race is answered plainly, and the entry is whole."""
+    plain = {'lensUploadIncomplete', 'lensUploadNotBegun', 'lensUploadBusy', 'lensLibraryEntryBusy'}
+    for attempt in range(8):
+        source = tmp_path / f'forked-{attempt}.safetensors'
+        sha = write_converted(source, seed=100 + attempt)
+        data, plan = source.read_bytes(), part_plan(source, 64)
+        ready, go = os.pipe()
+        children = []
+        for number in range(2):
+            pid = os.fork()
+            if pid == 0:
+                status = 1
+                try:
+                    os.read(ready, 1)                      # both start together
+                    client, seen = TestClient(site.app), []
+                    begun = client.post(f'/api/lens-library/{sha}/begin', json=plan)
+                    seen.append(('begin', begun.status_code, begun.text))
+                    for index in (begun.json().get('missingParts', []) if begun.status_code == 200 else []):
+                        sent = send_part(client, sha, plan, data, index)
+                        seen.append((f'part {index}', sent.status_code, sent.text))
+                    done = client.post(f'/api/lens-library/{sha}/complete', json={})
+                    seen.append(('complete', done.status_code, done.text))
+                    (tmp_path / f'outcome-{attempt}-{number}.json').write_text(json.dumps(seen))
+                    status = 0
+                finally:
+                    os._exit(status)
+            children.append(pid)
+        os.write(go, b'gg')
+        deadline = time.monotonic() + 60
+        for pid in children:
+            finished, status = os.waitpid(pid, os.WNOHANG)
+            while not finished and time.monotonic() < deadline:
+                time.sleep(0.01)
+                finished, status = os.waitpid(pid, os.WNOHANG)
+            if not finished:
+                os.kill(pid, 9)
+                os.waitpid(pid, 0)
+            assert finished and status == 0, 'an engine process did not finish its exchange'
+        os.close(ready), os.close(go)
+        completed = 0
+        for number in range(2):
+            seen = json.loads((tmp_path / f'outcome-{attempt}-{number}.json').read_text())
+            for step, status, text in seen:
+                assert 'Errno' not in text and str(tmp_path) not in text and str(site.root) not in text, (step, text)
+                if status != 200:
+                    assert status == 409 and json.loads(text)['detail']['code'] in plain, (step, status, text)
+            completed += seen[-1][1] == 200
+        assert completed >= 1
+        entry = site.library / sha
+        assert digest((entry / 'jacobians.safetensors').read_bytes()) == sha
+        assert json.loads((entry / 'entry.json').read_bytes())['bytes'] == len(data)
+        assert not (site.library / '.incoming' / sha).exists()
+    assert not list((site.library / '.incoming').iterdir())
+
+
+# --- fix round 1: the file that is published is the file that was hashed -----------
+
+def test_storage_that_cannot_link_publishes_a_copy_and_the_copy_is_what_was_hashed(site, monkeypatch, tmp_path):
+    def cannot_link(source, target, **kwargs):
+        raise OSError(errno.EPERM, 'Operation not permitted')
+    monkeypatch.setattr(lens_library.os, 'link', cannot_link)
+    sha, _, done = push(site.client, site.source)
+    assert done.status_code == 200 and (site.library / sha / 'jacobians.safetensors').read_bytes() == site.source.read_bytes()
+    # A copy that came out different is caught: the upload was right, the published file would not have been.
+    other = tmp_path / 'other.safetensors'
+    other_sha = write_converted(other, seed=7)
+    copy = lens_library.shutil.copyfile
+
+    def damaged(source, target, **kwargs):
+        copy(source, target, **kwargs)
+        with open(target, 'r+b') as stream:
+            stream.seek(-1, os.SEEK_END)
+            stream.write(b'\xff')
+    monkeypatch.setattr(lens_library.shutil, 'copyfile', damaged)
+    _, _, refused = push(site.client, other)
+    assert refused.status_code == 409 and refusal(refused)['code'] == 'lensUploadMismatch'
+    assert not (site.library / other_sha).exists()
+
+
+def test_an_entry_can_be_read_by_whoever_the_umask_allows(site):
+    previous = os.umask(0o022)
+    try:
+        sha = push(site.client, site.source)[0]
+        staged = site.root / 'runs/second.safetensors'
+        second = write_converted(staged, seed=3)
+        assert site.client.post('/api/lens-library/adopt', json={'path': 'second.safetensors', 'sha256': second}).status_code == 200
+    finally:
+        os.umask(previous)
+    for key in (sha, second):
+        entry = site.library / key
+        assert stat.S_IMODE(entry.stat().st_mode) == 0o755
+        assert {stat.S_IMODE(path.stat().st_mode) for path in entry.iterdir()} == {0o644}
+
+
+# --- fix round 1: what a record may hold, and how records are compared ------------
+
+def test_a_record_says_which_part_of_it_cannot_be_used(site):
+    push(site.client, site.source)
+    good = record_for(site.sha)
+
+    def without(*path):
+        record = json.loads(json.dumps(good))
+        block = record
+        for name in path[:-1]:
+            block = block[name]
+        del block[path[-1]]
+        return record
+    cases = [(without('source'), '`source` block'), (without('converted'), '`converted` block'),
+             (without('dModel'), '`sourceLayers`, `dModel`, `targetLayer`, and `nPrompts`'),
+             (without('source', 'tensorSHA256'), '`source.tensorSHA256`'),
+             ({**good, 'converted': {**good['converted'], 'sha256': 'short'}}, '`converted.sha256`'),
+             ({**good, 'converted': {**good['converted'], 'path': 'elsewhere/jacobians.safetensors'}}, '`converted.path`'),
+             ({**good, 'qualifications': [{'qualificationID': 'q'}]}, 'qualification 0'),
+             ({**good, 'lensID': 'a/b'}, '`lensID`')]
+    for record, named in cases:
+        response = site.client.post('/api/lens-library/register', json={'record': record})
+        assert response.status_code == 400, (named, response.text)
+        detail = refusal(response)
+        assert detail['code'] == 'lensRecordInvalid' and named in detail['reason'], detail
+        # `lens-push` sent this record, so the repair is to make the record whole where it was made.
+        assert detail['repairAction'].startswith('Import the lens again on your machine')
+    assert not (site.root / 'runs').exists()
+
+
+def test_a_number_that_is_not_finite_is_refused_when_sent_and_reads_as_null_when_stored(site):
+    from steerlab_server.jlens import qualification as qualifications
+    push(site.client, site.source)
+    endpoint, headers = '/api/lens-library/register', {'content-type': 'application/json'}
+    unfinished = qualification(site.sha, 'q-nan', checks={'score': float('nan'), 'margin': float('inf')})
+    sent = site.client.post(endpoint, headers=headers,
+                            content=json.dumps({'record': record_for(site.sha, qualifications=[unfinished])}))
+    assert sent.status_code == 400, sent.text
+    detail = refusal(sent)
+    assert detail['code'] == 'lensRecordInvalid' and 'not finite' in detail['reason']
+    assert 'qualifications[0].checks.score' in detail['reason']
+    assert 'Update the client' in detail['repairAction'] and 'null' in detail['repairAction']
+    assert not (site.root / 'runs').exists()
+    # The site's own record holds the NaN, as the engine's qualification writes one.
+    site.client.post(endpoint, json={'record': record_for(site.sha)})
+    qualifications.append_qualification(lens_store.resolve(LENS_ID), unfinished)
+    assert 'NaN' in (site.root / 'runs/jlens-lenses' / LENS_ID / 'lens.json').read_text()
+    # The same qualification, sent as a client sends it (null), is the same qualification.
+    as_sent = qualification(site.sha, 'q-nan', checks={'score': None, 'margin': None})
+    same = site.client.post(endpoint, json={'record': record_for(site.sha, qualifications=[as_sent])})
+    assert same.status_code == 200 and same.json()['changed'] is False, same.text
+    # A number that really differs is still a different qualification.
+    other = qualification(site.sha, 'q-nan', checks={'score': 0.5, 'margin': None})
+    differs = site.client.post(endpoint, json={'record': record_for(site.sha, qualifications=[other])})
+    assert differs.status_code == 409 and refusal(differs)['code'] == 'lensQualificationDiffers'
+
+
+def test_added_qualifications_go_in_date_order_after_what_the_site_has(site):
+    push(site.client, site.source)
+    held = qualification(site.sha, 'q-site', qualifiedAt='2026-11-09T00:00:00Z')
+    site.client.post('/api/lens-library/register', json={'record': record_for(site.sha, qualifications=[held])})
+    later = qualification(site.sha, 'q-october-20', qualifiedAt='2026-10-20T00:00:00Z')
+    earlier = qualification(site.sha, 'q-october-01', qualifiedAt='2026-10-01T00:00:00Z')
+    site.client.post('/api/lens-library/register',
+                     json={'record': record_for(site.sha, qualifications=[later, held, earlier])})
+    assert [q.qualificationID for q in lens_store.resolve(LENS_ID, str(site.root)).qualifications] == [
+        'q-site', 'q-october-01', 'q-october-20']

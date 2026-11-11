@@ -10,12 +10,16 @@ file's own SHA-256 (a record's ``converted.sha256``):
     <root>/<sha>/jacobians.safetensors      the converted file
     <root>/<sha>/entry.json                 its size, origin, and date
     <root>/.incoming/<sha>/                 an upload in progress
+    <root>/.incoming/{publish,begin,damaged}-*   private folders, swept when idle
 
 The workspace stays the truth. The library is a cache of bytes: it holds no
 lens record, qualification, or result, and anything in it can be sent again
 from a workspace that has the lens. So an entry is created once and never
 edited, there is no delete verb, and a reader that finds no entry falls back
-to exactly what it did before the library existed.
+to exactly what it did before the library existed. A folder under a hash that
+is not a complete entry (storage purged its large file, or a publisher died)
+is set aside once it has been idle, so sending the lens again always works
+and nobody has to remove anything by hand.
 
 Bytes arrive three ways, recorded as an entry's ``origin``:
 
@@ -33,16 +37,19 @@ request closure and in ``qualification.verify_converted``.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import secrets
 import shutil
-import tempfile
 import threading
+import time
 
 from ..experiment import diagnostic_archives as archives
 
@@ -55,9 +62,24 @@ PART_MAX_BYTES = 256 * 1024**2
 #: A bound on an upload plan, far above any real lens (a part is at least one
 #: byte and, for a real file, one tensor or 256 MiB of one).
 MAX_PARTS = 65536
+#: A folder under a hash that is not a complete entry is left alone while
+#: anything in it changed this recently (a publisher may be at work), and set
+#: aside after that.
+STALE_ENTRY_SECONDS = 15 * 60
+#: An upload that has received nothing for this long may be replaced by one
+#: with a different plan of parts.
+IDLE_UPLOAD_SECONDS = 15 * 60
+#: A private folder a killed process left behind (a publication, the creation
+#: of an upload, an entry set aside) is removed once it has been idle a day.
+STALE_STAGING_SECONDS = 24 * 3600
+#: An upload nobody has added to for seven days is removed.
+STALE_UPLOAD_SECONDS = 7 * 24 * 3600
 _KEY = re.compile('[0-9a-f]{64}')
 _INDEX = re.compile('0|[1-9][0-9]{0,5}')
 _PUSH = '`remote lens-push {lens}` (or `runner lens-push`)'
+#: What to do with a lens on a site that moves large files with its own tool.
+ADOPT_REPAIR = ("Put the lens's `jacobians.safetensors` beneath this engine's run root with the site's transfer "
+                'tool, then run `lens-push <lensID> --adopt <the path of that copy>`.')
 
 _LOCKS: dict = {}
 _LOCKS_GUARD = threading.Lock()
@@ -78,7 +100,9 @@ def unavailable():
     return LensLibraryRefusal(
         'lensLibraryUnavailable',
         'This engine has no lens library: no folder is set for one, or the folder cannot be written.',
-        "Package the request without `--lens-reference`, or set the site profile's `lensLibrary` folder.")
+        'Package the request without `--lens-reference`, or give this engine a lens library: set '
+        "`STEERLAB_LENS_LIBRARY_ROOT` to a folder it can write (a site profile sets it from its `lensLibrary` "
+        'folder), then start the engine again.')
 
 
 def not_held(lens_id, sha, repair=None):
@@ -86,6 +110,35 @@ def not_held(lens_id, sha, repair=None):
         'lensNotInLibrary',
         f"This engine's lens library does not hold the lens '{lens_id}' (converted SHA-256 {sha}).",
         repair or ('Send the lens once with ' + _PUSH.format(lens=lens_id) + ', then stage the request again.'))
+
+
+def gone(lens_id, sha):
+    """The refusal for a lens whose converted file is in neither place: not
+    where the request runs, and not in the library. ``None`` on an engine with
+    no library, where a missing file is the missing input it always was."""
+    if root() is None or not isinstance(sha, str) or not _KEY.fullmatch(sha):
+        return None
+    return LensLibraryRefusal(
+        'lensNotInLibrary',
+        f"The lens '{lens_id}' has no converted file where this request runs, and this engine's lens library does "
+        f'not hold it (converted SHA-256 {sha}).',
+        'Send the lens again with ' + _PUSH.format(lens=lens_id) + ' from a workspace that has it, then try the '
+        'request again. If the lens was imported in the workspace this engine serves, importing it there again '
+        'also restores it.')
+
+
+def storage_refusal(exc):
+    """An operating-system failure in the library, said without an error
+    number or any of the engine's paths."""
+    if getattr(exc, 'errno', None) in (errno.ENOSPC, getattr(errno, 'EDQUOT', None)):
+        return LensLibraryRefusal(
+            'lensLibraryNoSpace', "The lens library's storage is full, so the request was not finished.",
+            "Free space on the lens library's storage, or ask the site's operator to, then try again.")
+    reason = getattr(exc, 'strerror', None) or type(exc).__name__
+    return LensLibraryRefusal(
+        'lensLibraryStorage', f"The lens library's storage refused the request ({reason}).",
+        "Try again. If it is refused the same way, ask the site's operator to check the lens library's folder "
+        'and who may write to it.')
 
 
 # --- where the library is, and what it holds ------------------------------------
@@ -261,17 +314,99 @@ def _opens_as_safetensors(path):
         return False
 
 
+def _idle_seconds(path):
+    """How long ago anything in a folder last changed: the newest modification
+    time of the folder and of everything in it. A folder that cannot be read
+    counts as changed now, so nothing is ever removed on a guess."""
+    try:
+        newest = os.lstat(path).st_mtime
+        for directory, folders, files in os.walk(path):
+            for name in folders + files:
+                newest = max(newest, os.lstat(os.path.join(directory, name)).st_mtime)
+    except OSError:
+        return 0.0
+    return max(0.0, time.time() - newest)
+
+
+def _sweep(incoming, keep=None):
+    """Remove what a killed process left for good: a private folder idle for
+    a day, and an upload nobody has added to for seven. Best effort, and
+    never the upload now being worked on (``keep``)."""
+    try:
+        names = os.listdir(incoming)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith(('publish-', 'begin-', 'damaged-')):
+            limit = STALE_STAGING_SECONDS
+        elif _KEY.fullmatch(name) and name != keep:
+            limit = STALE_UPLOAD_SECONDS
+        else:
+            continue
+        path = incoming / name
+        if path.is_dir() and not path.is_symlink() and _idle_seconds(path) >= limit:
+            _discard(path)
+
+
+def _private(incoming, prefix):
+    """A new private folder. Made with a plain ``mkdir``, so the process's
+    umask decides who may read what is later published from it, as it does
+    for any folder: a library several accounts share is readable by them."""
+    folder = incoming / (prefix + secrets.token_hex(8))
+    os.mkdir(folder)
+    return folder
+
+
 @contextmanager
-def _staging(base):
+def _staging(base, keep=None):
     """A private folder beside the entries, removed afterwards unless it was
-    published (publication renames it away)."""
+    published (publication renames it away). Making one is also when what
+    killed processes left behind is swept."""
     incoming = _under(base, INCOMING)
     incoming.mkdir(parents=True, exist_ok=True)
-    directory = Path(tempfile.mkdtemp(prefix='publish-', dir=incoming))
+    _sweep(incoming, keep)
+    directory = _private(incoming, 'publish-')
     try:
         yield directory
     finally:
         shutil.rmtree(directory, ignore_errors=True)
+
+
+def _busy(sha):
+    return LensLibraryRefusal(
+        'lensLibraryEntryBusy',
+        f'The lens library has an unfinished folder for this lens ({sha}) that changed within the last '
+        f'{STALE_ENTRY_SECONDS // 60} minutes: another copy of the lens is being published right now, or one '
+        'stopped part-way. Nothing was sent or added.',
+        f'Try again in a few minutes. A folder left unfinished is set aside by itself once it has been idle for '
+        f'{STALE_ENTRY_SECONDS // 60} minutes.')
+
+
+def _make_way(base, sha):
+    """Before bytes are sent or copied for a hash: deal with a folder under
+    that hash that is not a complete entry.
+
+    Storage that purges old files can remove an entry's large file and leave
+    its record; a publisher can die between claiming the name and filling it.
+    Either would otherwise cost a whole upload and then need an operator. A
+    folder idle for :data:`STALE_ENTRY_SECONDS` is moved aside inside the
+    library (one rename; swept later) and the caller carries on. One that
+    changed more recently may belong to a publisher at work, so the caller is
+    told to try again. A complete entry, or no folder, is left to the caller.
+    """
+    target = _under(base, sha)
+    if not target.exists() or _entry(base, sha) is not None:
+        return
+    if _idle_seconds(target) < STALE_ENTRY_SECONDS:
+        raise _busy(sha)
+    incoming = _under(base, INCOMING)
+    incoming.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(target, incoming / f'damaged-{sha}-{secrets.token_hex(8)}')
+    except OSError:
+        # Another process moved it aside, or published, in this instant.
+        if target.exists() and _entry(base, sha) is None:
+            raise _busy(sha) from None
 
 
 def _publish(base, staged, sha, origin):
@@ -282,6 +417,8 @@ def _publish(base, staged, sha, origin):
     create-only helper that also works where the filesystem has no
     no-replace rename. A name another writer already holds is never replaced;
     when that writer published the same bytes, their entry is the answer.
+    Callers clear an idle, incomplete folder first (:func:`_make_way`); the
+    check here is for the race that remains.
     """
     size = (staged / FILE_NAME).stat().st_size
     entry = {'schemaVersion': SCHEMA_VERSION, 'convertedSHA256': sha, 'bytes': size, 'origin': origin,
@@ -302,12 +439,7 @@ def _publish(base, staged, sha, origin):
             return found
         if not _under(base, sha).exists():
             raise               # nothing holds the name: the failure is the storage's own, and says so
-        raise LensLibraryRefusal(
-            'lensLibraryEntryBusy',
-            f'The lens library already has a folder for {sha} that is not a complete entry: another copy of this '
-            'lens is being published at this moment, or an earlier publication was interrupted.',
-            'Send the lens again in a minute. If it is refused again, ask the site\'s operator to remove the '
-            f'incomplete folder {sha} from the lens library.') from exc
+        raise _busy(sha) from exc
     return _entry(base, sha)
 
 
@@ -365,10 +497,41 @@ def _received(folder):
 
 
 def _discard(folder):
+    """Remove a private folder. An upload's plan goes first: a removal that is
+    cut short then leaves a folder with no plan, which the next ``begin``
+    starts clean, never one that answers a resume for parts that are gone."""
+    try:
+        (Path(folder) / 'manifest.json').unlink(missing_ok=True)
+    except OSError:
+        pass
     shutil.rmtree(folder, ignore_errors=True)
 
 
-def _not_begun(sha):
+def _create_upload(base, sha, plan):
+    """Create an upload folder whole: built privately, then given its name
+    with the create-only rename, so it exists with its plan or not at all.
+    False when another engine process created it in the same instant."""
+    incoming = _under(base, INCOMING)
+    incoming.mkdir(parents=True, exist_ok=True)
+    private = _private(incoming, 'begin-')
+    try:
+        for name in ('received', 'spool'):
+            os.mkdir(private / name)
+        with open(private / 'data', 'xb') as stream:
+            stream.truncate(plan['bytes'])
+        (private / 'manifest.json').write_bytes(archives.encoded(plan))
+        try:
+            archives.publish_directory(private, _under(base, f'{INCOMING}/{sha}'))
+        except OSError as exc:
+            if exc.errno in (errno.EEXIST, errno.ENOTEMPTY):
+                return False
+            raise
+        return True
+    finally:
+        shutil.rmtree(private, ignore_errors=True)
+
+
+def not_begun(sha):
     return LensLibraryRefusal(
         'lensUploadNotBegun',
         f'No upload is in progress for {sha}: none was begun, or it was discarded.',
@@ -392,50 +555,69 @@ def status(sha):
 def begin(sha, body):
     """Begin an upload, or resume one: answers which parts are still missing.
 
-    The same plan again changes nothing. A different plan for an upload in
-    progress is refused, because the parts already received were checked
-    against the first one.
+    The same plan again changes nothing. A different plan is refused while
+    the upload in progress is still receiving, because its parts were checked
+    against the first plan; once that upload has received nothing for
+    :data:`IDLE_UPLOAD_SECONDS` it is replaced. An upload folder is created
+    whole (:func:`_create_upload`), so two engine processes beginning at once
+    end with one upload: the one that loses reads the winner's plan and
+    answers as a resume.
     """
     sha = _key(sha)
     plan = _manifest(sha, body, part_max_bytes())
     base = _writing()
     with _locked(sha):
-        folder, current = _upload(base, sha)
-        if _entry(base, sha) is not None:
-            _discard(folder)
-            return {'held': True, 'missingParts': []}
-        if current is not None and current != plan:
-            raise LensLibraryRefusal(
-                'lensUploadPlanDiffers',
-                'An upload of this lens is in progress with a different plan of parts, and its received parts were '
-                'checked against that plan.',
-                'Send the lens with the same client version and the same part size the upload began with. If this '
-                "engine's part size has changed since, ask the site's operator to remove the unfinished upload "
-                f'folder {INCOMING}/{sha} from the lens library, then run `lens-push` again.')
-        received = _received(folder) if current is not None else set()
-        missing = [part['index'] for part in plan['parts'] if part['index'] not in received]
-        needed = sum(plan['parts'][index]['bytes'] for index in missing) + max(part['bytes'] for part in plan['parts'])
-        free = shutil.disk_usage(base).free
-        if free < needed:
-            raise LensLibraryRefusal(
-                'lensLibraryNoSpace',
-                f'The lens library has {free} bytes free, and receiving this lens needs {needed}. Nothing was begun.',
-                "Free space on the lens library's storage, or ask the site's operator to, then run `lens-push` again.")
-        if current is None:
-            # No plan was ever published here, so nothing in the folder was
-            # checked against one: start from an empty folder.
-            _discard(folder)
-            for name in ('received', 'spool'):
-                (folder / name).mkdir(parents=True, exist_ok=True)
-            with open(folder / 'data', 'xb') as stream:
-                stream.truncate(plan['bytes'])
-            staged = folder / ('manifest-' + secrets.token_hex(8))
-            staged.write_bytes(archives.encoded(plan))
-            try:
-                archives.publish_file(staged, folder / 'manifest.json')
-            finally:
-                staged.unlink(missing_ok=True)
-        return {'held': False, 'missingParts': missing}
+        for _ in range(4):
+            folder, current = _upload(base, sha)
+            if _entry(base, sha) is not None:
+                _discard(folder)
+                return {'held': True, 'missingParts': []}
+            if current is not None and not ((folder / 'data').is_file() and (folder / 'received').is_dir()
+                                            and (folder / 'spool').is_dir()):
+                # A plan whose working files are gone cannot be resumed.
+                _discard(folder)
+                current = None
+            # A folder under this hash that is not an entry: set aside when
+            # idle, refused when fresh, before a byte is sent.
+            _make_way(base, sha)
+            if current is not None and current != plan:
+                if _idle_seconds(folder) < IDLE_UPLOAD_SECONDS:
+                    raise LensLibraryRefusal(
+                        'lensUploadPlanDiffers',
+                        'An upload of this lens is in progress with a different plan of parts, and its received '
+                        'parts were checked against that plan.',
+                        'Send the lens with the same client and the same part size that upload began with, or '
+                        f'wait until the unfinished upload has been idle for {IDLE_UPLOAD_SECONDS // 60} minutes; '
+                        'it is then replaced when you run `lens-push` again.')
+                _discard(folder)
+                current = None
+            received = _received(folder) if current is not None else set()
+            missing = [part['index'] for part in plan['parts'] if part['index'] not in received]
+            needed = sum(plan['parts'][i]['bytes'] for i in missing) + max(part['bytes'] for part in plan['parts'])
+            free = shutil.disk_usage(base).free
+            if free < needed:
+                raise LensLibraryRefusal(
+                    'lensLibraryNoSpace',
+                    f'The lens library has {free} bytes free, and receiving this lens needs {needed}. Nothing was '
+                    'begun.',
+                    "Free space on the lens library's storage, or ask the site's operator to, then run `lens-push` "
+                    'again.')
+            if current is not None:
+                return {'held': False, 'missingParts': missing}
+            if folder.exists() and not (folder / 'manifest.json').exists():
+                # A folder with no plan: nothing in it was ever checked
+                # against one (a removal cut short, or debris). Start clean.
+                # An upload is created whole, so a folder that has a plan by
+                # now is another process's new upload, and is left alone.
+                _discard(folder)
+            if _create_upload(base, sha, plan):
+                return {'held': False, 'missingParts': missing}
+            # Another engine process created the upload in this instant: go
+            # round again, read its plan, and answer as a resume.
+        raise LensLibraryRefusal(
+            'lensUploadBusy',
+            'Another sender is beginning an upload of this lens at this moment, and this request could not join it.',
+            'Run `lens-push` again; it sends only the parts that are missing.')
 
 
 def expect_part(sha, index, declared):
@@ -450,7 +632,7 @@ def expect_part(sha, index, declared):
         return None
     _, plan = _upload(base, sha)
     if plan is None:
-        raise _not_begun(sha)
+        raise not_begun(sha)
     if int(index) >= len(plan['parts']):
         raise LensLibraryRefusal('lensUploadPartInvalid',
                                  f"The upload plan has {len(plan['parts'])} parts; there is no part {index}.",
@@ -470,9 +652,10 @@ def spool(sha):
     """A private file for one arriving part. A part is checked there and only
     then copied into the upload, so a damaged part never touches bytes that
     were already checked."""
-    folder = _under(_writing(), f'{INCOMING}/{_key(sha)}/spool')
+    base = _writing()
+    folder = _under(base, f'{INCOMING}/{_key(sha)}/spool')
     if not folder.is_dir():
-        raise _not_begun(sha)
+        raise not_begun(sha)
     path = folder / secrets.token_hex(8)
     try:
         yield path
@@ -501,20 +684,27 @@ def commit_part(sha, part, spooled, digest, received_bytes):
             return
         folder, plan = _upload(base, sha)
         if plan is None or index >= len(plan['parts']) or plan['parts'][index] != part:
-            raise _not_begun(sha)
+            raise not_begun(sha)
         mark = folder / 'received' / str(index)
         if mark.exists():
             return
-        with open(folder / 'data', 'r+b') as target, open(spooled, 'rb') as source:
-            target.seek(part['offset'])
-            shutil.copyfileobj(source, target, 1024 * 1024)
-            target.flush()
-            os.fsync(target.fileno())
         try:
-            with open(mark, 'x'):
+            with open(folder / 'data', 'r+b') as target, open(spooled, 'rb') as source:
+                target.seek(part['offset'])
+                shutil.copyfileobj(source, target, 1024 * 1024)
+                target.flush()
+                os.fsync(target.fileno())
+            try:
+                with open(mark, 'x'):
+                    pass
+            except FileExistsError:
                 pass
-        except FileExistsError:
-            pass
+        except FileNotFoundError:
+            # Another engine process finished this upload and removed its
+            # folder in this instant: the lens is held, or the upload is gone.
+            if _entry(base, sha) is None:
+                _discard(folder)
+                raise not_begun(sha) from None
 
 
 def complete(sha):
@@ -534,7 +724,7 @@ def complete(sha):
             _discard(folder)
             return {'held': True, 'bytes': found['bytes']}
         if plan is None:
-            raise _not_begun(sha)
+            raise not_begun(sha)
         missing = sorted(set(range(len(plan['parts']))) - _received(folder))
         if missing:
             raise LensLibraryRefusal(
@@ -542,33 +732,50 @@ def complete(sha):
                 f"{len(missing)} of {len(plan['parts'])} parts have not arrived (the first is part {missing[0]}), "
                 'so the lens was not added.',
                 'Run `lens-push` again; it sends only the parts that are missing.')
-        data = folder / 'data'
-        if not data.is_file():
-            _discard(folder)
-            raise _not_begun(sha)
-        if data.stat().st_size != plan['bytes'] or _hash(data) != sha:
-            _discard(folder)
-            raise LensLibraryRefusal(
-                'lensUploadMismatch',
-                'The uploaded file does not have the SHA-256 it was sent under, so the upload was discarded and '
-                'nothing was added to the lens library.',
-                'Run `lens-push` again; it sends the lens from the start. If it is refused the same way, the lens '
-                "file on your machine no longer matches its record: restore or re-import the lens first.")
-        if not _opens_as_safetensors(data):
-            _discard(folder)
-            raise LensLibraryRefusal(
-                'lensUploadNotSafetensors',
-                'The uploaded file does not open as a safetensors file, so the upload was discarded and nothing was '
-                'added to the lens library.',
-                "Send a lens's converted file (`jacobians.safetensors` in its lens folder) with `lens-push`.")
-        with _staging(base) as staged:
-            try:
-                os.link(data, staged / FILE_NAME)
-            except OSError:
-                shutil.copyfile(data, staged / FILE_NAME)
-            found = _publish(base, staged, sha, 'pushed')
+        try:
+            found = _check_and_publish(base, sha, folder, plan)
+        except FileNotFoundError:
+            # Another engine process finished this same upload and removed its
+            # folder while this one was checking it: the lens is held, or the
+            # upload is gone. Never an error number or a path of the engine's.
+            found = _entry(base, sha)
+            if found is None:
+                _discard(folder)
+                raise not_begun(sha) from None
         _discard(folder)
         return {'held': True, 'bytes': found['bytes']}
+
+
+def _check_and_publish(base, sha, folder, plan):
+    def discarded(code, what, repair):
+        _discard(folder)
+        return LensLibraryRefusal(
+            code, f'The uploaded file {what}, so the upload was discarded and nothing was added to the lens library.',
+            repair)
+    mismatch = ('does not have the SHA-256 it was sent under',
+                'Run `lens-push` again; it sends the lens from the start. If it is refused the same way, the lens '
+                'file on your machine no longer matches its record: restore or re-import the lens first.')
+    data = folder / 'data'
+    if data.stat().st_size != plan['bytes']:
+        raise discarded('lensUploadMismatch', *mismatch)
+    _make_way(base, sha)
+    with _staging(base, keep=sha) as staged:
+        target = staged / FILE_NAME
+        try:
+            os.link(data, target)
+        except FileNotFoundError:
+            raise
+        except OSError:
+            shutil.copyfile(data, target)    # storage that cannot link: publish a copy
+        # The file that is published is the file that was hashed: the link or
+        # the copy in the staging folder, never the upload it was made from.
+        if _hash(target) != sha:
+            raise discarded('lensUploadMismatch', *mismatch)
+        if not _opens_as_safetensors(target):
+            raise discarded('lensUploadNotSafetensors', 'does not open as a safetensors file',
+                            "Send a lens's converted file (`jacobians.safetensors` in its lens folder) with "
+                            '`lens-push`.')
+        return _publish(base, staged, sha, 'pushed')
 
 
 # --- bytes already on the site ---------------------------------------------------
@@ -581,31 +788,44 @@ def adopt(path, sha, run_root):
 
     Copied, never linked: an entry is never edited, and a link would change
     with its source the next time a transfer wrote over that file in place.
-    The source is left alone, and can be removed once the lens is held."""
+    The source is left alone, and can be removed once the lens is held.
+
+    ``run_root`` is the run root as the site spells it. A site's storage is
+    often reached through a symbolic link, so an absolute path is accepted
+    beneath that spelling or beneath the resolved one; a symbolic link is
+    refused only below the root, as it is for import sources."""
     sha = _key(sha)
     base = _writing()
 
-    def refused(code, message):
-        return LensLibraryRefusal(
-            code, message,
-            "Put the lens's converted file (`jacobians.safetensors`) beneath this engine's run root with the "
-            "site's transfer tool, then name that file and its `converted.sha256`.", status=400)
+    def refused(message):
+        return LensLibraryRefusal('lensAdoptPathInvalid', message, ADOPT_REPAIR, status=400)
     if not isinstance(path, str) or not path or '\0' in path:
-        raise refused('lensAdoptPathInvalid', 'Name the file to adopt as a path beneath the run root.')
-    anchor = Path(run_root).resolve()
-    source = Path(path) if os.path.isabs(path) else anchor / path
+        raise refused('Name the file to adopt as a path beneath the run root.')
+    configured = Path(os.path.abspath(run_root))
+    anchor = configured.resolve()
+    relative = None
+    if os.path.isabs(path):
+        for spelling in (configured, anchor):
+            try:
+                relative = Path(path).relative_to(spelling).as_posix()
+                break
+            except ValueError:
+                continue
+    else:
+        relative = Path(path).as_posix()
     try:
-        relative = source.relative_to(anchor).as_posix()
+        if relative is None:
+            raise ValueError
         file = archives.ordinary(anchor, relative)
     except (ValueError, archives.Refusal) as exc:
-        raise refused('lensAdoptPathInvalid',
-                      "The file to adopt must be an ordinary file beneath this engine's run root, reached without "
-                      'a symbolic link.') from exc
+        raise refused("The file to adopt must be an ordinary file beneath this engine's run root, with no "
+                      'symbolic link below that root.') from exc
     if not file.is_file():
-        raise refused('lensAdoptPathInvalid', 'There is no ordinary file at that path beneath the run root.')
+        raise refused('There is no ordinary file at that path beneath the run root.')
     with _locked(sha):
         found = _entry(base, sha)
         if found is None:
+            _make_way(base, sha)
             needed, free = file.stat().st_size, shutil.disk_usage(base).free
             if free < needed:
                 raise LensLibraryRefusal(
@@ -631,41 +851,118 @@ def adopt(path, sha, run_root):
 
 # --- a lens record on the site ---------------------------------------------------
 
-def register(document, workspace_root):
-    """Put a lens record in a workspace's lens store, for a lens whose bytes
+def _non_finite(value, where='the record'):
+    """Where a JSON value first holds a number that is not finite, or None."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return where
+    if isinstance(value, dict):
+        for name, item in value.items():
+            found = _non_finite(item, f'{where}.{name}')
+            if found:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for position, item in enumerate(value):
+            found = _non_finite(item, f'{where}[{position}]')
+            if found:
+                return found
+    return None
+
+
+def _finite(value):
+    """A JSON value with every number that is not finite replaced by null: how
+    a record is sent, so how a stored one is read when the two are compared."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {name: _finite(item) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(item) for item in value]
+    return value
+
+
+def _parse_record(document):
+    """``(record, None)``, or ``(None, which part of the record is unusable)``."""
+    from .schemas import ConvertedRef, FitProvenance, JLensRecord, Qualification, SourceRef
+    for name, kind, required in (('source', SourceRef, True), ('fit', FitProvenance, False),
+                                 ('converted', ConvertedRef, True)):
+        block = document.get(name)
+        if block is None and not required:
+            continue
+        try:
+            if not isinstance(block, dict):
+                raise TypeError
+            kind(**block)
+        except TypeError:
+            return None, f'its `{name}` block is missing, lacks a field, or has one a lens record does not have'
+    listed = document.get('qualifications') or []
+    if not isinstance(listed, list):
+        return None, 'its `qualifications` are not a list'
+    for position, entry in enumerate(listed):
+        try:
+            if not isinstance(entry, dict):
+                raise TypeError
+            Qualification(**entry)
+        except TypeError:
+            return None, (f'qualification {position} in its `qualifications` lacks a field, or has one a '
+                          'qualification does not have')
+    try:
+        return JLensRecord.from_dict(document), None
+    except (TypeError, ValueError, AttributeError, KeyError):
+        return None, 'it lacks one of `sourceLayers`, `dModel`, `targetLayer`, and `nPrompts`'
+
+
+def register(document):
+    """Put a lens record in this engine's lens store, for a lens whose bytes
     the library holds, so anything that resolves a lens by name finds it.
+
+    The store is the one the engine's own lens importer writes, and its lens
+    routes and study runs read: ``lens_store`` with no root, which follows
+    ``STEERLAB_RUN_ROOT``. The write, the comparison with a record already
+    there, and the appended qualifications all use that one place.
 
     A new record is written once, create-only, with its converted path made
     the canonical workspace-relative one: an absolute path from another
-    machine never reaches the site. A record the workspace already has, for
-    the same bytes, gains any qualification it lacks and is otherwise left as
-    it is. The same name for different bytes is refused.
+    machine never reaches the site. A record the store already has, for the
+    same bytes, gains any qualification it lacks and is otherwise left as it
+    is. The same name for different bytes is refused.
     """
     from . import lens_store, qualification
-    from .schemas import JLensError, JLensRecord, write_record
+    from ..experiment import paths
+    from .schemas import JLensError, write_record
 
-    def invalid(message):
-        return LensLibraryRefusal('lensRecordInvalid', message,
-                                  'Send the record with `lens-push`, which reads it from the lens folder.', status=400)
-    lens_id = document.get('lensID') if isinstance(document, dict) else None
+    def invalid(part, repair=None):
+        return LensLibraryRefusal(
+            'lensRecordInvalid', f'The lens record cannot be used: {part}.',
+            repair or 'Import the lens again on your machine, so that it has a complete record, then send it with '
+                      '`lens-push`.', status=400)
+    if not isinstance(document, dict):
+        raise invalid('it is not a JSON object')
+    unfinished = _non_finite(document)
+    if unfinished:
+        raise invalid(
+            f'it holds a number that is not finite (NaN or infinity) at {unfinished}, and a lens record sent to a '
+            'site carries no such number',
+            'Update the client that sent it: current clients send null in place of such a number.')
+    lens_id = document.get('lensID')
     try:
         if not isinstance(lens_id, str) or len(archives.parts(lens_id)) != 1 or lens_id.startswith('.'):
             raise ValueError
-        record = JLensRecord.from_dict(document)
-    except (ValueError, TypeError, AttributeError, KeyError) as exc:
-        raise invalid('This is not a lens record (`lens.json`) with a usable lens name.') from exc
+    except ValueError as exc:
+        raise invalid('its `lensID` is missing, or is not a single lens name') from exc
+    record, unusable = _parse_record(document)
+    if record is None:
+        raise invalid(unusable)
     converted = record.converted
-    if (converted is None or not isinstance(converted.sha256, str) or not _KEY.fullmatch(converted.sha256)
-            or not isinstance(record.source.tensorSHA256, str) or not record.source.tensorSHA256
-            or not isinstance(converted.path, str)):
-        raise invalid('The lens record must name its converted file, that file\'s SHA-256, and the SHA-256 of the '
-                      'source tensor it was imported from.')
+    if not isinstance(converted.sha256, str) or not _KEY.fullmatch(converted.sha256):
+        raise invalid('its `converted.sha256` is not a SHA-256 (64 lowercase hexadecimal characters)')
+    if not isinstance(record.source.tensorSHA256, str) or not record.source.tensorSHA256:
+        raise invalid('its `source.tensorSHA256`, the hash of the tensor it was imported from, is missing')
     suffix = ('runs', 'jlens-lenses', lens_id, FILE_NAME)
     canonical = '/'.join(suffix)
     if converted.path != canonical:
-        given = Path(converted.path)
-        if not given.is_absolute() or given.parts[-4:] != suffix:
-            raise invalid(f"The record's converted file must be {canonical}; it names another location.")
+        given = Path(converted.path) if isinstance(converted.path, str) else None
+        if given is None or not given.is_absolute() or given.parts[-4:] != suffix:
+            raise invalid(f"its `converted.path` does not name the lens's own converted file, {canonical}")
         converted.path = canonical
     base = root()
     if base is None:
@@ -674,9 +971,9 @@ def register(document, workspace_root):
         raise not_held(lens_id, converted.sha256,
                        'Send the lens with ' + _PUSH.format(lens=lens_id)
                        + ': it sends the bytes first, then the record.')
-    workspace = Path(workspace_root).resolve()
     try:
-        target = archives.ordinary(workspace, canonical.rsplit('/', 1)[0] + '/' + lens_store.RECORD_NAME, missing=True)
+        target = archives.ordinary(paths.jlens_lenses_directory(None), f'{lens_id}/{lens_store.RECORD_NAME}',
+                                   missing=True)
     except archives.Refusal as exc:
         raise LensLibraryRefusal(
             'lensRecordNotOrdinary',
@@ -696,11 +993,15 @@ def register(document, workspace_root):
             finally:
                 staged.unlink(missing_ok=True)
         try:
-            existing = lens_store.resolve(lens_id, str(workspace))
-        except JLensError as exc:
+            existing = lens_store.resolve(lens_id)
+        except JLensError:
             raise LensLibraryRefusal(
-                'lensRecordUnreadable', f"The site's record for the lens '{lens_id}' cannot be read: {exc}",
-                "Ask the site's operator to repair or remove that lens folder, then send the lens again.") from exc
+                'lensRecordUnreadable',
+                f"The site has a record for a lens named '{lens_id}' that cannot be read, so the two could not be "
+                'compared. Nothing was changed.',
+                "Ask the site's operator to repair or remove that lens's folder in the engine's lens store, then "
+                'send the lens again. A request packaged with `--lens-reference` carries its own record and does '
+                'not depend on this registration.') from None
         ours = (converted.sha256, record.source.tensorSHA256)
         theirs = (existing.converted.sha256 if existing.converted else None, existing.source.tensorSHA256)
         if ours != theirs:
@@ -709,29 +1010,36 @@ def register(document, workspace_root):
                 f"The site already has a lens named '{lens_id}' for different bytes. The site's record has converted "
                 f'SHA-256 {theirs[0]} and source tensor SHA-256 {theirs[1]}; the record sent has converted SHA-256 '
                 f'{ours[0]} and source tensor SHA-256 {ours[1]}. Nothing was changed.',
-                'One lens name stands for one set of bytes. Use the lens the site has, or import your lens again so '
-                'it gets its own name, then send it under that name.')
-        known = {entry.qualificationID: entry for entry in existing.qualifications}
+                'One lens name stands for one set of bytes. Use the lens the site has under that name. A request '
+                'packaged with `--lens-reference` carries its own record and does not depend on this registration.')
+        # A stored qualification may hold NaN (a score that could not be
+        # computed); a record is sent with null in its place. Both are read
+        # that way here, so the same qualification is never called different.
+        known = {entry.qualificationID: _finite(asdict(entry)) for entry in existing.qualifications}
         added = []
         for entry in record.qualifications:
+            sent = _finite(asdict(entry))
             if entry.qualificationID not in known:
                 added.append(entry)
-                known[entry.qualificationID] = entry     # the same entry twice in one record is added once
-            elif known[entry.qualificationID] != entry:
+                known[entry.qualificationID] = sent      # the same entry twice in one record is added once
+            elif known[entry.qualificationID] != sent:
                 raise LensLibraryRefusal(
                     'lensQualificationDiffers',
                     f"The site's record for the lens '{lens_id}' already has a qualification "
                     f'{entry.qualificationID} with different content. Nothing was changed.',
                     'A qualification is never replaced. Compare the two records. If yours is the one to keep, run '
                     'the qualification again so it gets its own ID, then send the lens again.')
-        for entry in added:
-            qualification.append_qualification(existing, entry, root=str(workspace))
+        # Appended in date order among themselves. What the site already has
+        # keeps its order: `append_qualification` only appends, and is called,
+        # not edited.
+        for entry in sorted(added, key=lambda entry: str(entry.qualifiedAt)):
+            qualification.append_qualification(existing, entry)
         return {'lensID': lens_id, 'registered': True, 'changed': bool(added)}
 
 
 # --- a lens fitted here stays here -----------------------------------------------
 
-def keep_fitted(run_directory):
+def keep_fitted(run_directory, execution_root=None):
     """After a fit: convert its output as an import would, and keep the
     converted bytes under the hash that import will record.
 
@@ -740,28 +1048,49 @@ def keep_fitted(run_directory):
     what the import produces. Best effort by construction: nothing in the run
     directory is written, and no failure here reaches the fit. Returns the
     ``lensLibrary`` block of the job's result.
+
+    Nothing is kept when the library lies inside ``execution_root``, the root
+    the fit ran in: a local engine serving its own workspace already holds
+    the fit there, and a workspace file always wins over the library, so the
+    copy would be a second full lens no reader uses. Nor when the library has
+    no room for it.
     """
+    def skipped(reason):
+        return {'kept': False, 'convertedSHA256': None, 'reason': reason}
     try:
         base = root()
-        if base is None or not writable(base):
-            return {'kept': False, 'convertedSHA256': None,
-                    'reason': 'This engine has no lens library, so the fitted lens stays in its run folder only.'}
+        if base is None:
+            return skipped('No folder is set for a lens library on this engine, so the fitted lens stays in its run '
+                           'folder only.')
+        if not writable(base):
+            return skipped('The lens library folder set for this engine cannot be written from the node this fit '
+                           'ran on, so the fitted lens stays in its run folder only.')
+        if execution_root is not None and base.resolve().is_relative_to(Path(execution_root).resolve()):
+            return skipped('The lens library lies inside the workspace this fit ran in, which already holds the '
+                           'fit, so no second copy was made.')
         from ..experiment import artifact_imports, artifact_sources
         spec, files = artifact_sources.description(Path(run_directory) / 'artifact-description.json')
         if spec.get('kind') != 'jlens':
             raise ValueError('the run describes no lens to import')
+        base.mkdir(parents=True, exist_ok=True)
+        base = base.resolve()
+        needed, free = files['tensorFile'].stat().st_size, shutil.disk_usage(base).free
+        if free < needed:
+            return skipped(f'The lens library has {free} bytes free, and this lens needs about {needed}, so it was '
+                           'not added; the fit itself is unaffected.')
         tensors = artifact_sources.read_tensors(files['tensorFile'], artifact_imports.tensor_keys(spec))
         # The import's own checks: a fit an import would refuse is not kept.
         artifact_imports.lens_details(spec, tensors)
-        base.mkdir(parents=True, exist_ok=True)
-        base = base.resolve()
         with _staging(base) as staged:
             artifact_imports.convert_lens(spec, tensors, staged / FILE_NAME)
             sha = _hash(staged / FILE_NAME)
             with _locked(sha):
                 if _entry(base, sha) is None:
+                    # The key exists only now, so this is the first moment a
+                    # folder under it that is not an entry can be dealt with.
+                    _make_way(base, sha)
                     _publish(base, staged, sha, 'fitted')
         return {'kept': True, 'convertedSHA256': sha, 'reason': None}
     except Exception as exc:  # noqa: BLE001 - keeping a copy must never fail the fit
-        return {'kept': False, 'convertedSHA256': None,
-                'reason': f'The fitted lens was not added to the lens library ({exc}); the fit itself is unaffected.'}
+        said = str(storage_refusal(exc) if isinstance(exc, OSError) else exc).rstrip('.')
+        return skipped(f'The fitted lens was not added to the lens library ({said}); the fit itself is unaffected.')

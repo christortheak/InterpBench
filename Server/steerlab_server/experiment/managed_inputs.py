@@ -21,8 +21,11 @@ REFERRED = True
 #: WHERE_HELD: where a request runs. A converted file present in the workspace
 #: is carried, exactly as above. One that is absent is taken from the
 #: engine's lens library when that holds the record's hash (an existence and
-#: size check here; `verify_library` hashes it, once, on the queued job), and
-#: is otherwise the same missing input it always was.
+#: size check here; `verify_library` hashes it, once, on the queued job).
+#: Only a record in the importer's canonical layout can be answered by the
+#: library, by the one rule the reader uses (`artifact_paths.library_eligible`):
+#: a plan that names the library's bytes is always read from the library. Any
+#: other record is planned, and refused, exactly as before a library existed.
 WHERE_HELD = 'whereHeld'
 
 
@@ -53,12 +56,18 @@ def inventory(operation, config, root, *, lens_reference=CARRIED, referred=None,
         # The workspace's own file only: the site's lens library is consulted
         # below, by name, and never stands in for a carried file.
         selected = Path(artifact_paths.converted_file(value, converted['path'], str(root), library=False))
-        if lens_reference == WHERE_HELD and not (selected.is_relative_to(root) and selected.is_file()):
+        if (lens_reference == WHERE_HELD and artifact_paths.library_eligible(value, converted['path'])
+                and not artifact_paths.in_workspace(selected, root)):
             from ..jlens import lens_library
             held = lens_library.reference(value, converted.get('sha256'), verify=verify_library)
             if held is not None:
                 referred[value] = held
                 return
+            # In neither place. On an engine with a library that is said by
+            # name, with the repair that works (send the lens again); with no
+            # library it is the missing input it always was, below.
+            gone = lens_library.gone(value, converted.get('sha256'))
+            if gone is not None: raise gone
         if not selected.is_relative_to(root): raise archives.Refusal('Managed lenses require converted tensors in the workspace lens library.')
         relative = selected.relative_to(root).as_posix()
         if lens_reference is REFERRED:

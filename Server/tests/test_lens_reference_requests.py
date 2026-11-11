@@ -32,7 +32,7 @@ from steerlab_server.experiment import jlens_probe_batch as batch
 from steerlab_server.jlens import lens_library, lens_store, probe, schemas
 from steerlab_server.steering import model_loader
 from test_jlens_probe_batch import PROMPTS, config_for, managed, tiny_model, workspace  # noqa: F401 - fixtures
-from test_lens_library import digest, push
+from test_lens_library import UNAVAILABLE_REPAIR, digest, push
 from test_optvec_jspace import LENS_ID, _RandomLensSource
 from test_scientific_execution import setup  # noqa: F401 - fixture
 
@@ -226,9 +226,7 @@ def test_a_probe_batch_reads_a_lens_the_site_holds_and_the_request_does_not_carr
                  lambda: scientific_execution.plan(staged['request'], profile)):
         with pytest.raises(lens_library.LensLibraryRefusal) as refused:
             call()
-        assert refused.value.code == 'lensLibraryUnavailable'
-        assert refused.value.repair_action == ("Package the request without `--lens-reference`, or set the site "
-                                               "profile's `lensLibrary` folder.")
+        assert refused.value.code == 'lensLibraryUnavailable' and refused.value.repair_action == UNAVAILABLE_REPAIR
 
 
 def test_the_flag_reaches_the_plan_and_the_archive_through_the_workspace_action(managed):
@@ -369,9 +367,203 @@ def test_a_readout_and_an_unstaged_request_resolve_a_registered_lens(workspace, 
     packet.write_text(json.dumps(plan))
     assert scientific_execution.execute_packet(packet, 'unstaged', record_file) == 0
     assert json.loads(record_file.read_text())['result']['prompts'] == len(PROMPTS)
-    # A lens the library never held is the missing input it always was, in every mode.
+    # The registered lens has left the library: said by name, with the repair that works (send it again),
+    # where the old answer spoke of staging and offered a repair that could not help.
     shutil.rmtree(lens_library.root() / sha)
-    with pytest.raises(archives.PathRefusal, match='missing'):
-        managed_inputs.plan(request, site, managed_inputs.WHERE_HELD)
+    app = FastAPI()
+    app.include_router(build_scientific_execution_router(SimpleNamespace(jobs=None, registry=None)))
+    response = TestClient(app).post('/api/science/plan', json=request)
+    assert response.status_code == 409, response.text
+    detail = response.json()['detail']
+    assert detail['code'] == 'lensNotInLibrary' and LENS_ID in detail['reason'] and sha in detail['reason']
+    assert 'no converted file where this request runs' in detail['reason'] and 'staged' not in detail['reason']
+    assert f'`remote lens-push {LENS_ID}` (or `runner lens-push`)' in detail['repairAction']
+    assert 'localRequestPath' not in detail['repairAction']
     with pytest.raises(schemas.JLensError, match='missing'):
         lens_store.load_layer(record, 0, root=str(site))
+    # On an engine with no library at all, a missing file is the missing input it always was.
+    monkeypatch.setenv('SLURM_JOB_ID', '1')
+    with pytest.raises(archives.PathRefusal, match='Required input or output is missing'):
+        managed_inputs.plan(request, site, managed_inputs.WHERE_HELD)
+
+
+# --- fix round 1: the plan and the reader agree about where a lens's bytes come from ---
+
+def test_a_record_naming_a_file_outside_the_importers_layout_is_never_answered_by_the_library(managed, tmp_path):
+    """The crafted archive of review finding 1. Its lens record names a hash the library holds and an absolute
+    path, existing on the engine's host, that is not a lens folder. Planned from the library and read from that
+    path, the job would compute from bytes nobody hashed; so such a record is never planned from the library."""
+    root, profile = managed
+    request = probe_request(root)
+    lens = root / CONVERTED
+    sha, size = push(library_client(), lens)[0], lens.stat().st_size
+    outside = tmp_path / 'outside' / 'unhashed.safetensors'
+    outside.parent.mkdir()
+    outside.write_bytes(bytes(size))                       # the same size, and not the lens
+    outside.chmod(0)                                       # anything that opened it would fail loudly
+    record = json.loads((root / RECORD).read_text())
+    record['converted']['path'] = str(outside)
+    crafted = tmp_path / 'crafted'
+    (crafted / 'prompts').mkdir(parents=True)
+    (crafted / RECORD).parent.mkdir(parents=True)
+    shutil.copy(root / 'prompts/probe-set.jsonl', crafted / 'prompts/probe-set.jsonl')
+    (crafted / RECORD).write_text(json.dumps(record))
+    context = {'request': request, 'sourcePlanSHA256': 'f' * 64, 'lensReference': True,
+               'libraryLenses': [{'lensID': LENS_ID, 'convertedSHA256': sha, 'bytes': size}]}
+    packed = archives.package(crafted, ['prompts/probe-set.jsonl', RECORD], root / 'runs/crafted.tar.gz',
+                              kind='diagnosticInput', context=context)
+    old_refusal = 'Managed lenses require converted tensors in the workspace lens library.'
+    with pytest.raises(archives.Refusal, match=old_refusal) as refused:
+        transport.stage(packed['bundlePath'], packed['bundleSha256'], profile)
+    assert not isinstance(refused.value, lens_library.LensLibraryRefusal)
+    assert not (root / 'runs' / ('diagnostic-input-' + packed['bundleSha256'])).exists()
+    # The same record in the workspace an engine serves: refused in every mode, as before a library existed.
+    (root / RECORD).write_text(json.dumps(record))
+    for mode in (managed_inputs.CARRIED, managed_inputs.REFERRED, managed_inputs.WHERE_HELD):
+        with pytest.raises(archives.Refusal, match=old_refusal):
+            managed_inputs.plan(request, root, mode)
+    with pytest.raises(archives.Refusal, match=old_refusal):
+        scientific_execution.plan(request, profile)
+    # The reader agrees: asked for that record's file, it names the path the record names, never the library's.
+    from steerlab_server.jlens import artifact_paths
+    assert artifact_paths.converted_file(LENS_ID, str(outside), str(root)) == str(outside)
+    outside.chmod(0o600)
+
+
+# --- fix round 1: the engine's library, wherever a job or a child is pointed ------
+
+def test_a_job_reads_the_engines_library_and_a_lost_entry_costs_no_result(managed, monkeypatch, tmp_path):
+    import time
+    from steerlab_server.api import diagnostic_cleanup as cleanup
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    root, _ = managed
+    # The engine keeps its records, and so its library, beside its root; a job is pointed at an execution
+    # copy with a root of its own, and must still read the engine's library, not look for one beside the copy.
+    monkeypatch.delenv('STEERLAB_METADATA_ROOT')
+    profile = ServerProfile.from_env()
+    assert profile.lens_library_root == str(root / '.steerlab/lens-library')
+    request = probe_request(root)
+    referred = diagnostic_inputs.plan(request, root, lens_reference=True)
+    packed = diagnostic_inputs.package(request, root, root / 'runs/referred.tar.gz', referred['planSHA256'], lens_reference=True)
+    sha = push(library_client(), root / CONVERTED)[0]
+    staged = transport.stage(packed['bundlePath'], packed['bundleSha256'], profile)
+    admitted, code, record = run_staged(staged, profile, root, monkeypatch, 'referred')
+    assert code == 0 and record['status'] == 'succeeded', record.get('error')
+    output = Path(record['result']['runDirectory'])
+    assert not (Path(staged['executionRoot']) / '.steerlab/lens-library').exists()
+
+    # The library loses the entry. The finished job's output still comes home, through the real job store.
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    job = jobs.record_external('science:' + batch.OPERATION, status='succeeded', executor='local',
+                               job_id='referred-job', result={**record['result'], 'scientificPlan': admitted})
+    job.finished_at = time.time() - 3600
+    jobs.store.update(job)
+    policy = root / 'policy.json'
+    policy.write_text(json.dumps({'schemaVersion': 1, 'allowDiagnosticOutputRemoval': True, 'minimumRetentionHours': 0,
+                                  'source': 'Researcher supplied retention rule for disposable fixture outputs.'}))
+    monkeypatch.setenv('STEERLAB_DIAGNOSTIC_CLEANUP_POLICY', str(policy))
+    shutil.rmtree(lens_library.root() / sha)
+    with pytest.raises(lens_library.LensLibraryRefusal):             # a new run of it would need the lens again
+        scientific_execution.plan(staged['request'], profile)
+    reference = transport.export(job.id, jobs, profile)
+    local = tmp_path / 'local'
+    local.mkdir()
+    imported = archives.import_evidence(reference['bundlePath'], reference['bundleSha256'], local)
+    assert archives.verify(imported['receiptSHA256'], local) == imported['receipt'] and output.exists()
+    # Managed cleanup covers battery and stability copies only, neither of which reads a lens, so no cleanup
+    # ever depends on the library: a job that referred to a lens is retained by that policy, lens or no lens.
+    with pytest.raises(archives.Refusal, match='covers battery and stability copies only'):
+        cleanup.plan(job.id, imported['receipt'], jobs, profile)
+
+
+def test_a_battery_packaged_with_the_flag_is_exported_and_cleaned_up_with_no_library(setup, monkeypatch, tmp_path):
+    """The only jobs managed cleanup removes read no lens. One packaged with `--lens-reference` names none, and
+    its export and its cleanup need no library at all."""
+    import time
+    from steerlab_server.api import diagnostic_cleanup as cleanup
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    root, request, profile = setup
+    referred = diagnostic_inputs.plan(request, root, lens_reference=True)
+    packed = diagnostic_inputs.package(request, root, root / 'runs/input.tar.gz', referred['planSHA256'], lens_reference=True)
+    staged = transport.stage(packed['bundlePath'], packed['bundleSha256'], profile)
+    plan = scientific_execution.plan(staged['request'], profile)
+    output = Path(plan['root']) / 'runs/example-battery'
+    output.mkdir(parents=True)
+    (output / 'battery-report.json').write_text('{"complete":true}')
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    job = jobs.record_external('science:battery', status='succeeded', executor='local', job_id='example-job',
+                               result={'scientificPlan': plan, 'runDirectory': str(output)})
+    job.finished_at = time.time() - 3600
+    jobs.store.update(job)
+    policy = root / 'policy.json'
+    policy.write_text(json.dumps({'schemaVersion': 1, 'allowDiagnosticOutputRemoval': True, 'minimumRetentionHours': 0,
+                                  'source': 'Researcher supplied retention rule for disposable fixture outputs.'}))
+    monkeypatch.setenv('STEERLAB_DIAGNOSTIC_CLEANUP_POLICY', str(policy))
+    monkeypatch.setattr(lens_library, 'root', lambda: pytest.fail('no lens is referred to, so no library is needed'))
+    reference = transport.export(job.id, jobs, profile)
+    local = tmp_path / 'local'
+    local.mkdir()
+    receipt = archives.import_evidence(reference['bundlePath'], reference['bundleSha256'], local)['receipt']
+    planned = cleanup.plan(job.id, receipt, jobs, profile)
+    assert planned['eligible']
+    assert cleanup.apply(job.id, receipt, planned['planSHA256'], jobs, profile, confirmed=True)['state'] == 'removed'
+    assert not output.exists()
+
+
+def test_the_validation_child_is_told_which_library_the_engine_has(managed, monkeypatch):
+    from steerlab_server.api import managed_validation
+    root, _ = managed
+    monkeypatch.delenv('STEERLAB_METADATA_ROOT')           # so a child pointed elsewhere would look elsewhere
+    elsewhere = root / 'runs/an-execution-copy'
+    elsewhere.mkdir(parents=True)
+    request = probe_request(root)
+    told = []
+    run = managed_validation.subprocess.run
+
+    def child(command, **kwargs):
+        told.append((kwargs['env']['STEERLAB_ROOT'], kwargs['env'].get('STEERLAB_LENS_LIBRARY_ROOT')))
+        return run(command, **kwargs)
+    monkeypatch.setattr(managed_validation.subprocess, 'run', child)
+    assert managed_validation.validate(request, elsewhere)['models'] == [{'modelID': 'test/tiny', 'revision': 'a' * 40}]
+    assert told == [(str(elsewhere.resolve()), str(root / '.steerlab/lens-library'))]
+    monkeypatch.setenv('SLURM_JOB_ID', '1')                # an engine with no library says so to its child
+    managed_validation.validate(request, elsewhere)
+    assert told[-1] == (str(elsewhere.resolve()), '')
+
+
+# --- fix round 1: a finished job stays finished ------------------------------------
+
+@pytest.mark.parametrize('afterwards', ['killed', 'cancelled'])
+def test_a_job_whose_record_says_succeeded_is_succeeded_whatever_became_of_its_process(setup, monkeypatch, afterwards):
+    """The copy of a fitted lens is made after the fit's record says succeeded. A child killed during it (a
+    memory limit on the node), or a cancel that arrives then, must not turn a finished fit into a failed or
+    cancelled job. The stand-in child writes that record, then dies hard, or lingers until it is cancelled."""
+    import sys
+    import time
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    root, request, profile = setup
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    then = 'os.kill(os.getpid(), 9)' if afterwards == 'killed' else 'time.sleep(60)'
+    script = ('import json, os, sys, time; from pathlib import Path; record = Path(sys.argv[1]); '
+              'staged = record.with_suffix(".tmp"); '
+              'staged.write_text(json.dumps({"status": "succeeded", "result": {"runDirectory": sys.argv[2], "promptsFitted": 3}})); '
+              'staged.replace(record); ' + then)
+    real_run = scientific_execution.LocalExecutor.run
+
+    def child(self, command, **kwargs):
+        return real_run(self, [sys.executable, '-c', script, command[-2], str(root / 'runs/finished')], **kwargs)
+    monkeypatch.setattr(scientific_execution.LocalExecutor, 'run', child)
+    submitted = scientific_execution.submit(request, scientific_execution.plan(request, profile)['planSHA256'],
+                                            profile=profile, jobs=jobs)
+    job = jobs.get(submitted['jobId'])
+    record = Path(submitted['recordsDirectory']) / (job.id + '.json')
+    deadline = time.monotonic() + 20
+    while not record.exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert record.exists()
+    if afterwards == 'cancelled':
+        assert jobs.cancel(job.id)
+    while job.status not in {'succeeded', 'failed', 'cancelled', 'cancelledResumable'} and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert job.status == 'succeeded' and job.error is None and not job.cancelled
+    assert job.result['promptsFitted'] == 3 and job.result['runDirectory'].endswith('runs/finished')

@@ -295,8 +295,21 @@ def submit(request, expected, *, profile, jobs, registry=None, execution_capsule
                                             env={'STEERLAB_LENS_LIBRARY_ROOT': profile.lens_library_root or ''},
                                             should_cancel=lambda: job.cancelled)
                 record = records / (job.id + '.json')
+                finished = False
                 if record.exists():
-                    job.result.update(json.loads(record.read_text()).get('result', {}))
+                    document = json.loads(record.read_text())
+                    job.result.update(document.get('result', {}))
+                    finished = document.get('status') == 'succeeded'
+                if finished:
+                    # The child's record is the truth about the work. Once it
+                    # says succeeded, what became of the process afterwards
+                    # does not undo the result: it may have been killed while
+                    # keeping a copy of a fitted lens, which runs after the
+                    # record is written and must never fail the fit, or a
+                    # cancel may have arrived too late to stop anything.
+                    job.finished_before_cancel('a cancel was requested, but the work finished and recorded its '
+                                               'result before it could be stopped; the job is recorded as succeeded')
+                    return job.result
                 if job.cancelled:
                     return job.result
                 if proc.returncode:
@@ -448,7 +461,7 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
                                      'reason': 'This fit is one shard of a fitting round: a slice of a lens, not a lens. '
                                                "Only the round's merged lens is offered to the lens library."}
         else:
-            result['lensLibrary'] = lens_library.keep_fitted(result['runDirectory'])
+            result['lensLibrary'] = lens_library.keep_fitted(result['runDirectory'], root)
         try:
             write_json(Path(record), document)
         except OSError:
