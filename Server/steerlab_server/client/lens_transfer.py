@@ -75,10 +75,19 @@ EXTERNAL_TRANSFER_CODE = 'externalTransferRequired'
 ENTRY_DIFFERS_CODE = 'lensLibraryEntryDiffers'
 ENTRY_DIFFERS_REPAIR = ("Ask the site's operator to inspect that library entry; the workspace copy is the "
                         'one its record describes.')
+#: An engine's refusal on a lens-library route that names no code, gives no
+#: sentence, or names no repair gets these, on both clients. Swift twins:
+#: ``LensLibrary.refusalFallbackCode``, ``refusalFallbackReason``, and
+#: ``refusalFallbackRepair``.
+REFUSAL_FALLBACK_CODE = 'lensLibraryRefused'
+REFUSAL_FALLBACK_REPAIR = ('The engine named no repair. If its reason does not say what to change, look in the '
+                           "engine's log for this request.")
+#: No more of a refusal's text than this is shown, whatever sent it.
+REFUSAL_TEXT_LIMIT = 2000
 #: The engine answered a lens-library route with something the contract does
 #: not allow. A failure, not a refusal.
 PROTOCOL_CODE = 'lensLibraryProtocol'
-#: A part, or the whole-file check, did not get its answer.
+#: One of a push's calls to the engine did not get its answer.
 INTERRUPTED_CODE = 'lensUploadInterrupted'
 RESUME_REPAIR = 'Run the command again: it sends only what the site still lacks.'
 #: The lens file is not the one that was planned.
@@ -139,13 +148,20 @@ def protocol_problem(kind, where=''):
     }[kind]
 
 
+def refusal_fallback_reason(status):
+    """Swift twin ``LensLibrary.refusalFallbackReason``."""
+    return f'The engine refused the lens library request ({status}) without saying why.'
+
+
 def interrupted_reason(lens_id, cause):
-    """A part, or the whole-file check, got no answer (a lost connection, a
-    timeout, or a failure on the engine). Swift twin
-    ``LensLibrary.interruptedReason``."""
+    """One of a push's calls to the engine got no answer (a lost connection,
+    a timeout, or a failure on the engine): the status read, the manifest, a
+    part, the whole-file check, an adoption, or the record. True of each: the
+    push ends only when the site has confirmed both the lens and its record.
+    Swift twin ``LensLibrary.interruptedReason``."""
     cause = str(cause).strip().rstrip('.')
     return (f'Sending lens {lens_id} to the site was interrupted before the site confirmed that it holds '
-            f'the whole lens ({cause}).')
+            f'the whole lens and has its record ({cause}).')
 
 
 def library_available(capabilities):
@@ -472,9 +488,11 @@ def _answer(document, what):
 
 
 def _send(client, lens_id, call):
-    """Send one part, or ask for the whole-file check. When that gets no
-    answer (the connection, a timeout, or a failure on the engine), say that
-    running the command again resumes: what the site received, it keeps."""
+    """One of a push's calls to the engine. When it gets no answer (the
+    connection, a timeout, or a failure on the engine), say that running the
+    command again resumes: what the site received, it keeps, and no job is
+    involved. A refusal (any 4xx, a missing token among them) is not an
+    interruption and is raised as it is."""
     from .runner import RunnerError, RunnerHTTPError, RunnerUnreachable
     try:
         return call()
@@ -508,7 +526,7 @@ def push(client, root, lens_id, *, adopt=None):
             raise _protocol('partLimit', client.base_url) from exc
         plan = push_plan(root, lens_id, limit)
     sha = plan['convertedSHA256']
-    status = _answer(client.lens_library_status(sha), 'the lens status')
+    status = _answer(_send(client, lens_id, lambda: client.lens_library_status(sha)), 'the lens status')
     already = status.get('held') is True
     uploaded_parts = uploaded_bytes = 0
     adopted = False
@@ -516,7 +534,7 @@ def push(client, root, lens_id, *, adopt=None):
         raise RunnerRefusal(entry_differs_reason(status['bytes'], plan['bytes']), code=ENTRY_DIFFERS_CODE,
                             repair_action=ENTRY_DIFFERS_REPAIR, detail={'convertedSHA256': sha})
     if not already and adopt is not None:
-        _answer(client.lens_library_adopt(adopt, sha), 'the adoption')
+        _answer(_send(client, lens_id, lambda: client.lens_library_adopt(adopt, sha)), 'the adoption')
         adopted = True
     elif not already:
         remote = capabilities.get('remoteStudy') or {}
@@ -524,7 +542,8 @@ def push(client, root, lens_id, *, adopt=None):
             raise RunnerRefusal(external_transfer_reason(client.base_url), code=EXTERNAL_TRANSFER_CODE,
                                 repair_action=external_transfer_repair(plan['file']),
                                 detail={'convertedSHA256': sha, 'bytes': plan['bytes']})
-        begun = _answer(client.lens_library_begin(sha, plan['bytes'], plan['parts']), 'the upload manifest')
+        begun = _answer(_send(client, lens_id, lambda: client.lens_library_begin(sha, plan['bytes'], plan['parts'])),
+                        'the upload manifest')
         if begun.get('held') is True:
             already = True
         else:
@@ -543,7 +562,8 @@ def push(client, root, lens_id, *, adopt=None):
             done = _answer(_send(client, lens_id, lambda: client.lens_library_complete(sha)), 'the completed upload')
             if done.get('held') is not True or done.get('bytes') != plan['bytes']:
                 raise _protocol('notConfirmed')
-    registered = _answer(client.lens_library_register(plan['record']), 'the lens record')
+    registered = _answer(_send(client, lens_id, lambda: client.lens_library_register(plan['record'])),
+                         'the lens record')
     if registered.get('lensID') != lens_id:
         raise _protocol('otherLens')
     wrote = uploaded_parts > 0 or adopted or registered.get('changed') is True
@@ -813,7 +833,13 @@ def _copy_plan(root, lens_id, source_root):
         held = _ordinary(root, canonical, 'this workspace', missing=True)
         if not held.exists():
             action = 'restore'
-        elif not held.is_file() or archives.file_hash(held) != record['converted']['sha256']:
+        elif not held.is_file():
+            raise LensRefusal(
+                f'{canonical} in this workspace is a folder, or something else that is not a file, where the '
+                f'converted file of lens {lens_id} goes. Nothing was copied, and it was left as it is.',
+                'Move it aside, then run lens-copy again: it puts back the file from the other workspace.',
+                code='lensPathNotOrdinary')
+        elif archives.file_hash(held) != record['converted']['sha256']:
             raise LensRefusal(
                 f'The converted file of lens {lens_id} in this workspace ({canonical}) differs from the '
                 'SHA-256 its record names. Nothing was copied, and that file was left as it is.',
@@ -877,6 +903,16 @@ def copy(root, lens_id, source_root, expected=None):
                 archives.publish_file(staged, _ordinary(root, canonical, 'this workspace', missing=True))
             except FileExistsError as exc:
                 raise appeared from exc
+            except OSError as exc:
+                # The one file is published with a hard link, which some
+                # disks do not have (ExFAT). A whole lens folder is published
+                # another way, so copying the lens afresh works there.
+                raise LensRefusal(
+                    f'Lens {lens_id} is in this workspace without its converted file, and that file could not '
+                    f"be put back: a single file cannot be added to {plan['directory']} on this disk. Nothing "
+                    'was changed.',
+                    f"Move {plan['directory']} aside, then run lens-copy again: it copies the whole lens. That "
+                    f"folder's {RECORD_NAME} holds the lens's qualifications in this workspace.") from exc
             return {**plan, 'changed': True, 'existing': True, 'restored': True, 'copyMethod': method,
                     'outputDirectory': str(parent / lens_id)}
         methods = set()
@@ -898,14 +934,17 @@ def copy(root, lens_id, source_root, expected=None):
 def also_held_clause(names):
     """What a ``lens-copy`` answer adds when this workspace holds the same
     lens under other names (``alsoHeldAs``), and nothing when it holds none.
-    True before the copy and after it. Swift twin
+    True before the copy and after it. A lens's qualifications are in its
+    record, so qualifying it under one name does not qualify it under
+    another, and the answer says each name has its own. Swift twin
     ``LensLibrary.alsoHeldClause``."""
     names = list(names or ())
     if not names:
         return ''
     listed = ' and '.join(names) if len(names) <= 2 else ', '.join(names[:-1]) + ', and ' + names[-1]
     return (' This workspace holds the same lens under '
-            + ('another name: ' if len(names) == 1 else 'other names: ') + listed + '.')
+            + ('another name: ' if len(names) == 1 else 'other names: ') + listed
+            + '. Each name has its own record and qualifications.')
 
 
 def copy_message(result):

@@ -14,6 +14,7 @@ The sentences both clients say are held to one file,
 import hashlib
 import io
 import json
+import os
 import re
 import struct
 import sys
@@ -81,6 +82,9 @@ def refusal(status, code, sentence, repair):
                                                    'repairAction': repair}})
 
 
+NO_ANSWER = 'no answer'
+
+
 class Site:
     """An engine's lens library, in memory, speaking its routes."""
 
@@ -91,6 +95,18 @@ class Site:
         self.fail_part = self.drop_part = None        # answer one part with a 500, or with no answer at all
         self.fail_complete = False
         self.answers = {}                             # an answer the contract does not allow, by route name
+        self.fail = {}                                # one failed answer for a call, by name: (status, body) or NO_ANSWER
+
+    def trouble(self, call, request):
+        """The failure planned for this call, given once: a status and a body,
+        or no answer at all."""
+        planned = self.fail.pop(call, None)
+        if planned is None:
+            return None
+        if planned == NO_ANSWER:
+            raise httpx.ReadTimeout('the read timed out', request=request)
+        status, body = planned
+        return httpx.Response(status, json=body) if isinstance(body, (dict, list)) else httpx.Response(status, content=body)
 
     def sent(self, method, pattern):
         return [path for verb, path in self.calls if verb == method and re.search(pattern, path)]
@@ -118,6 +134,8 @@ class Site:
         if not self.library:
             return refusal(409, 'lensLibraryUnavailable', 'This engine has no lens library.', 'Configure one.')
         if path == '/api/lens-library/register':
+            if (failed := self.trouble('register', request)) is not None:
+                return failed
             try:
                 record = strict_loads(body)['record']
             except ValueError:
@@ -130,6 +148,8 @@ class Site:
             self.registered[record['lensID']] = record
             return httpx.Response(200, json={'lensID': record['lensID'], 'registered': True, 'changed': changed})
         if path == '/api/lens-library/adopt':
+            if (failed := self.trouble('adopt', request)) is not None:
+                return failed
             document = json.loads(body)
             if document['path'] not in self.adoptable:
                 return refusal(409, 'lensAdoptMissing', 'No file is at that path.', 'Copy the file there first.')
@@ -140,6 +160,9 @@ class Site:
         match = re.fullmatch(r'/api/lens-library/([0-9a-f]{64})(?:/(begin|complete|parts/(\d+)))?', path)
         assert match, path
         sha, action, index = match.groups()
+        call = {None: 'status', 'begin': 'begin', 'complete': 'complete'}.get(action, 'part')
+        if (failed := self.trouble(call, request)) is not None:
+            return failed
         if action is None:
             upload = self.uploads.get(sha)
             return httpx.Response(200, json={
@@ -374,8 +397,8 @@ def test_an_interrupted_push_says_to_run_it_again_and_then_sends_only_what_is_mi
         assert (error.code, error.state) == (FIXTURE['interrupted']['code'], 'failed') == ('lensUploadInterrupted', 'failed')
         assert error.repair_action == FIXTURE['interrupted']['repairAction']
         assert error.reason.startswith(f'Sending lens {lens_id} to the site was interrupted before the site '
-                                       'confirmed that it holds the whole lens (')
-        assert 'jobs' not in error.reason + error.repair_action
+                                       'confirmed that it holds the whole lens and has its record (')
+        assert 'job' not in (error.reason + error.repair_action).lower()
         assert not site.entries and not site.registered
         received = sorted(next(iter(site.uploads.values()))['parts'])
         assert received == ([0, 1, 2] if failure != 'a 500 on the whole-file check' else list(range(total)))
@@ -391,6 +414,147 @@ def test_an_interrupted_push_says_to_run_it_again_and_then_sends_only_what_is_mi
             f'The site had already received every part of lens {lens_id} and now holds it')
     assert lens_transfer.interrupted_reason(FIXTURE['interrupted']['lensID'], FIXTURE['interrupted']['cause']) \
         == FIXTURE['interrupted']['reason']
+
+
+@pytest.mark.parametrize('call', ['status', 'begin', 'part', 'complete', 'adopt', 'register'])
+@pytest.mark.parametrize('trouble', ['a 500', 'a 503', 'no answer'])
+def test_any_call_of_a_push_that_gets_no_answer_says_to_run_it_again(tmp_path, call, trouble):
+    """Every call a push makes to the engine, not only a part: a failure on
+    the engine, or a lost connection, says the one true thing to do next.
+    Nothing about jobs, which a push never makes."""
+    root, lens_id = make_lens(tmp_path)
+    data = converted(root, lens_id).read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    site = Site(part_max=100)
+    adopt = None
+    if call == 'adopt':
+        adopt = '/scratch/incoming/jacobians.safetensors'
+        site.adoptable[adopt] = data
+    site.fail[call] = NO_ANSWER if trouble == 'no answer' else (int(trouble.split()[1]), {'detail': 'the engine stopped'})
+    with site.client() as client:
+        with pytest.raises(runner_api.RunnerError) as caught:
+            lens_transfer.push(client, root, lens_id, adopt=adopt)
+        error = caught.value
+        assert not site.fail, 'the planned failure was reached'
+        assert (error.code, error.state) == (FIXTURE['interrupted']['code'], 'failed')
+        assert error.repair_action == FIXTURE['interrupted']['repairAction'] == lens_transfer.RESUME_REPAIR
+        assert error.reason.startswith(f'Sending lens {lens_id} to the site was interrupted before the site '
+                                       'confirmed that it holds the whole lens and has its record (')
+        assert 'job' not in (error.reason + error.repair_action).lower()
+        assert lens_id not in site.registered
+        held = sha in site.entries
+        assert held == (call == 'register'), 'only the record was still to come when the lens was already whole'
+        # The repair, carried out: the push finishes, and sends only what the site still lacks.
+        site.calls.clear()
+        result = lens_transfer.push(client, root, lens_id, adopt=adopt)
+    assert site.entries == {sha: data} and lens_id in site.registered
+    if held:
+        assert result['alreadyHeld'] is True and not site.sent('PUT', '/parts/') and not site.sent('POST', 'begin|adopt')
+
+
+@pytest.mark.parametrize('answer', [(401, {'detail': 'Unauthorized'}), (403, {'detail': 'Forbidden'}), (403, 'Forbidden')])
+def test_a_token_problem_on_a_part_is_said_as_that_and_is_not_an_interruption(tmp_path, answer):
+    root, lens_id = make_lens(tmp_path)
+    site = Site(part_max=100)
+    site.fail['part'] = answer
+    with site.client() as client, pytest.raises(runner_api.RunnerError) as caught:
+        lens_transfer.push(client, root, lens_id)
+    error = caught.value
+    assert isinstance(error, runner_api.RunnerHTTPError) and error.status == answer[0]
+    assert (error.code, error.state) == ('runnerUnauthorized', 'blocked')
+    assert error.code != FIXTURE['interrupted']['code'] and 'interrupted' not in error.reason
+    assert 'token' in error.repair_action and error.repair_action != FIXTURE['interrupted']['repairAction']
+    assert not site.sent('POST', 'complete|register')
+
+
+def test_the_engines_own_403_is_its_refusal_and_not_a_missing_token(tmp_path):
+    """The one 403 an engine sends on a transfer route is a refusal with a
+    code and a repair: HTTP transfer is not permitted there."""
+    root, lens_id = make_lens(tmp_path)
+    site = Site(part_max=100)
+    detail = {'code': 'external_transfer_required', 'message': 'This site takes files only through its own transfer tool.',
+              'repairAction': "Copy the file with the site's transfer tool, then run lens-push with --adopt."}
+    site.fail['part'] = (403, {'detail': detail})
+    with site.client() as client, pytest.raises(runner_api.RunnerError) as caught:
+        lens_transfer.push(client, root, lens_id)
+    error = caught.value
+    assert type(error) is runner_api.RunnerRefusal and error.state == 'refused'
+    assert (error.code, error.reason, error.repair_action) == (detail['code'], detail['message'], detail['repairAction'])
+    assert 'token' not in error.repair_action
+
+
+def test_a_refusal_body_is_read_the_same_way_on_both_clients():
+    """Each body in the fixture, with what both clients make of it: the
+    engine's own code, sentence, and repair, and one fallback sentence and
+    one fallback repair for what a body leaves out. The Mac reads the same
+    rows (``LensLibraryTests``)."""
+    cases = FIXTURE['refusalBodies']
+    assert len(cases) == 15
+    url = SERVER + '/api/lens-library/register'
+    with Site().client() as client:
+        for case in cases:
+            with pytest.raises(runner_api.RunnerError) as caught:
+                client._raise_for_lens_library(httpx.Response(case['status'], content=case['body'].encode()), url=url)
+            error = caught.value
+            if case['engineRefusal']:
+                assert type(error) is runner_api.RunnerRefusal and error.state == 'refused', case['note']
+                assert (error.code, error.reason, error.repair_action) == (
+                    case['code'], case['reason'], case['repairAction']), case['note']
+            else:
+                assert isinstance(error, runner_api.RunnerHTTPError), case['note']
+                assert error.code == ('runnerFailed' if case['status'] >= 500 else 'runnerUnauthorized'), case['note']
+        # No more than the limit of anything a body says is shown.
+        limit = FIXTURE['refusalFallback']['textLimit']
+        long = 'x' * (limit + 500)
+        for body in (long, json.dumps({'detail': long}),
+                     json.dumps({'detail': {'code': long, 'message': long, 'repairAction': long}})):
+            with pytest.raises(runner_api.RunnerRefusal) as caught:
+                client._raise_for_lens_library(httpx.Response(409, content=body.encode()), url=url)
+            assert caught.value.reason == 'x' * limit, body[:30]
+            if body.startswith('{"detail": {'):
+                assert caught.value.code == caught.value.repair_action == 'x' * limit
+    fallback = FIXTURE['refusalFallback']
+    assert (lens_transfer.REFUSAL_FALLBACK_CODE, lens_transfer.refusal_fallback_reason(fallback['status']),
+            lens_transfer.REFUSAL_FALLBACK_REPAIR, lens_transfer.REFUSAL_TEXT_LIMIT) == (
+        fallback['code'], fallback['reason'], fallback['repairAction'], fallback['textLimit']) and limit == 2000
+    # Every case that leaves something out is one the fallbacks fill.
+    assert sum(case.get('reason') == lens_transfer.refusal_fallback_reason(case['status']) for case in cases) == 3
+    assert sum(case.get('repairAction') == fallback['repairAction'] for case in cases) == 7
+
+
+def test_only_the_calls_that_hash_a_whole_file_wait_an_hour(tmp_path):
+    """A part, the whole-file check, and an adoption make the engine hash a
+    file before it answers, so they wait as a bundle upload does. The status
+    read, the manifest, and the record answer at once, and keep the client's
+    ordinary timeout."""
+    root, lens_id = make_lens(tmp_path)
+    data = converted(root, lens_id).read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+
+    def waits(site, pattern):
+        found = {site.timeouts[path]['read'] for path in site.timeouts if re.search(pattern, path)}
+        assert found, pattern
+        return found
+
+    site = Site(part_max=100)
+    with site.client() as client:
+        lens_transfer.push(client, root, lens_id)
+        lens_transfer.status(client, root, lens_id)
+    ordinary = waits(site, '/api/capabilities$')
+    assert len(ordinary) == 1 and ordinary != {3600.0}
+    assert waits(site, r'/parts/\d+$') == waits(site, '/complete$') == {3600.0}
+    assert waits(site, f'/api/lens-library/{sha}$') == waits(site, '/begin$') == waits(site, '/register$') == ordinary
+    adopting = Site()
+    adopting.adoptable['/scratch/copy'] = data
+    with adopting.client() as client:
+        lens_transfer.push(client, root, lens_id, adopt='/scratch/copy')
+    assert waits(adopting, '/adopt$') == {3600.0} and waits(adopting, '/register$') == ordinary
+    # A timeout the caller chose decides, for the calls that would have waited the hour.
+    chosen = Site(part_max=100)
+    with chosen.client(timeout=7) as client:
+        lens_transfer.push(client, root, lens_id)
+    assert waits(chosen, r'/parts/\d+$') == waits(chosen, '/complete$') == {7.0}
+    assert waits(chosen, '/begin$') == waits(chosen, '/register$') == ordinary
 
 
 def test_a_lens_the_site_holds_uploads_nothing_and_still_registers(tmp_path):
@@ -435,7 +599,7 @@ def test_a_site_that_forbids_http_transfer_adopts_a_copy_already_on_it(tmp_path)
     with site.client() as client:
         with pytest.raises(runner_api.RunnerRefusal) as caught:
             lens_transfer.push(client, root, lens_id)
-        assert caught.value.code == 'externalTransferRequired'
+        assert caught.value.code == FIXTURE['externalTransfer']['code'] == lens_transfer.EXTERNAL_TRANSFER_CODE
         assert not site.sent('POST', '') and not site.sent('PUT', '')
         site.adoptable['/scratch/incoming/jacobians.safetensors'] = data
         result = lens_transfer.push(client, root, lens_id, adopt='/scratch/incoming/jacobians.safetensors')
@@ -1075,12 +1239,13 @@ def test_the_same_lens_under_another_name_is_still_copied_under_the_origins_name
     assert lens_transfer.copy_message(preview) == (
         f"Reviewed a copy of lens {old_name} ({len(preview['files'])} files, {preview['bytes']} bytes); nothing "
         f"was written. Repeat the command with --plan-sha256 {preview['planSHA256']} to copy it. This workspace "
-        f'holds the same lens under another name: {derived}.')
+        f'holds the same lens under another name: {derived}. Each name has its own record and qualifications.')
     result = lens_transfer.copy(root, old_name, str(origin), preview['planSHA256'])
     assert (result['action'], result['existing'], result['changed']) == ('copy', False, True)
     assert result['alsoHeldAs'] == [derived] and result['copyMethod'] in ('clone', 'copy')
     assert lens_transfer.copy_message(result).endswith(
-        f', under the same name and record. This workspace holds the same lens under another name: {derived}.')
+        f', under the same name and record. This workspace holds the same lens under another name: {derived}. '
+        'Each name has its own record and qualifications.')
     assert tree(lens_folder(root, old_name)) == tree(lens_folder(origin, old_name))
     assert stamps(lens_folder(root, derived)) == before, 'the lens under the other name is left as it was'
 
@@ -1098,7 +1263,7 @@ def test_the_same_lens_under_another_name_is_still_copied_under_the_origins_name
     assert (again['action'], again['existing'], again['changed'], again['alsoHeldAs']) == ('none', True, False, [derived])
     assert lens_transfer.copy_message(again) == (
         f'This workspace already holds lens {old_name}; nothing was copied. This workspace holds the same lens '
-        f'under another name: {derived}.')
+        f'under another name: {derived}. Each name has its own record and qualifications.')
     # Where a receipt is missing, the records' three hashes decide.
     (lens_folder(root, derived) / 'import-receipt.json').unlink()
     assert lens_transfer.copy(root, old_name, str(origin))['alsoHeldAs'] == [derived]
@@ -1138,7 +1303,8 @@ def test_the_other_names_are_all_listed_in_order_and_are_part_of_what_was_review
     listed = lens_transfer.copy(empty, old_name, str(origin))
     assert listed['alsoHeldAs'] == names and listed['action'] == 'copy'
     assert lens_transfer.copy_message(listed).endswith(
-        f' This workspace holds the same lens under other names: {names[0]}, {names[1]}, and {names[2]}.')
+        f' This workspace holds the same lens under other names: {names[0]}, {names[1]}, and {names[2]}. '
+        'Each name has its own record and qualifications.')
     result = lens_transfer.copy(empty, old_name, str(origin), listed['planSHA256'])
     assert result['changed'] is True and result['alsoHeldAs'] == names
     assert lens_store.resolve(old_name, str(empty)).lensID == old_name
@@ -1150,6 +1316,108 @@ def test_the_other_names_are_all_listed_in_order_and_are_part_of_what_was_review
     assert len(FIXTURE['copyMessages']) == 10
     assert [len(case['alsoHeldAs']) for case in FIXTURE['copyMessages']] == [0] * 7 + [1, 2, 3]
     assert lens_transfer.also_held_clause([]) == lens_transfer.also_held_clause(None) == ''
+
+
+def test_a_disk_that_cannot_take_one_file_is_said_in_lens_words_by_a_copy(tmp_path, monkeypatch):
+    """The one file is published with a hard link, which some disks do not
+    have. The refusal says so in lens words, changes nothing, and its repair
+    works on that same disk, because a whole lens is published another way."""
+    import errno
+    origin, lens_id = make_lens(tmp_path, name='first')
+    root = second_workspace(tmp_path)
+    copied(root, lens_id, origin)
+    converted(root, lens_id).unlink()
+    before = stamps(root / 'runs')
+
+    def no_hard_links(source, target, **options):
+        raise OSError(errno.ENOTSUP, 'Operation not supported', str(source), None, str(target))
+    monkeypatch.setattr(os, 'link', no_hard_links)
+    preview = lens_transfer.copy(root, lens_id, str(origin))
+    assert preview['action'] == 'restore'
+    with pytest.raises(lens_transfer.LensRefusal) as caught:
+        lens_transfer.copy(root, lens_id, str(origin), preview['planSHA256'])
+    folder = f'runs/jlens-lenses/{lens_id}'
+    assert str(caught.value) == (
+        f'Lens {lens_id} is in this workspace without its converted file, and that file could not be put back: '
+        f'a single file cannot be added to {folder} on this disk. Nothing was changed.')
+    assert caught.value.repair_action == (
+        f"Move {folder} aside, then run lens-copy again: it copies the whole lens. That folder's lens.json "
+        "holds the lens's qualifications in this workspace.")
+    assert 'Errno' not in str(caught.value) and not_the_archive_familys(caught.value.repair_action)
+    assert stamps(root / 'runs') == before, 'nothing was changed, and no staging folder is left'
+    # The repair, carried out as written, on the same disk.
+    lens_folder(root, lens_id).rename(tmp_path / 'set-aside')
+    result = copied(root, lens_id, origin)
+    assert result['changed'] is True and result['action'] == 'copy'
+    assert tree(lens_folder(root, lens_id)) == tree(lens_folder(origin, lens_id))
+
+
+@pytest.mark.parametrize('arrives', ['another file', 'a damaged copy'])
+def test_putting_a_file_back_by_a_copy_never_replaces_one_and_checks_what_it_copied(tmp_path, monkeypatch, arrives):
+    """Two things a restore must not do: replace a file that appeared at the
+    lens's path after the review, and publish a copy that arrived damaged."""
+    origin, lens_id = make_lens(tmp_path, name='first')
+    root = second_workspace(tmp_path)
+    copied(root, lens_id, origin)
+    file = converted(root, lens_id)
+    file.unlink()
+    preview = lens_transfer.copy(root, lens_id, str(origin))
+    real = lens_transfer._clone_or_copy
+
+    def copying(source, target):
+        method = real(source, target)
+        if arrives == 'another file':
+            file.write_bytes(b'put here by someone else, after the review')
+        else:
+            Path(target).write_bytes(Path(target).read_bytes()[:-1] + b'!')
+        return method
+    monkeypatch.setattr(lens_transfer, '_clone_or_copy', copying)
+    with pytest.raises(lens_transfer.LensRefusal) as caught:
+        lens_transfer.copy(root, lens_id, str(origin), preview['planSHA256'])
+    if arrives == 'another file':
+        assert str(caught.value) == (f'A file or folder for lens {lens_id} appeared in this workspace during the '
+                                     'copy. Nothing was replaced.')
+        assert file.read_bytes() == b'put here by someone else, after the review'
+    else:
+        assert str(caught.value) == 'A lens file changed while it was being copied. Nothing was copied.'
+        assert not file.exists()
+    assert sorted(item.name for item in lens_folder(root, lens_id).parent.iterdir()) == [lens_id], 'no staging is left'
+
+
+def test_a_lens_already_here_whose_record_or_file_path_is_not_its_own_is_refused(tmp_path):
+    origin, lens_id = make_lens(tmp_path, name='first')
+    root = second_workspace(tmp_path)
+    copied(root, lens_id, origin)
+    canonical = f'runs/jlens-lenses/{lens_id}/jacobians.safetensors'
+
+    # A folder where the converted file goes is called a folder, and is left alone.
+    file = converted(root, lens_id)
+    file.unlink()
+    file.mkdir()
+    (file / 'kept.txt').write_text('mine')
+    with pytest.raises(lens_transfer.LensRefusal) as caught:
+        lens_transfer.copy(root, lens_id, str(origin))
+    assert str(caught.value) == (
+        f'{canonical} in this workspace is a folder, or something else that is not a file, where the converted '
+        f'file of lens {lens_id} goes. Nothing was copied, and it was left as it is.')
+    assert caught.value.code == 'lensPathNotOrdinary' and 'differs' not in str(caught.value)
+    assert caught.value.repair_action == ('Move it aside, then run lens-copy again: it puts back the file from the '
+                                          'other workspace.')
+    assert (file / 'kept.txt').read_text() == 'mine'
+    file.rename(tmp_path / 'folder-set-aside')
+    assert copied(root, lens_id, origin)['restored'] is True, 'the repair works as written'
+
+    # The record here must name the lens's own converted file: any other path cannot be checked.
+    record_file = lens_folder(root, lens_id) / 'lens.json'
+    record = json.loads(record_file.read_text())
+    record['converted']['path'] = 'runs/elsewhere/jacobians.safetensors'
+    record_file.write_text(json.dumps(record))
+    before = stamps(root / 'runs')
+    with pytest.raises(lens_transfer.LensRefusal) as caught:
+        lens_transfer.copy(root, lens_id, str(origin))
+    assert str(caught.value) == (f'Lens {lens_id} in this workspace records its converted file somewhere other than '
+                                 f'{canonical}, so it cannot be checked. Nothing was copied.')
+    assert stamps(root / 'runs') == before
 
 
 def test_a_copy_checks_every_file_before_and_after(tmp_path, monkeypatch):

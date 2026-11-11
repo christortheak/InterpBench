@@ -930,13 +930,19 @@ class RunnerClient:
                 "`steerlab runner jobs` before resubmitting anything."))
 
     def _refusal_of(self, response) -> tuple:
-        """``(code, sentence, repair)`` from an engine's refusal body:
-        FastAPI's ``{"detail": …}``, where the detail is a sentence or an
-        object with a ``code``, a ``message`` (or ``reason``), and a
-        ``repairAction``; a repair may also sit beside the detail. Swift
-        twin: ``ClusterClient.refusalDetail``."""
+        """``(code, sentence, repair)`` from an engine's refusal body, each
+        None when the body gives none: FastAPI's ``{"detail": …}``, where the
+        detail is a sentence or an object with a ``code``, a ``message`` (or
+        ``reason``), and a ``repairAction``; a repair may also sit beside the
+        detail. A body that is not a JSON object (a proxy's page) is its own
+        sentence. No more than ``REFUSAL_TEXT_LIMIT`` characters of any of
+        them are kept. Swift twin: ``ClusterClient.refusalDetail``."""
+        from .lens_transfer import REFUSAL_TEXT_LIMIT
+
         def text(value):
-            return self.scrub(value.strip()[:2000]) if isinstance(value, str) and value.strip() else None
+            if not isinstance(value, str) or not value.strip():
+                return None
+            return self.scrub(value.strip()[:REFUSAL_TEXT_LIMIT])
         try:
             response.read()
             body = response.json()
@@ -952,28 +958,38 @@ class RunnerClient:
 
     def _raise_for_lens_library(self, response, *, url: str) -> None:
         """Status handling for the lens-library routes alone. A refusal there
-        (every 4xx but 401 and 403) is reported as the engine gave it: its
-        code, its sentence, and its repair, as the Mac reports it
-        (``ClusterClient.lensLibraryAnswer``). Everything else is this
-        adapter's usual handling."""
+        is reported as the engine gave it: its code, its sentence, and its
+        repair, as the Mac reports it (``ClusterClient.lensLibraryRefusal``).
+        That is every 4xx but 401, and a 403 only when its body names a
+        ``code`` (the engine's own "HTTP transfer is not permitted" is one);
+        a 403 with no code, and every 401, are about the token. What the
+        engine leaves out is filled with one sentence and one repair, the
+        same on both clients. Everything else is this adapter's usual
+        handling."""
         status = response.status_code
         if status < 400:
             return
-        if status in (401, 403) or status >= 500:
+        if status == 401 or status >= 500:
             self._raise_for_status(response, url=url)
         code, sentence, repair = self._refusal_of(response)
+        if status == 403 and not code:
+            self._raise_for_status(response, url=url)
+        from . import lens_transfer
         raise RunnerRefusal(
-            sentence or f"The engine refused the lens library request ({status}).",
-            code=code or "lensLibraryRefused",
-            repair_action=repair or (
-                "the runner declined this request — read its reason "
-                "above; it is the engine's own sentence, not this "
-                "client's paraphrase of one."),
+            sentence or lens_transfer.refusal_fallback_reason(status),
+            code=code or lens_transfer.REFUSAL_FALLBACK_CODE,
+            repair_action=repair or lens_transfer.REFUSAL_FALLBACK_REPAIR,
             detail={"status": status, "url": url})
 
-    def _lens_library(self, method: str, path: str, **kwargs) -> dict:
-        return self._json(method, path, raise_for_status=self._raise_for_lens_library,
-                          timeout=self.diagnostic_timeout, **kwargs)
+    def _lens_library(self, method: str, path: str, *, whole_file: bool = False, **kwargs) -> dict:
+        """One lens-library call. ``whole_file`` marks the calls that make the
+        engine hash a whole file before it answers (a part, the whole-file
+        check, an adoption): those wait as long as a bundle upload does. The
+        others (the status read, the manifest, the record) answer at once and
+        keep this client's ordinary timeout."""
+        if whole_file:
+            kwargs["timeout"] = self.diagnostic_timeout
+        return self._json(method, path, raise_for_status=self._raise_for_lens_library, **kwargs)
 
     def _request(self, method: str, path: str, *, params=None, json_body=None,
                  content=None, headers=None, timeout=None, raise_for_status=None):
@@ -1459,7 +1475,7 @@ class RunnerClient:
         return self._lens_library(
             "PUT",
             f"/api/lens-library/{quote(sha256, safe='')}/parts/{int(part['index'])}",
-            content=chunks(),
+            whole_file=True, content=chunks(),
             headers={"Content-Type": "application/octet-stream",
                      "Content-Length": str(part["bytes"]),
                      "X-Content-SHA256": part["sha256"]})
@@ -1469,7 +1485,7 @@ class RunnerClient:
         the entry. Repeating it is safe."""
         return self._lens_library(
             "POST", f"/api/lens-library/{quote(sha256, safe='')}/complete",
-            json_body={})
+            whole_file=True, json_body={})
 
     def lens_library_register(self, record: dict) -> dict:
         """``POST /api/lens-library/register``: the lens record, into the
@@ -1482,7 +1498,7 @@ class RunnerClient:
     def lens_library_adopt(self, path: str, sha256: str) -> dict:
         """``POST /api/lens-library/adopt``: a copy already on the site. The
         site hashes it and keeps it; the copy is left alone."""
-        return self._lens_library("POST", "/api/lens-library/adopt",
+        return self._lens_library("POST", "/api/lens-library/adopt", whole_file=True,
                                   json_body={"path": path, "sha256": sha256})
 
     def lens_record(self, lens_id: str) -> dict:

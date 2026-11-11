@@ -145,6 +145,20 @@ import Testing
         var failComplete = false
         /// An answer the contract does not allow, by route name.
         var answers: [String: [String: Any]] = [:]
+        /// One failed answer for a call, by name (`status`, `begin`, `part`,
+        /// `complete`, `adopt`, `register`), given once.
+        enum Trouble { case answer(Int, Data), noAnswer }
+        var trouble: [String: Trouble] = [:]
+        /// How long each request was allowed to wait for its answer, by path.
+        var timeouts: [String: TimeInterval] = [:]
+
+        private func planned(_ call: String) throws -> (Data, Int)? {
+            guard let planned = trouble.removeValue(forKey: call) else { return nil }
+            switch planned {
+            case .noAnswer: throw URLError(.timedOut)
+            case .answer(let status, let data): return (data, status)
+            }
+        }
         var entries: [String: Data] = [:]
         var manifests: [String: [[String: Any]]] = [:]
         var received: [String: [Int: Data]] = [:]
@@ -179,6 +193,7 @@ import Testing
             let path = request.url?.path ?? ""
             let method = request.httpMethod ?? "GET"
             calls.append("\(method) \(path)")
+            timeouts[path] = request.timeoutInterval
             if path == "/api/capabilities" {
                 var document: [String: Any] = [
                     "remoteStudy": ["httpTransfer": !external, "externalTransferRequired": external]
@@ -220,6 +235,7 @@ import Testing
             }
             let body = LensLibraryTests.body(request)
             if path == "/api/lens-library/register" {
+                if let failed = try planned("register") { return failed }
                 registerBodies.append(body)
                 // Strict JSON, as the engine reads it: a bare NaN is not JSON.
                 guard let document = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
@@ -231,6 +247,7 @@ import Testing
                 return try json(["lensID": lensID, "registered": true, "changed": !known])
             }
             if path == "/api/lens-library/adopt" {
+                if let failed = try planned("adopt") { return failed }
                 let document = try JSONSerialization.jsonObject(with: body) as! [String: Any]
                 adoptions.append(document)
                 guard let data = adoptable[document["path"] as! String] else {
@@ -244,6 +261,8 @@ import Testing
                 return try json(["detail": "no such route"], 404)
             }
             let sha = pieces[2]
+            let call = pieces.count == 3 ? "status" : (pieces[3] == "parts" ? "part" : pieces[3])
+            if let failed = try planned(call) { return failed }
             if pieces.count == 3 {
                 return try json([
                     "held": entries[sha] != nil, "bytes": entries[sha].map { $0.count as Any } ?? NSNull(),
@@ -529,9 +548,12 @@ import Testing
             return -1
         } == Array(repeating: 0, count: 7) + [1, 2, 3])
         #expect(LensLibrary.alsoHeldClause([]) == "")
-        #expect(LensLibrary.alsoHeldClause(["a"]) == " This workspace holds the same lens under another name: a.")
+        #expect(LensLibrary.alsoHeldClause(["a"])
+            == " This workspace holds the same lens under another name: a. Each name has its own record and "
+            + "qualifications.")
         #expect(LensLibrary.alsoHeldClause(["a", "b", "c"])
-            == " This workspace holds the same lens under other names: a, b, and c.")
+            == " This workspace holds the same lens under other names: a, b, and c. Each name has its own record "
+            + "and qualifications.")
         for row in imports {
             guard case .string(let lens)? = row["lensID"], case .bool(let restored)? = row["restored"]
             else { Issue.record("malformed import row"); continue }
@@ -628,8 +650,8 @@ import Testing
             #expect(stopped.code == "lensUploadInterrupted" && stopped.state == .failed)
             #expect(stopped.repairAction == (try Self.text(try Self.fixture()["interrupted"], "repairAction")))
             #expect(stopped.reason.hasPrefix("Sending lens custom-lens-example to the site was interrupted "
-                + "before the site confirmed that it holds the whole lens ("))
-            #expect(!(stopped.reason + stopped.repairAction).contains("job"))
+                + "before the site confirmed that it holds the whole lens and has its record ("))
+            #expect(!(stopped.reason + stopped.repairAction).lowercased().contains("job"))
         }
         #expect(site.entries.isEmpty && site.registered.isEmpty)
         let received = site.received[lens.sha]?.keys.sorted() ?? []
@@ -646,6 +668,164 @@ import Testing
             #expect(result.message.hasPrefix("The site had already received every part of lens "
                 + "custom-lens-example and now holds it"))
         }
+    }
+
+    /// Every call a push makes to the engine, not only a part: a failure on
+    /// the engine, or a lost connection, says the one true thing to do next.
+    /// Nothing about jobs, which a push never makes. Python twin:
+    /// `test_any_call_of_a_push_that_gets_no_answer_says_to_run_it_again`.
+    @Test(arguments: ["status", "begin", "part", "complete", "adopt", "register"], ["a 500", "no answer"])
+    func anyCallOfAPushThatGetsNoAnswerSaysToRunItAgain(_ call: String, _ trouble: String) async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let site = Site()
+        var adopt: String?
+        if call == "adopt" {
+            adopt = "/scratch/incoming/jacobians.safetensors"
+            site.adoptable["/scratch/incoming/jacobians.safetensors"] = lens.data
+        }
+        // A long body: no more of it is shown than of any other refusal's text.
+        let body = Data((#"{"detail": ""# + String(repeating: "the engine stopped ", count: 400) + #""}"#).utf8)
+        site.trouble[call] = trouble == "no answer" ? .noAnswer : .answer(500, body)
+        let bridge = Bridge(lens)
+        let client = site.client()
+        do {
+            _ = try await LensLibraryRemote.push(
+                Self.lensID, adopt: adopt, client: client, root: lens.root, bridge: bridge.run)
+            Issue.record("an interrupted push must not succeed")
+        } catch let stopped as LensLibrary.Refusal {
+            #expect(stopped.code == (try Self.text(try Self.fixture()["interrupted"], "code")) && stopped.state == .failed)
+            #expect(stopped.repairAction == (try Self.text(try Self.fixture()["interrupted"], "repairAction")))
+            #expect(stopped.reason.hasPrefix("Sending lens custom-lens-example to the site was interrupted "
+                + "before the site confirmed that it holds the whole lens and has its record ("))
+            #expect(!(stopped.reason + stopped.repairAction).lowercased().contains("job"))
+            #expect(stopped.reason.unicodeScalars.count < LensLibrary.refusalTextLimit + 300)
+        }
+        #expect(site.trouble.isEmpty, "the planned failure was reached")
+        #expect(site.registered.isEmpty)
+        let held = site.entries[lens.sha] != nil
+        #expect(held == (call == "register"), "only the record was still to come when the lens was already whole")
+        // The repair, carried out: the push finishes, and sends only what the site still lacks.
+        site.calls.removeAll()
+        let result = try await LensLibraryRemote.push(
+            Self.lensID, adopt: adopt, client: client, root: lens.root, bridge: bridge.run)
+        #expect(site.entries == [lens.sha: lens.data] && site.registered[Self.lensID] != nil)
+        if held {
+            #expect(result.alreadyHeld && site.sent("PUT").isEmpty && site.sent("POST", containing: "begin").isEmpty)
+        }
+    }
+
+    /// A 401, and a 403 that names no code, are about the token: never an
+    /// interruption, and never the engine's refusal.
+    @Test(arguments: [401, 403])
+    func aTokenProblemOnAPartIsSaidAsThatAndIsNotAnInterruption(_ status: Int) async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let site = Site()
+        site.trouble["part"] = .answer(status, Data(#"{"detail": "Forbidden"}"#.utf8))
+        do {
+            _ = try await LensLibraryRemote.push(
+                Self.lensID, client: site.client(), root: lens.root, bridge: Bridge(lens).run)
+            Issue.record("a part the server will not take must stop the push")
+        } catch let error as ClusterClient.ClientError {
+            guard case .badResponse(let code, _) = error else { Issue.record("\(error)"); return }
+            #expect(code == status)
+        }
+        #expect(site.sent("POST", containing: "complete").isEmpty && site.registered.isEmpty)
+    }
+
+    /// The one 403 an engine sends on a transfer route is a refusal with a
+    /// code and a repair: HTTP transfer is not permitted there.
+    @Test func theEnginesOwn403IsItsRefusalAndNotAMissingToken() async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let site = Site()
+        site.trouble["part"] = .answer(403, Data(
+            (#"{"detail": {"code": "external_transfer_required", "message": "This site takes files only through "#
+                + #"its own transfer tool.", "repairAction": "Copy the file with the site's transfer tool."}}"#).utf8))
+        do {
+            _ = try await LensLibraryRemote.push(
+                Self.lensID, client: site.client(), root: lens.root, bridge: Bridge(lens).run)
+            Issue.record("a part the engine refuses must stop the push")
+        } catch let refusal as LensLibrary.Refusal {
+            #expect(refusal.code == "external_transfer_required" && refusal.state == .refused)
+            #expect(refusal.reason == "This site takes files only through its own transfer tool.")
+            #expect(refusal.repairAction == "Copy the file with the site's transfer tool.")
+        }
+    }
+
+    /// Each body in the fixture, with what both clients make of it: the
+    /// engine's own code, sentence, and repair, and one fallback sentence
+    /// and one fallback repair for what a body leaves out. Python twin:
+    /// `test_a_refusal_body_is_read_the_same_way_on_both_clients`.
+    @Test func aRefusalBodyIsReadTheSameWayOnBothClients() throws {
+        let fixture = try Self.fixture()
+        let cases = try Self.rows(fixture, "refusalBodies")
+        #expect(cases.count == 15)
+        for row in cases {
+            guard let status = LensLibrary.whole(row["status"]), case .string(let body)? = row["body"],
+                case .bool(let engine)? = row["engineRefusal"], case .string(let note)? = row["note"]
+            else { Issue.record("malformed refusal row"); continue }
+            let refusal = ClusterClient.lensLibraryRefusal(status: status, data: Data(body.utf8))
+            guard engine else {
+                #expect(refusal == nil, "\(note)")
+                continue
+            }
+            #expect(refusal.map { JSONValue.string($0.code) } == row["code"], "\(note)")
+            #expect(refusal.map { JSONValue.string($0.reason) } == row["reason"], "\(note)")
+            #expect(refusal.map { JSONValue.string($0.repairAction) } == row["repairAction"], "\(note)")
+            #expect(refusal?.state == .refused, "\(note)")
+        }
+        guard case .object(let fallback)? = fixture["refusalFallback"], let status = LensLibrary.whole(fallback["status"]),
+            let limit = LensLibrary.whole(fallback["textLimit"])
+        else { Issue.record("the fixture has no refusalFallback"); return }
+        #expect(.string(LensLibrary.refusalFallbackCode) == fallback["code"])
+        #expect(.string(LensLibrary.refusalFallbackReason(status: status)) == fallback["reason"])
+        #expect(.string(LensLibrary.refusalFallbackRepair) == fallback["repairAction"])
+        #expect(LensLibrary.refusalTextLimit == limit && limit == 2000)
+        // No more than the limit of anything a body says is shown.
+        let long = String(repeating: "x", count: limit + 500)
+        let kept = String(repeating: "x", count: limit)
+        let bodies = [
+            long, #"{"detail": ""# + long + #""}"#,
+            #"{"detail": {"code": ""# + long + #"", "message": ""# + long + #"", "repairAction": ""# + long + #""}}"#,
+        ]
+        for body in bodies {
+            let refusal = ClusterClient.lensLibraryRefusal(status: 409, data: Data(body.utf8))
+            #expect(refusal?.reason == kept)
+            if body.hasPrefix(#"{"detail": {"#) { #expect(refusal?.code == kept && refusal?.repairAction == kept) }
+        }
+    }
+
+    /// A part, the whole-file check, and an adoption make the engine hash a
+    /// file before it answers, so they wait as a bundle upload does. The
+    /// status read, the manifest, and the record answer at once, and keep
+    /// the ordinary timeout. Python twin:
+    /// `test_only_the_calls_that_hash_a_whole_file_wait_an_hour`.
+    @Test func onlyTheCallsThatHashAWholeFileWaitAnHour() async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let hour = ClusterClient.lensLibraryWholeFileTimeout
+        #expect(hour == 3600)
+        let site = Site()
+        let client = site.client()
+        _ = try await LensLibraryRemote.push(Self.lensID, client: client, root: lens.root, bridge: Bridge(lens).run)
+        _ = try await LensLibraryRemote.status(Self.lensID, client: client, root: lens.root, bridge: Bridge(lens).run)
+        func waits(_ site: Site, _ suffix: String) -> Set<TimeInterval> {
+            Set(site.timeouts.filter { $0.key.hasSuffix(suffix) }.map(\.value))
+        }
+        let ordinary = waits(site, "/api/capabilities")
+        #expect(ordinary.count == 1 && ordinary != [hour])
+        for part in 0..<3 { #expect(waits(site, "/parts/\(part)") == [hour]) }
+        #expect(waits(site, "/complete") == [hour])
+        #expect(waits(site, "/api/lens-library/\(lens.sha)") == ordinary)
+        #expect(waits(site, "/begin") == ordinary && waits(site, "/register") == ordinary)
+
+        let adopting = Site()
+        adopting.adoptable["/scratch/copy"] = lens.data
+        _ = try await LensLibraryRemote.push(
+            Self.lensID, adopt: "/scratch/copy", client: adopting.client(), root: lens.root, bridge: Bridge(lens).run)
+        #expect(waits(adopting, "/adopt") == [hour] && waits(adopting, "/register") == ordinary)
     }
 
     @Test func aLensTheSiteHoldsUploadsNothingAndStillRegisters() async throws {
@@ -1401,7 +1581,8 @@ import Testing
             && namedPreview["changed"] == .bool(false))
         #expect(namedPreview["alsoHeldAs"] == .array([.string(lensID)]) && namedPreview["existingLensID"] == nil)
         #expect(LensLibrary.copyMessage(for: .object(namedPreview))?.hasSuffix(
-            " to copy it. This workspace holds the same lens under another name: \(lensID).") == true)
+            " to copy it. This workspace holds the same lens under another name: \(lensID). Each name has its "
+            + "own record and qualifications.") == true)
         #expect(try studyFinds(oldName) == "not found", "a review writes nothing")
         naming["planSHA256"] = namedPreview["planSHA256"]
         let named = try await perform("lens-copy", naming)
@@ -1409,7 +1590,8 @@ import Testing
             && named["alsoHeldAs"] == .array([.string(lensID)]))
         #expect(LensLibrary.copyMessage(for: .object(named))
             == "Copied lens \(oldName) into this workspace as a clone that uses no extra disk space, under the "
-            + "same name and record. This workspace holds the same lens under another name: \(lensID).")
+            + "same name and record. This workspace holds the same lens under another name: \(lensID). Each "
+            + "name has its own record and qualifications.")
         // The study's name now resolves in the second workspace, and the
         // lens under it is whole: the same parts as the first workspace's.
         #expect(try studyFinds(oldName) == "\(oldName) \(plan.convertedSHA256)")
@@ -1423,7 +1605,7 @@ import Testing
         let namedAgain = try await perform("lens-copy", naming)
         #expect(LensLibrary.copyMessage(for: .object(namedAgain))
             == "This workspace already holds lens \(oldName); nothing was copied. This workspace holds the same "
-            + "lens under another name: \(lensID).")
+            + "lens under another name: \(lensID). Each name has its own record and qualifications.")
 
         // A record that holds numbers that are not finite (a qualification's
         // measured values): the bridge's answer is strict JSON, so it decodes
@@ -1447,7 +1629,8 @@ import Testing
         }
         // A repeated import answers with the record, qualifications and all.
         let found = try await perform("artifact-import", importing)
-        #expect(found["existing"] == .bool(true))
+        #expect(found["existing"] == .bool(true) && found["recordNonFiniteNumbers"] == .number(2))
+        #expect(repeated["recordNonFiniteNumbers"] == .number(0) && restored["recordNonFiniteNumbers"] == .number(0))
         guard case .object(let answered)? = found["record"], case .array(let qualifications)? = answered["qualifications"],
             case .object(let qualification)? = qualifications.first, case .object(let checks)? = qualification["checks"],
             case .object(let causal)? = checks["causal"]

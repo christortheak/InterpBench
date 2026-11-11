@@ -135,19 +135,39 @@ public enum LensLibrary {
         return Refusal(code: protocolCode, reason: problem.reason, repairAction: problem.repair, state: .failed)
     }
 
+    // MARK: A refusal that brings no code, no sentence, or no repair
+
+    /// An engine's refusal on a lens-library route that names no code, gives
+    /// no sentence, or names no repair gets these, on both clients. Python
+    /// twins: `lens_transfer.REFUSAL_FALLBACK_CODE`,
+    /// `refusal_fallback_reason`, and `REFUSAL_FALLBACK_REPAIR`.
+    public static let refusalFallbackCode = "lensLibraryRefused"
+    public static func refusalFallbackReason(status: Int) -> String {
+        "The engine refused the lens library request (\(status)) without saying why."
+    }
+    public static let refusalFallbackRepair =
+        "The engine named no repair. If its reason does not say what to change, look in the engine's "
+        + "log for this request."
+    /// No more of a refusal's text than this is shown, whatever sent it.
+    /// Python twin: `lens_transfer.REFUSAL_TEXT_LIMIT`.
+    public static let refusalTextLimit = 2000
+
     // MARK: An upload that did not finish, and a file that is not the plan's
 
-    /// A part, or the whole-file check, did not get its answer.
+    /// One of a push's calls to the engine did not get its answer.
     public static let interruptedCode = "lensUploadInterrupted"
     /// Python twin: `lens_transfer.RESUME_REPAIR`.
     public static let resumeRepair = "Run the command again: it sends only what the site still lacks."
 
+    /// True of each call a push makes (the status read, the manifest, a
+    /// part, the whole-file check, an adoption, the record): the push ends
+    /// only when the site has confirmed both the lens and its record.
     /// Python twin: `lens_transfer.interrupted_reason`.
     public static func interruptedReason(lensID: String, cause: String) -> String {
         let said = cause.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = said.hasSuffix(".") ? String(said.dropLast()) : said
         return "Sending lens \(lensID) to the site was interrupted before the site confirmed that it "
-            + "holds the whole lens (\(trimmed))."
+            + "holds the whole lens and has its record (\(trimmed))."
     }
 
     /// The lens file is not the one that was planned. Python twins:
@@ -235,7 +255,8 @@ public enum LensLibrary {
         default: listed = names.dropLast().joined(separator: ", ") + ", and " + last
         }
         return " This workspace holds the same lens under "
-            + (names.count == 1 ? "another name: " : "other names: ") + listed + "."
+            + (names.count == 1 ? "another name: " : "other names: ") + listed
+            + ". Each name has its own record and qualifications."
     }
 
     /// What a `lens-copy` answer says, true in every case; it ends by naming
@@ -572,15 +593,20 @@ public enum LensLibraryRemote {
         }
     }
 
-    /// Send one part, or ask for the whole-file check. When that gets no
-    /// answer (the connection, a timeout, or a failure on the engine), say
-    /// that running the command again resumes: what the site received, it
-    /// keeps. Python twin: `lens_transfer._send`.
+    /// One of a push's calls to the engine. When it gets no answer (the
+    /// connection, a timeout, or a failure on the engine), say that running
+    /// the command again resumes: what the site received, it keeps, and no
+    /// job is involved. A refusal (any 4xx, a missing token among them) is
+    /// not an interruption and is thrown as it is. Python twin:
+    /// `lens_transfer._send`.
     static func sending<T>(_ lensID: String, _ call: () async throws -> T) async throws -> T {
         func interrupted(_ cause: String) -> LensLibrary.Refusal {
-            LensLibrary.Refusal(
+            // The cause can be a whole response body; no more of it is shown
+            // than of any other refusal's text.
+            let shown = String(String.UnicodeScalarView(cause.unicodeScalars.prefix(LensLibrary.refusalTextLimit)))
+            return LensLibrary.Refusal(
                 code: LensLibrary.interruptedCode,
-                reason: LensLibrary.interruptedReason(lensID: lensID, cause: cause),
+                reason: LensLibrary.interruptedReason(lensID: lensID, cause: shown),
                 repairAction: LensLibrary.resumeRepair, state: .failed)
         }
         do {
@@ -627,7 +653,7 @@ public enum LensLibraryRemote {
             plan = try LensLibrary.Plan(try await bridge("lens-push-plan", payload))
         }
         let sha = plan.convertedSHA256
-        let status = try await client.lensLibraryStatus(sha)
+        let status = try await sending(lensID) { try await client.lensLibraryStatus(sha) }
         var result = PushResult(
             lensID: lensID, convertedSHA256: sha, bytes: plan.bytes, alreadyHeld: status.held,
             adopted: false, uploadedParts: 0, uploadedBytes: 0,
@@ -639,7 +665,7 @@ public enum LensLibraryRemote {
                 repairAction: LensLibrary.entryDiffersRepair)
         }
         if !status.held, let adopt {
-            _ = try await client.lensLibraryAdopt(path: adopt, sha256: sha)
+            _ = try await sending(lensID) { try await client.lensLibraryAdopt(path: adopt, sha256: sha) }
             result.adopted = true
         } else if !status.held {
             let remote = capabilities.remoteStudy
@@ -649,7 +675,9 @@ public enum LensLibraryRemote {
                     reason: LensLibrary.externalTransferReason(server: server),
                     repairAction: LensLibrary.externalTransferRepair(file: plan.file))
             }
-            let begun = try await client.lensLibraryBegin(sha, bytes: plan.bytes, parts: plan.parts)
+            let begun = try await sending(lensID) {
+                try await client.lensLibraryBegin(sha, bytes: plan.bytes, parts: plan.parts)
+            }
             if begun.held {
                 result.alreadyHeld = true
             } else {
@@ -670,7 +698,9 @@ public enum LensLibraryRemote {
                 }
             }
         }
-        let registration = try await client.lensLibraryRegister(recordJSON: plan.recordJSON)
+        let registration = try await sending(lensID) {
+            try await client.lensLibraryRegister(recordJSON: plan.recordJSON)
+        }
         guard registration.lensID == lensID else { throw LensLibrary.protocolFailure(.otherLens) }
         result.registered = registration.registered
         result.recordChanged = registration.changed

@@ -3319,7 +3319,7 @@ public struct ClusterClient: Sendable {
             throw LensLibrary.Refusal(
                 code: LensLibrary.oversizeCode,
                 reason: LensLibrary.oversizeReason(
-                    detail: Self.refusalDetail(responseData).message),
+                    detail: Self.refusalDetail(responseData).message ?? ""),
                 repairAction: LensLibrary.oversizeRepair)
         }
         try validate(response: response, data: responseData)
@@ -5920,56 +5920,82 @@ extension ClusterClient {
         var changed: Bool?
     }
 
-    /// What a server's refusal says: FastAPI's `{"detail": …}`, where the
-    /// detail is a sentence or an object with a `message` (or `reason`), a
-    /// `code`, and a `repairAction`; a repair may also sit beside the detail.
-    static func refusalDetail(_ data: Data) -> (code: String?, message: String, repair: String?) {
-        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard case .object(let body)? = try? JSONDecoder().decode(JSONValue.self, from: data) else {
-            return (nil, text, nil)
+    /// What a server's refusal says, each piece nil when the body gives
+    /// none: FastAPI's `{"detail": …}`, where the detail is a sentence or an
+    /// object with a `message` (or `reason`), a `code`, and a `repairAction`;
+    /// a repair may also sit beside the detail. A body that is not a JSON
+    /// object (a proxy's page) is its own sentence. No more than
+    /// `LensLibrary.refusalTextLimit` characters of any of them are kept.
+    /// Python twin: `RunnerClient._refusal_of`.
+    static func refusalDetail(_ data: Data) -> (code: String?, message: String?, repair: String?) {
+        func kept(_ text: String) -> String? {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return String(String.UnicodeScalarView(trimmed.unicodeScalars.prefix(LensLibrary.refusalTextLimit)))
         }
         func string(_ value: JSONValue?) -> String? {
-            if case .string(let text)? = value, !text.isEmpty { return text }
+            if case .string(let text)? = value { return kept(text) }
             return nil
+        }
+        guard case .object(let body)? = try? JSONDecoder().decode(JSONValue.self, from: data) else {
+            return (nil, kept(String(decoding: data, as: UTF8.self)), nil)
         }
         let outer = string(body["repairAction"])
         switch body["detail"] {
         case .string(let message)?:
-            return (nil, message, outer)
+            return (nil, kept(message), outer)
         case .object(let detail)?:
             return (
                 string(detail["code"]),
-                string(detail["message"]) ?? string(detail["reason"]) ?? text,
+                string(detail["message"]) ?? string(detail["reason"]),
                 string(detail["repairAction"]) ?? outer)
         default:
-            return (nil, text, outer)
+            return (nil, nil, outer)
         }
     }
 
-    /// A lens-library answer: a refusal (4xx) becomes the server's own
-    /// sentence, code, and repair; anything else is checked as usual.
+    /// The engine's own refusal on a lens-library route, or nil when the
+    /// answer is not one. A refusal is every 4xx but 401, and a 403 only
+    /// when its body names a `code` (the engine's own "HTTP transfer is not
+    /// permitted" is one); a 403 with no code, and every 401, are about the
+    /// token. What the engine leaves out is filled with one sentence and one
+    /// repair, the same on both clients. Python twin:
+    /// `RunnerClient._raise_for_lens_library`.
+    static func lensLibraryRefusal(status: Int, data: Data) -> LensLibrary.Refusal? {
+        guard (400..<500).contains(status), status != 401 else { return nil }
+        let detail = refusalDetail(data)
+        if status == 403, detail.code == nil { return nil }
+        return LensLibrary.Refusal(
+            code: detail.code ?? LensLibrary.refusalFallbackCode,
+            reason: detail.message ?? LensLibrary.refusalFallbackReason(status: status),
+            repairAction: detail.repair ?? LensLibrary.refusalFallbackRepair)
+    }
+
+    /// A lens-library answer: a refusal becomes the engine's own sentence,
+    /// code, and repair; anything else is checked as usual.
     private func lensLibraryAnswer(_ data: Data, _ response: URLResponse) throws -> Data {
-        if let http = response as? HTTPURLResponse, (400..<500).contains(http.statusCode),
-            ![401, 403].contains(http.statusCode)
+        if let http = response as? HTTPURLResponse,
+            let refusal = Self.lensLibraryRefusal(status: http.statusCode, data: data)
         {
-            let detail = Self.refusalDetail(data)
-            throw LensLibrary.Refusal(
-                code: detail.code ?? "lensLibraryRefused",
-                reason: detail.message.isEmpty
-                    ? "The server refused the lens library request (\(http.statusCode))."
-                    : detail.message,
-                repairAction: detail.repair ?? "")
+            throw refusal
         }
         try validate(response: response, data: data)
         return data
     }
 
+    /// How long a lens-library call waits for its answer. The calls that
+    /// make the engine hash a whole file before it answers (a part, the
+    /// whole-file check, an adoption) wait as long as a bundle upload does.
+    /// The others (the status read, the manifest, the record) answer at once
+    /// and keep the ordinary timeout. Python twin:
+    /// `RunnerClient._lens_library`.
+    static let lensLibraryWholeFileTimeout: TimeInterval = 3600
+
     private func lensLibraryJSON<T: Decodable>(
-        _ method: String, _ path: String, body: Data? = nil
+        _ method: String, _ path: String, body: Data? = nil, wholeFile: Bool = false
     ) async throws -> T {
         var request = try makeRequest(path: path, method: method)
-        // The site hashes a whole lens before it answers `complete` or `adopt`.
-        request.timeoutInterval = 3600
+        if wholeFile { request.timeoutInterval = Self.lensLibraryWholeFileTimeout }
         if let body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -6010,14 +6036,14 @@ extension ClusterClient {
             path: "/api/lens-library/\(sha256)/parts/\(part.index)", method: "PUT")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(part.sha256, forHTTPHeaderField: "X-Content-SHA256")
-        request.timeoutInterval = 3600
+        request.timeoutInterval = Self.lensLibraryWholeFileTimeout
         let (data, response) = try await session.upload(for: request, fromFile: piece)
         _ = try lensLibraryAnswer(data, response)
     }
 
     func lensLibraryComplete(_ sha256: String) async throws -> LensLibraryHeld {
         try await lensLibraryJSON(
-            "POST", "/api/lens-library/\(sha256)/complete", body: Data("{}".utf8))
+            "POST", "/api/lens-library/\(sha256)/complete", body: Data("{}".utf8), wholeFile: true)
     }
 
     /// The record travels as the exact JSON text the Python client read from
@@ -6036,7 +6062,7 @@ extension ClusterClient {
         }
         return try await lensLibraryJSON(
             "POST", "/api/lens-library/adopt",
-            body: try encoder.encode(Body(path: path, sha256: sha256)))
+            body: try encoder.encode(Body(path: path, sha256: sha256)), wholeFile: true)
     }
 
     /// The site workspace's record of one lens (`GET /api/jlens/lenses/{id}`).
