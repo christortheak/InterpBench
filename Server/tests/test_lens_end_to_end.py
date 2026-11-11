@@ -556,6 +556,30 @@ def test_an_interrupted_push_is_resumed_and_sends_only_what_the_site_lacks(world
     assert json.loads(record_file(engine.root, lens_id).read_bytes())['converted']['sha256'] == sha
 
 
+def test_an_engine_that_fails_is_a_failure_to_the_client_and_never_a_refusal(world, monkeypatch):
+    """The engine breaks while it answers (here, its library's status read raises). Over a network that is a
+    500, and this harness hands the client exactly that. lens-status and lens-push each say the engine did not
+    answer and to run the command again; neither calls it a refusal, and neither speaks of jobs."""
+    root, lens_id, _ = world.researcher()
+    engine = world.engine()
+
+    def broken(sha):
+        raise RuntimeError('the engine broke while reading its library')
+    monkeypatch.setattr(lens_library, 'status', broken)
+    assert engine.get('/api/lens-library/' + 'a' * 64).status_code == 500
+
+    code, answered = status(world, engine, root, lens_id)
+    assert (code, answered['state'], answered['error']['code']) == (70, 'failed', 'lensStatusUnanswered')
+    assert answered['error']['repairAction'] == FIXTURE['statusUnanswered']['repairAction']
+    assert answered['error']['reason'].startswith(f'The engine did not answer lens-status about lens {lens_id} (')
+    code, pushed = push(world, engine, root, lens_id)
+    assert (code, pushed['state'], pushed['error']['code']) == (70, 'failed', 'lensUploadInterrupted')
+    assert pushed['error']['repairAction'] == FIXTURE['interrupted']['repairAction']
+    for answer in (answered, pushed):
+        assert 'job' not in json.dumps(answer['error']).lower()
+    assert engine.sent('PUT') == [] and engine.sent('POST') == []
+
+
 # --- 5. a site that moves large files with its own tool --------------------------
 
 def test_a_site_that_forbids_http_transfer_adopts_a_copy_placed_beneath_its_run_root(world):
