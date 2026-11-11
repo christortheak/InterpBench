@@ -241,9 +241,9 @@ outside any workspace: one folder per file, named by the file's SHA-256 (the
 record and its qualifications live in workspaces (and, once `lens-push` has
 registered the lens, in the engine's own lens store), and results live in
 workspaces. The workspace a lens was imported in stays its source: anything the
-library holds can be sent again with `lens-push`. An entry is created once and never edited,
-and no verb deletes one. A workspace's own `runs/jlens-lenses/` is not a lens
-library; it is where that workspace's lenses live.
+library holds can be sent again with `lens-push`. An entry is created once and
+never edited, and no verb deletes one. A workspace's own `runs/jlens-lenses/` is
+not a lens library; it is where that workspace's lenses live.
 
 Where the library is:
 
