@@ -955,6 +955,14 @@ class SlurmExecutor:
         if self.profile.node_cache_root:
             env.setdefault("STEERLAB_NODE_CACHE_ROOT", self.profile.node_cache_root)
             env.setdefault("HF_HOME", self.profile.node_cache_root)
+        # The lens library (public issues #13 and #14) rides the bundle for the
+        # same reason the node cache does: a job under --export=NONE starts
+        # with only what is written here, and a job that reads a lens a
+        # request refers to, or keeps the lens it has just fitted, must find
+        # the same folder the controller checked. Absent when this deployment
+        # has no library, so its scripts are unchanged.
+        if self.profile.lens_library_root:
+            env.setdefault("STEERLAB_LENS_LIBRARY_ROOT", self.profile.lens_library_root)
         # Shared HF cache + offline policy (first live cluster shakedown,
         # 2026-07-16): jobs run under --export=NONE, so the HF_HOME /
         # HF_HUB_OFFLINE the controller sourced from the bootstrap env file

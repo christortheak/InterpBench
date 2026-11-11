@@ -69,7 +69,8 @@ def workspace_action(action, payload):
     }
     if action not in required or not isinstance(payload, dict): raise archives.MalformedRequest('Unknown diagnostic workspace operation.')
     fields = required[action] | {'workspaceRoot'}
-    optional = {'import': {'expectedContext'}, 'report': {'out'}, 'package': {'customCodeSHA256'}}.get(action, set())
+    optional = {'import': {'expectedContext'}, 'report': {'out'}, 'package': {'customCodeSHA256', 'lensReference'},
+                'input-plan': {'lensReference'}}.get(action, set())
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.MalformedRequest('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
@@ -124,10 +125,15 @@ def workspace_action(action, payload):
         return method_authoring.publish(payload['operation'], answers, root, payload['destination'], payload['planSHA256'])
     if action in ('input-plan', 'package'):
         from ..experiment import diagnostic_inputs
+        # `lensReference: true` (`--lens-reference`): each lens is named by its
+        # hash for a site that holds it, and its converted file is left out.
+        # Absent or false, the request carries its lenses, as before.
+        reference = payload.get('lensReference', False)
+        if type(reference) is not bool: raise archives.MalformedRequest('lensReference is true or false.')
         request = json.loads(Path(payload['requestFile']).read_bytes())
-        if action == 'input-plan': return diagnostic_inputs.plan(request, root)
+        if action == 'input-plan': return diagnostic_inputs.plan(request, root, lens_reference=reference)
         return diagnostic_inputs.package(request, root, payload['archivePath'], payload['planSHA256'],
-                                         acknowledge=payload.get('customCodeSHA256'))
+                                         acknowledge=payload.get('customCodeSHA256'), lens_reference=reference)
     if action == 'import': return archives.import_evidence(payload['archivePath'], payload['archiveSHA256'], root, expected_context=payload.get('expectedContext'))
     if action == 'verify-custody': return {'verified': True, 'receipt': archives.verify(payload['receiptSHA256'], root), 'receiptSHA256': payload['receiptSHA256']}
     if action == 'custody': return archives.inventory(root)

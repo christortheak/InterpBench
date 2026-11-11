@@ -81,6 +81,10 @@ class ServerProfile:
     slurm_walltime: str | None
     slurm_memory: str | None
     maintenance_calendar_path: str | None
+    #: Where this deployment keeps converted lens files, once each, under their
+    #: SHA-256 (``jlens/lens_library.py``). ``None`` means it keeps none: a
+    #: request must then carry its lens. See ``_lens_library_root``.
+    lens_library_root: str | None = None
 
     @classmethod
     def from_env(cls) -> "ServerProfile":
@@ -88,12 +92,13 @@ class ServerProfile:
         metadata = (_expanded_path(os.environ.get("STEERLAB_METADATA_ROOT"))
                     or os.path.join(root, ".steerlab"))
         max_loaded = os.environ.get("STEERLAB_MAX_LOADED_MODELS")
+        executor = _choice("STEERLAB_EXECUTOR", "local", _VALID_EXECUTORS)
         return cls(
             profile=_choice("STEERLAB_SERVER_PROFILE", "local", _VALID_PROFILES),
             launch_topology=_choice("STEERLAB_LAUNCH_TOPOLOGY", "local", _VALID_TOPOLOGIES),
             bind=os.environ.get("STEERLAB_BIND", "127.0.0.1"),
             auth_mode=_choice("STEERLAB_AUTH_MODE", "none", _VALID_AUTH),
-            executor=_choice("STEERLAB_EXECUTOR", "local", _VALID_EXECUTORS),
+            executor=executor,
             max_loaded_models=(int(max_loaded) if max_loaded else None),
             root=root,
             metadata_root=metadata,
@@ -112,6 +117,7 @@ class ServerProfile:
             slurm_walltime=os.environ.get("STEERLAB_SLURM_WALLTIME"),
             slurm_memory=os.environ.get("STEERLAB_SLURM_MEMORY"),
             maintenance_calendar_path=os.environ.get("STEERLAB_MAINTENANCE_CALENDAR"),
+            lens_library_root=_lens_library_root(executor, metadata),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +151,49 @@ def _expanded_path(value: str | None) -> str | None:
     if not value:
         return None
     return os.path.expanduser(os.path.expandvars(value))
+
+
+def _lens_library_root(executor: str, metadata_root: str) -> str | None:
+    """The lens library's folder, or ``None`` when this engine has none.
+
+    - ``STEERLAB_LENS_LIBRARY_ROOT`` set to a folder: that folder, on any
+      engine (a site profile renders the variable from its ``lensLibrary``
+      storage role).
+    - Set but empty: none, on any engine. An engine sets it that way for a
+      process it launches on the same machine, so the child answers as its
+      launcher does (the local executor drops the scheduler's job id, which
+      the last rule would otherwise have read).
+    - Unset: ``<metadata root>/lens-library``, and only on an engine whose
+      service role is ``runner`` (``STEERLAB_SERVICE_ROLE=runner``), that runs
+      its work on this machine, and that is not itself inside a scheduler
+      job. A runner receives staged requests and holds no workspace of its
+      own, so it is where a lens sent once is worth keeping.
+
+    Everything else has none unless one is declared. A workbench engine, the
+    default role, serves a researcher's own workspace: its lenses already
+    live there, a workspace file always wins, and a library it made for
+    itself would only collect second copies. A deployment that runs its work
+    through Slurm is on cluster storage, whose quotas and purge rules only
+    the site knows, so a folder there is never guessed; the same holds inside
+    a scheduler job, which starts with only the variables its bundle carries.
+
+    The role is read here without judging it: anything other than ``runner``
+    is not a runner for this rule, and an invalid role is reported where
+    roles are enforced (``service_authority``).
+    """
+    raw = os.environ.get("STEERLAB_LENS_LIBRARY_ROOT")
+    declared = _expanded_path(raw)
+    if declared:
+        # Absolute, so the one folder is named wherever it is read from: a
+        # job changes directory to its execution root, and a relative value
+        # read there would name a different folder.
+        return os.path.abspath(declared)
+    if raw is not None:
+        return None
+    runner = os.environ.get("STEERLAB_SERVICE_ROLE") == "runner"
+    if not runner or executor == "slurm" or os.environ.get("SLURM_JOB_ID"):
+        return None
+    return os.path.abspath(os.path.join(metadata_root, "lens-library"))
 
 
 def _choice(name: str, default: str, allowed: set[str]) -> str:
@@ -220,6 +269,13 @@ def _prompt_reading_description() -> dict[str, Any]:
     return prompt_reading.engine_description()
 
 
+def _lens_library_capability(profile: "ServerProfile") -> dict[str, Any]:
+    """Whether this engine keeps lenses, and the largest part it takes when
+    one is sent (imported lazily: the library module reads this one)."""
+    from ..jlens import lens_library
+    return lens_library.capability(profile.lens_library_root)
+
+
 def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
     profile = ServerProfile.from_env()
     role = server_role(profile)
@@ -250,6 +306,15 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
         choice_reread.CAPABILITY_KEY: [choice_reread.REMOTE_OPTION,
                                        choice_reread.SOURCE_RUN_OPTION],
         "sciencePlacement": science_placement.capabilities(profile),
+        # Public issues #13 and #14: this engine keeps converted lens files in
+        # a library outside any workspace, found by their SHA-256, so a
+        # request can refer to its lens (`--lens-reference`) instead of
+        # carrying it, and a lens is sent once, in parts no larger than
+        # `partMaxBytes` (the `/api/lens-library/` routes). `available` is
+        # false when no folder is set for it or the folder cannot be written;
+        # a client checks it before sending a lens or a request that refers
+        # to one, and an engine without this section has no library at all.
+        "lensLibrary": _lens_library_capability(profile),
         "serviceRole": service_role(),
         "serverVersion": __version__,
         "runningEngineVersion": RUNNING_ENGINE_VERSION,
@@ -279,6 +344,7 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             "runRoot": profile.run_root,
             "archiveRoot": profile.archive_root,
             "nodeCacheRoot": profile.node_cache_root,
+            "lensLibraryRoot": profile.lens_library_root,
             "absoluteUserPaths": "local-profile-only",
         },
         "availableJobTypes": [
@@ -543,6 +609,25 @@ def validate_profile(profile: ServerProfile | None = None) -> dict[str, Any]:
         _check_root(add, "archiveRoot", profile.archive_root, must_write=False)
     if profile.node_cache_root:
         _check_root(add, "nodeCacheRoot", profile.node_cache_root, must_write=True)
+    # Only a DECLARED lens library is checked: the folder is created on first
+    # use, so it need not exist yet, but something above it must let this
+    # engine create it. A site that names a folder it cannot write would
+    # otherwise learn so from `lensLibrary.available: false`, with no reason.
+    # The check says what was probed and nothing more: whether the account
+    # running this engine can write there. Entries are created under that
+    # account's umask, so who else may read them is the site's own setting.
+    if os.environ.get("STEERLAB_LENS_LIBRARY_ROOT") and profile.lens_library_root:
+        from ..jlens import lens_library
+        if lens_library.writable(profile.lens_library_root):
+            add("lensLibraryRoot", "ok",
+                f"{profile.lens_library_root} can be written by the account "
+                "running this engine", path=profile.lens_library_root)
+        else:
+            add("lensLibraryRoot", "warn",
+                f"{profile.lens_library_root} cannot be written by the account "
+                "running this engine, so no lens can be added to it and "
+                "`lensLibrary.available` is false. Create the folder, or make "
+                "it writable for that account", path=profile.lens_library_root)
 
     if profile.executor == "slurm":
         # All four scheduler binaries are site data (WP5 G5, audit c6-c8 —
