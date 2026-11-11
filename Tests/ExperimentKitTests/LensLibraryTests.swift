@@ -684,7 +684,8 @@ import Testing
     /// the engine, or a lost connection, says the one true thing to do next.
     /// Nothing about jobs, which a push never makes. Python twin:
     /// `test_any_call_of_a_push_that_gets_no_answer_says_to_run_it_again`.
-    @Test(arguments: ["status", "begin", "part", "complete", "adopt", "register"], ["a 500", "no answer"])
+    @Test(
+        arguments: ["capabilities", "status", "begin", "part", "complete", "adopt", "register"], ["a 500", "no answer"])
     func anyCallOfAPushThatGetsNoAnswerSaysToRunItAgain(_ call: String, _ trouble: String) async throws {
         let lens = try Lens()
         defer { lens.remove() }

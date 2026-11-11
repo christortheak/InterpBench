@@ -420,12 +420,13 @@ def test_an_interrupted_push_says_to_run_it_again_and_then_sends_only_what_is_mi
         == FIXTURE['interrupted']['reason']
 
 
-@pytest.mark.parametrize('call', ['status', 'begin', 'part', 'complete', 'adopt', 'register'])
+@pytest.mark.parametrize('call', ['capabilities', 'status', 'begin', 'part', 'complete', 'adopt', 'register'])
 @pytest.mark.parametrize('trouble', ['a 500', 'a 503', 'no answer'])
 def test_any_call_of_a_push_that_gets_no_answer_says_to_run_it_again(tmp_path, call, trouble):
-    """Every call a push makes to the engine, not only a part: a failure on
-    the engine, or a lost connection, says the one true thing to do next.
-    Nothing about jobs, which a push never makes."""
+    """Every call a push makes to the engine, not only a part, and the first
+    one (the capability read) among them: a failure on the engine, or a lost
+    connection, says the one true thing to do next. Nothing about jobs,
+    which a push never makes."""
     root, lens_id = make_lens(tmp_path)
     data = converted(root, lens_id).read_bytes()
     sha = hashlib.sha256(data).hexdigest()

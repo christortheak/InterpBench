@@ -160,9 +160,10 @@ def refusal_fallback_reason(status):
 
 def interrupted_reason(lens_id, cause):
     """One of a push's calls to the engine got no answer (a lost connection,
-    a timeout, or a failure on the engine): the status read, the manifest, a
-    part, the whole-file check, an adoption, or the record. True of each: the
-    push ends only when the site has confirmed both the lens and its record.
+    a timeout, or a failure on the engine): the capability read, the status
+    read, the manifest, a part, the whole-file check, an adoption, or the
+    record. True of each: the push ends only when the site has confirmed both
+    the lens and its record.
     Swift twin ``LensLibrary.interruptedReason``."""
     cause = str(cause).strip().rstrip('.')
     return (f'Sending lens {lens_id} to the site was interrupted before the site confirmed that it holds '
@@ -527,7 +528,7 @@ def push(client, root, lens_id, *, adopt=None):
     ``adopt``, the bytes are a copy already on the site at that path, and the
     site checks it against the lens's hash."""
     from .runner import RunnerRefusal
-    capabilities = client.capabilities()
+    capabilities = _send(client, lens_id, client.capabilities)
     if not library_available(capabilities):
         raise RunnerRefusal(library_unavailable_reason(client.base_url), code=LIBRARY_UNAVAILABLE_CODE,
                             repair_action=PUSH_UNAVAILABLE_REPAIR)

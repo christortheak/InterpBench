@@ -159,9 +159,10 @@ public enum LensLibrary {
     /// Python twin: `lens_transfer.RESUME_REPAIR`.
     public static let resumeRepair = "Run the command again: it sends only what the site still lacks."
 
-    /// True of each call a push makes (the status read, the manifest, a
-    /// part, the whole-file check, an adoption, the record): the push ends
-    /// only when the site has confirmed both the lens and its record.
+    /// True of each call a push makes (the capability read, the status read,
+    /// the manifest, a part, the whole-file check, an adoption, the record):
+    /// the push ends only when the site has confirmed both the lens and its
+    /// record.
     /// Python twin: `lens_transfer.interrupted_reason`.
     public static func interruptedReason(lensID: String, cause: String) -> String {
         let said = cause.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -668,7 +669,7 @@ public enum LensLibraryRemote {
         bridge: Bridge = localBridge
     ) async throws -> PushResult {
         let server = client.profile.baseURL.absoluteString
-        let capabilities = try await client.capabilities()
+        let capabilities = try await sending(lensID) { try await client.capabilities() }
         guard capabilities.lensLibraryAvailable else {
             throw LensLibrary.Refusal(
                 code: LensLibrary.unavailableCode,
