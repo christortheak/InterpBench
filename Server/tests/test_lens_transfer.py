@@ -673,10 +673,26 @@ def test_a_number_that_is_not_finite_never_breaks_a_push_or_the_bridge(tmp_path,
     # A repeated import answers with the lens's record, qualifications and all.
     description = tmp_path / 'workspace-source' / 'import.json'
     plan = imports.inspect_source(description, root)
+    found = imports.publish(description, root, plan['planSHA256'])
+    assert found['existing'] is True and found['record']['qualifications'][0]['checks']['causal'] == {
+        'score': None, 'margin': None, 'seed': 2 ** 64 - 1}
     answer = strict_loads(bridge_text('artifact-import', {'workspaceRoot': str(root), 'descriptionFile': str(description),
                                                           'planSHA256': plan['planSHA256']}))
     assert answer['result']['existing'] is True
     assert answer['result']['record']['qualifications'][0]['checks']['causal']['score'] is None
+
+
+def test_the_bridge_prints_strict_json_whatever_an_action_answers(monkeypatch, capsys):
+    """Not only the lens actions: any answer with a number that is not finite
+    reaches the Mac as null, where a bare NaN would read as no answer at all."""
+    monkeypatch.setattr(diagnostic_commands, 'bridge_action', lambda action, payload: {
+        'changed': False, 'values': [1.5, float('nan'), {'deep': float('-inf')}], 'count': 3})
+    document = {'action': 'custody', 'payload': {}, 'clientSHA256': diagnostic_workspace.source_sha256()}
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(json.dumps(document)))
+    capsys.readouterr()
+    assert diagnostic_workspace.main() == 0
+    answer = strict_loads(capsys.readouterr().out)
+    assert answer['ok'] is True and answer['result'] == {'changed': False, 'values': [1.5, None, {'deep': None}], 'count': 3}
 
 
 # --- a lens file that is not the one that was planned ---------------------------
