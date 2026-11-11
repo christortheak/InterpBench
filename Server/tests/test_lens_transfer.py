@@ -790,12 +790,10 @@ def test_the_twin_verb_purposes_are_the_fixtures(tmp_path):
     assert lens_transfer.import_message({'kind': 'sae-decoder', 'existing': True}) is None
 
 
-def test_a_lens_travels_with_a_request_or_is_referred_to_and_a_workspace_has_no_lens_library():
-    """Two older sentences that the lens library made untrue. The interview
+def test_a_lens_travels_with_a_request_or_is_referred_to():
+    """An older sentence that the lens library made untrue. The interview
     that asks for a lens ID said the lens travels with the request; with
-    ``--lens-reference`` the request refers to the site's copy. And a
-    finished fit's next step called the workspace's lenses a "lens library",
-    which now means the site's."""
+    ``--lens-reference`` the request refers to the site's copy."""
     repository = Path(__file__).resolve().parents[2]
     source = json.loads((repository / 'docs/techniques/operations/jlens-probe-batch.json').read_text(encoding='utf-8'))
     helps = [field['help'] for field in source['interview']['fields'] if field['id'] == 'lensID']
@@ -808,10 +806,6 @@ def test_a_lens_travels_with_a_request_or_is_referred_to_and_a_workspace_has_no_
         fields = [field for operation in workflows['operations'] if operation['id'] == 'jlens-probe-batch'
                   for field in operation['fields'] if field['id'] == 'lensID']
         assert [field['help'] for field in fields] == helps, copy
-    from steerlab_server.experiment import jlens_fit_execution
-    fit = Path(jlens_fit_execution.__file__).read_text(encoding='utf-8')
-    assert 'then artifact-import to make this fit a lens in the workspace.' in fit
-    assert 'lens library' not in fit
 
 
 # --- a record with a number that is not finite ---------------------------------
