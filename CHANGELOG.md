@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.24] — 2026-11-11
+
 - **A site keeps each lens once, and a request can refer to it** (public
   issues #13 and #14). The converted file of a lens for a large model is
   several gigabytes. A managed request carried that file in its archive, so
