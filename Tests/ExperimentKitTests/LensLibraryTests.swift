@@ -139,6 +139,10 @@ import Testing
         var partMax = 100
         var external = false
         var servesRecords = true
+        /// The library has an entry for this lens that a newer engine wrote:
+        /// the status read says so beside `held: false`, as the engine does,
+        /// and the manifest is refused in the engine's words.
+        var newerEntry = false
         /// Answer one part with a 500, or with no answer at all.
         var failPart: Int?
         var dropPart: Int?
@@ -267,6 +271,11 @@ import Testing
             let call = pieces.count == 3 ? "status" : (pieces[3] == "parts" ? "part" : pieces[3])
             if let failed = try planned(call) { return failed }
             if pieces.count == 3 {
+                if newerEntry {
+                    return try json([
+                        "held": false, "bytes": NSNull(), "receivedParts": NSNull(), "newerEntry": true,
+                    ])
+                }
                 return try json([
                     "held": entries[sha] != nil, "bytes": entries[sha].map { $0.count as Any } ?? NSNull(),
                     "receivedParts": received[sha].map { $0.keys.sorted() as Any } ?? NSNull(),
@@ -274,6 +283,11 @@ import Testing
             }
             switch pieces[3] {
             case "begin":
+                if newerEntry {
+                    return try refusal(
+                        409, "lensLibraryEntryNewer", LensLibraryTests.newerEntrySentence(sha),
+                        LensLibraryTests.newerEntryRepair)
+                }
                 if entries[sha] != nil { return try json(["held": true, "missingParts": [Int]()]) }
                 let manifest = try JSONSerialization.jsonObject(with: body) as! [String: Any]
                 let parts = manifest["parts"] as! [[String: Any]]
@@ -946,6 +960,44 @@ import Testing
             && onlyReason.repair == "Compare the two records.")
         let bare = ClusterClient.refusalDetail(Data(#"{"detail": "the body is too large"}"#.utf8))
         #expect(bare.code == nil && bare.message == "the body is too large" && bare.repair == nil)
+    }
+
+    /// What the engine says of an entry whose record names a later schema
+    /// than its own (`jlens/lens_library.py`, `newer`), word for word.
+    fileprivate static func newerEntrySentence(_ sha: String) -> String {
+        "The lens library's entry for \(sha) was written by a newer version of the engine (entry schema 2; "
+            + "this engine reads schema 1), so this engine left it as it is and did not read it."
+    }
+    fileprivate static let newerEntryRepair =
+        "Update this engine to the version that wrote the entry, or a later one, then try again."
+
+    /// The engine's status answer can carry a field this client does not
+    /// know (`newerEntry: true`, beside `held: false`). It is read like any
+    /// other answer, and the push that follows is refused in the engine's
+    /// own words, before a part is sent.
+    @Test func anEntryANewerEngineWroteIsReadByStatusAndRefusedByNameOnAPush() async throws {
+        let lens = try Lens()
+        defer { lens.remove() }
+        let site = Site()
+        site.newerEntry = true
+        let bridge = Bridge(lens)
+        let client = site.client()
+        let answered = try await LensLibraryRemote.status(
+            Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+        #expect(!answered.held && answered.libraryAvailable && answered.receivedParts == nil)
+        let decoded = try JSONDecoder().decode(
+            ClusterClient.LensLibraryStatus.self,
+            from: Data(#"{"held": false, "bytes": null, "receivedParts": null, "newerEntry": true}"#.utf8))
+        #expect(!decoded.held && decoded.bytes == nil && decoded.receivedParts == nil)
+        do {
+            _ = try await LensLibraryRemote.push(Self.lensID, client: client, root: lens.root, bridge: bridge.run)
+            Issue.record("an entry a newer engine wrote must not be sent over")
+        } catch let refusal as LensLibrary.Refusal {
+            #expect(refusal.code == "lensLibraryEntryNewer" && refusal.state == .refused)
+            #expect(refusal.reason == Self.newerEntrySentence(lens.sha))
+            #expect(refusal.repairAction == Self.newerEntryRepair)
+        }
+        #expect(site.sent("PUT").isEmpty && site.registered.isEmpty)
     }
 
     @Test func anEntryOfAnotherSizeAndAnAnswerTheContractDoesNotAllow() async throws {
@@ -1723,6 +1775,157 @@ import Testing
             case .object(let causal)? = checks["causal"]
         else { Issue.record("the record's qualification did not arrive"); return }
         #expect(causal["score"] == .null && causal["margin"] == .null)
+    }
+
+    /// `science input-plan` and `science package` with `--lens-reference`,
+    /// from the command line's own arguments through the real Python client
+    /// to the planner the engine shares with it. The plan names the lens by
+    /// hash and leaves its converted file out; the archive that results is
+    /// one this Mac's upload check recognises as referring to its lens, and
+    /// the same request without the flag is not; and the planner's own
+    /// refusal of a lens that cannot be referred to arrives with its code
+    /// and its repair.
+    @Test func theRealBridgePackagesARequestThatRefersToItsLens() async throws {
+        let python = URL(filePath: try #require(
+            ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"],
+            "Set STEERLAB_TEST_PYTHON to run the real Python client."))
+        let source = Self.repository.appending(component: "Server")
+        let directory = try Self.temporary()
+        let root = directory.appending(component: "workspace")
+        try FileManager.default.createDirectory(
+            at: root.appending(component: "prompts"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func perform(_ action: String, _ payload: [String: JSONValue]) async throws -> [String: JSONValue] {
+            guard case .object(let object) = try await DiagnosticWorkspace.perform(
+                action, payload: payload, python: python, source: source)
+            else { throw ExperimentError(reason: "no answer") }
+            return object
+        }
+
+        // Two 2x2 float32 layers in one safetensors file, imported as a lens.
+        let header: [String: Any] = [
+            "a": ["dtype": "F32", "shape": [2, 2], "data_offsets": [0, 16]],
+            "b": ["dtype": "F32", "shape": [2, 2], "data_offsets": [16, 32]],
+        ]
+        var headerData = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
+        while headerData.count % 8 != 0 { headerData.append(0x20) }
+        var length = UInt64(headerData.count).littleEndian
+        var tensor = withUnsafeBytes(of: &length) { Data($0) }
+        tensor.append(headerData)
+        for value in (1...8).map(Float.init) {
+            var bits = value.bitPattern.littleEndian
+            tensor.append(withUnsafeBytes(of: &bits) { Data($0) })
+        }
+        try tensor.write(to: directory.appending(component: "weights.safetensors"))
+        let description = directory.appending(component: "import.json")
+        let spec: [String: Any] = [
+            "schemaVersion": 1, "kind": "jlens", "modelID": "example/model", "hiddenSize": 2,
+            "layerCount": 3, "tensorFile": "weights.safetensors",
+            "lens": ["targetLayer": 2, "layers": ["0": "a", "1": "b"]],
+        ]
+        try JSONSerialization.data(withJSONObject: spec).write(to: description)
+        var importing: [String: JSONValue] = [
+            "workspaceRoot": .string(root.path), "descriptionFile": .string(description.path),
+        ]
+        importing["planSHA256"] = try await perform("artifact-plan", importing)["planSHA256"]
+        guard case .string(let lensID)? = try await perform("artifact-import", importing)["lensID"] else {
+            Issue.record("no lens")
+            return
+        }
+        let folder = "runs/jlens-lenses/\(lensID)"
+        let converted = try Data(contentsOf: root.appending(path: "\(folder)/jacobians.safetensors"))
+
+        // A request that reads the lens: a probe batch over one prompt.
+        let prompts = Data(#"{"id": "p-1", "text": "the court weighed the case"}"#.utf8) + Data("\n".utf8)
+        try prompts.write(to: root.appending(path: "prompts/probe-set.jsonl"))
+        let request: [String: Any] = [
+            "operation": "jlens-probe-batch",
+            "parameters": ["config": [
+                "modelID": "example/model", "revision": String(repeating: "a", count: 40), "lensID": lensID,
+                "prompts": ["path": "prompts/probe-set.jsonl", "sha256": Self.sha256(prompts)],
+            ]],
+        ]
+        let requestFile = root.appending(component: "request.json")
+        try JSONSerialization.data(withJSONObject: request).write(to: requestFile)
+
+        // The command line's own arguments make each request to the bridge.
+        func planned(_ flags: [String]) async throws -> [String: JSONValue] {
+            try await perform("input-plan", try DiagnosticWorkspaceCLI.payload(
+                DiagnosticArguments(["input-plan", requestFile.path] + flags, namespace: "science", takesValue: true),
+                root: root))
+        }
+        func packaged(_ name: String, _ plan: [String: JSONValue], _ flags: [String]) async throws -> URL {
+            guard case .string(let reviewed)? = plan["planSHA256"] else {
+                throw ExperimentError(reason: "the plan has no digest")
+            }
+            let archive = directory.appending(component: name)
+            let answer = try await perform("package", try DiagnosticWorkspaceCLI.payload(
+                DiagnosticArguments(
+                    ["package", requestFile.path, "--archive", archive.path, "--plan-sha256", reviewed] + flags,
+                    namespace: "science", takesValue: true),
+                root: root))
+            #expect(answer["bundlePath"] == .string(archive.path))
+            return archive
+        }
+        func paths(_ plan: [String: JSONValue]) -> [String] {
+            guard case .array(let files)? = plan["files"] else { return [] }
+            return files.compactMap { entry -> String? in
+                guard case .object(let file) = entry, case .string(let path)? = file["path"] else { return nil }
+                return path
+            }
+        }
+
+        let carried = try await planned([])
+        let referred = try await planned(["--lens-reference"])
+        #expect(carried["libraryLenses"] == nil, "a request without the flag is the request it always was")
+        #expect(paths(carried) == [
+            "prompts/probe-set.jsonl", "\(folder)/import-receipt.json", "\(folder)/jacobians.safetensors",
+            "\(folder)/lens.json",
+        ])
+        // The lens is named by the hash of its converted file, which stays here.
+        #expect(referred["libraryLenses"] == .array([.object([
+            "lensID": .string(lensID), "convertedSHA256": .string(Self.sha256(converted)),
+            "bytes": .number(Double(converted.count)),
+        ])]))
+        #expect(paths(referred) == paths(carried).filter { !$0.hasSuffix("jacobians.safetensors") })
+        #expect(referred["planSHA256"] != carried["planSHA256"])
+
+        // The archive an upload checks: this Mac reads the real one as referring to its lens.
+        let referredArchive = try await packaged("referred.tar.gz", referred, ["--lens-reference"])
+        let carriedArchive = try await packaged("carried.tar.gz", carried, [])
+        #expect(LensLibrary.archiveRefersToLibrary(referredArchive))
+        #expect(!LensLibrary.archiveRefersToLibrary(carriedArchive))
+        // A plan reviewed one way is not packaged the other.
+        do {
+            _ = try await packaged("mixed.tar.gz", carried, ["--lens-reference"])
+            Issue.record("a carried plan must not be packaged as a reference")
+        } catch let refusal as DiagnosticWorkspace.Refusal {
+            #expect(refusal.reason.contains("re-review"))
+        }
+
+        // A record that does not name the lens's own converted file cannot
+        // be referred to. The planner says so here, where the repair is.
+        let recordURL = root.appending(path: "\(folder)/lens.json")
+        var record = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: recordURL)) as? [String: Any])
+        var block = try #require(record["converted"] as? [String: Any])
+        block["path"] = "\(folder)/renamed.safetensors"
+        record["converted"] = block
+        try JSONSerialization.data(withJSONObject: record).write(to: recordURL)
+        try FileManager.default.moveItem(
+            at: root.appending(path: "\(folder)/jacobians.safetensors"),
+            to: root.appending(path: "\(folder)/renamed.safetensors"))
+        do {
+            _ = try await planned(["--lens-reference"])
+            Issue.record("a lens outside the import layout must not be referred to")
+        } catch let refusal as DiagnosticWorkspace.Refusal {
+            #expect(refusal.code == "lensNotReferable")
+            #expect(refusal.reason.hasPrefix("The lens '\(lensID)' cannot be referred to: its record (`lens.json`) "))
+            #expect(refusal.repairAction == "Package the request without `--lens-reference`, so it carries the "
+                + "lens, or import the lens again and then package with `--lens-reference`.")
+        }
+        // Without the flag the same lens is carried, as it always was.
+        let again = try await planned([])
+        #expect(paths(again).contains("\(folder)/renamed.safetensors"))
     }
 }
 
