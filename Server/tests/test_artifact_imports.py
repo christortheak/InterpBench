@@ -722,3 +722,34 @@ def test_selected_key_typo_names_available_tensors(source, container):
     path.write_text(json.dumps(spec))
     with pytest.raises(ImportRefusal, match="Tensor 'typo' is absent. Available keys: .*map"):
         imports.inspect_source(path, root)
+
+
+def test_the_importer_takes_nothing_from_the_client_package():
+    """The client depends on ``experiment``, never the reverse. The importer's
+    strict-JSON helper lives beside it (``experiment.strict_json``), and the
+    client modules and the Mac's bridge import that same helper."""
+    import ast
+
+    def from_the_client(node):
+        if isinstance(node, ast.ImportFrom):
+            module = (node.module or '').split('.')
+            return 'client' in module or (module in ([''], ['steerlab_server'])
+                                          and any(alias.name == 'client' for alias in node.names))
+        if isinstance(node, ast.Import):
+            return any('client' in alias.name.split('.') for alias in node.names)
+        return False
+
+    tree = ast.parse(Path(imports.__file__).read_text(encoding='utf-8'))
+    assert [ast.unparse(node) for node in ast.walk(tree) if from_the_client(node)] == []
+    # The check itself sees each spelling of such an import.
+    for line in ('from ..client.strict_json import strict', 'from ..client import strict_json',
+                 'from .. import client', 'import steerlab_server.client.strict_json',
+                 'from steerlab_server.client import strict_json', 'from steerlab_server import client'):
+        assert from_the_client(ast.parse(line).body[0]), line
+    assert not from_the_client(ast.parse('from .strict_json import strict').body[0])
+
+    from steerlab_server.client import lens_transfer
+    from steerlab_server.experiment import strict_json
+    assert lens_transfer.strict is strict_json.strict
+    assert strict_json.strict({'a': [1.5, float('nan')], 'b': float('inf')}) == ({'a': [1.5, None], 'b': None}, 2)
+    assert not Path(lens_transfer.__file__).with_name('strict_json.py').exists()
