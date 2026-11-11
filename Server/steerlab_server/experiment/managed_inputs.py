@@ -53,12 +53,38 @@ def inventory(operation, config, root, *, lens_reference=CARRIED, referred=None,
         record = json.loads((directory / 'lens.json').read_bytes())
         from ..jlens import artifact_paths
         converted = record.get('converted') or {}
+
+        def named_as_its_record_names_it():
+            # A lens that is referred to is read from the lens library, and a
+            # queued job pins each such lens under the name the request gives
+            # it, which is its folder's (`artifact_paths.pin_library_lenses`).
+            # Every reader asks by the name the RECORD gives (`record.lensID`).
+            # Where the two differ, the reader's name is not the pinned one,
+            # and the job would read whatever the record's own path names on
+            # that host, instead of the library's bytes its plan digests. So a
+            # lens is referred to only under the one name. A request that
+            # carries its lens is not asked this: it is planned as it always
+            # was.
+            named = record.get('lensID') if isinstance(record, dict) else None
+            if named == value:
+                return
+            from ..jlens.lens_library import LensLibraryRefusal
+            says = (f"says it is the lens '{named}'" if isinstance(named, str) and named
+                    else 'does not say which lens it is')
+            raise LensLibraryRefusal(
+                'lensNotReferable',
+                f"The lens '{value}' cannot be referred to: the record in its folder "
+                f'(`runs/jlens-lenses/{value}/lens.json`) {says}, and a lens is read from a lens library only '
+                'under the name its own record gives it.',
+                f"Import the lens again from its source files, or restore its record so that its `lensID` is "
+                f"'{value}', the name of its folder. Then package the request again.")
         # The workspace's own file only: the site's lens library is consulted
         # below, by name, and never stands in for a carried file.
         selected = Path(artifact_paths.converted_file(value, converted['path'], str(root), library=False))
         if (lens_reference == WHERE_HELD and artifact_paths.library_eligible(value, converted['path'])
                 and not artifact_paths.in_workspace(selected, root)):
             from ..jlens import lens_library
+            named_as_its_record_names_it()
             held = lens_library.reference(value, converted.get('sha256'), verify=verify_library)
             if held is not None:
                 referred[value] = held
@@ -85,6 +111,7 @@ def inventory(operation, config, root, *, lens_reference=CARRIED, referred=None,
                     'an import puts it, and a site keeps and serves a lens only under that layout.',
                     'Package the request without `--lens-reference`, so it carries the lens, or import the lens '
                     'again and then package with `--lens-reference`.')
+            named_as_its_record_names_it()
             # The checks a carried file passes (an ordinary file in this
             # workspace whose bytes are the record's), without listing it.
             archives.parts(relative)

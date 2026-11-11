@@ -41,6 +41,7 @@ from steerlab_server.api import scientific_execution
 from steerlab_server.api.app import app
 from steerlab_server.client import runner as runner_api
 from steerlab_server.experiment import artifact_imports
+from steerlab_server.experiment import diagnostic_archives as archives
 from steerlab_server.experiment import jlens_probe_batch as batch
 from steerlab_server.jlens import artifact_paths, lens_library, lens_store, schemas
 from steerlab_server.jlens import qualification as qualifications
@@ -862,6 +863,69 @@ def test_a_lens_that_cannot_be_referred_to_is_refused_at_packaging_by_name(world
     # Without the flag the same lens is carried, as it always was.
     code, plan = world.cli(None, '--root', str(root), 'science', 'input-plan', str(request_file))
     assert code == 0 and f'runs/jlens-lenses/{lens_id}/renamed.safetensors' in [e['path'] for e in plan['result']['files']]
+
+
+def test_a_lens_whose_record_names_another_lens_is_not_referred_to_at_packaging_or_at_staging(world):
+    """A queued job pins each lens it took from the library under the name the request gives it, which is its
+    folder's, and every reader asks by the name the lens's RECORD gives. If the two differed, the job would
+    read whatever the record's own path names on the engine's host, in place of the library's bytes its plan
+    digests. So such a lens is not referred to: refused where the request is packaged, and, for an archive
+    made around that check, where the engine reads it."""
+    root, lens_id, _ = world.researcher()
+    engine = world.engine(limit=1 << 20)
+    lens = converted(root, lens_id)
+    sha, size = digest(lens.read_bytes()), lens.stat().st_size
+    request, request_file = probe_request(root, lens_id)
+    folder = f'runs/jlens-lenses/{lens_id}'
+    assert push(world, engine, root, lens_id)[0] == 0              # the site holds the lens, under its own name
+
+    # The record now says it is another lens, and names its file by its full path on this machine (as a
+    # published lens's record does). That path exists on the engine's host too: here both are one machine.
+    record = json.loads(record_file(root, lens_id).read_bytes())
+    record['lensID'] = 'another-lens'
+    record['converted']['path'] = str(lens)
+    record_file(root, lens_id).write_text(json.dumps(record))
+    reason = (f"The lens '{lens_id}' cannot be referred to: the record in its folder (`{folder}/lens.json`) says it "
+              "is the lens 'another-lens', and a lens is read from a lens library only under the name its own "
+              'record gives it.')
+    repair = (f"Import the lens again from its source files, or restore its record so that its `lensID` is "
+              f"'{lens_id}', the name of its folder. Then package the request again.")
+
+    def refused_as_not_referable(code, answer):
+        assert (code, answer['state']) == (65, 'refused'), answer
+        assert (answer['error']['code'], answer['error']['reason'], answer['error']['repairAction']) == (
+            'lensNotReferable', reason, repair)
+
+    refused_as_not_referable(*world.cli(None, '--root', str(root), 'science', 'input-plan', str(request_file),
+                                        '--lens-reference'))
+    refused_as_not_referable(*world.cli(None, '--root', str(root), 'science', 'package', str(request_file), '--archive',
+                                        str(world.tmp_path / 'refused.tar.gz'), '--plan-sha256', 'a' * 64,
+                                        '--lens-reference'))
+    assert not (world.tmp_path / 'refused.tar.gz').exists()
+    # A request that carries its lens is not asked: without the flag it plans as it always did.
+    code, carried = world.cli(None, '--root', str(root), 'science', 'input-plan', str(request_file))
+    assert code == 0 and f'{folder}/jacobians.safetensors' in [entry['path'] for entry in carried['result']['files']]
+    assert 'libraryLenses' not in carried['result']
+
+    # An archive made by hand, around the packaging check: the record, the receipt, and the prompts, with the
+    # lens named by the hash the site holds. The engine refuses it at staging, in the same words.
+    crafted = world.tmp_path / 'crafted.tar.gz'
+    archives.package(root, ['prompts/probe-set.jsonl', f'{folder}/lens.json', f'{folder}/import-receipt.json'], crafted,
+                     kind='diagnosticInput',
+                     context={'request': request, 'sourcePlanSHA256': 'e' * 64, 'lensReference': True,
+                              'libraryLenses': [{'lensID': lens_id, 'convertedSHA256': sha, 'bytes': size}]})
+    code, uploaded = upload(world, engine, root, crafted)
+    assert code == 0, uploaded
+    refused_as_not_referable(*stage(world, engine, root, uploaded))
+    assert not list((engine.root / 'runs').glob('diagnostic-input-*'))
+
+    # With the record restored, as the repair says, the same request is referred to and staged.
+    record['lensID'] = lens_id
+    record_file(root, lens_id).write_text(json.dumps(record))
+    _, packed = package(world, root, request_file, world.tmp_path / 'referred.tar.gz', '--lens-reference')
+    code, uploaded = upload(world, engine, root, packed['bundlePath'])
+    assert code == 0, uploaded
+    assert stage(world, engine, root, uploaded)[0] == 0
 
 
 # --- a lens the site was sent, then imported there --------------------------------
