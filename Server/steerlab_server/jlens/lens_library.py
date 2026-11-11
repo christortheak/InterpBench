@@ -50,7 +50,6 @@ from datetime import datetime, timezone
 import errno
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -60,6 +59,7 @@ import stat
 import threading
 
 from ..experiment import diagnostic_archives as archives
+from ..experiment.strict_json import first_non_finite, strict
 
 SCHEMA_VERSION = 1
 FILE_NAME = 'jacobians.safetensors'
@@ -1176,35 +1176,6 @@ def adopt(path, sha, run_root):
 
 # --- a lens record on the site ---------------------------------------------------
 
-def _non_finite(value, where='the record'):
-    """Where a JSON value first holds a number that is not finite, or None."""
-    if isinstance(value, float) and not math.isfinite(value):
-        return where
-    if isinstance(value, dict):
-        for name, item in value.items():
-            found = _non_finite(item, f'{where}.{name}')
-            if found:
-                return found
-    elif isinstance(value, (list, tuple)):
-        for position, item in enumerate(value):
-            found = _non_finite(item, f'{where}[{position}]')
-            if found:
-                return found
-    return None
-
-
-def _finite(value):
-    """A JSON value with every number that is not finite replaced by null: how
-    a record is sent, so how a stored one is read when the two are compared."""
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if isinstance(value, dict):
-        return {name: _finite(item) for name, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_finite(item) for item in value]
-    return value
-
-
 def _parse_record(document):
     """``(record, None)``, or ``(None, which part of the record is unusable)``."""
     from .schemas import ConvertedRef, FitProvenance, JLensRecord, Qualification, SourceRef
@@ -1262,7 +1233,7 @@ def register(document):
                       '`lens-push`.', status=400)
     if not isinstance(document, dict):
         raise invalid('it is not a JSON object')
-    unfinished = _non_finite(document)
+    unfinished = first_non_finite(document, 'the record')
     if unfinished:
         raise invalid(
             f'it holds a number that is not finite (NaN or infinity) at {unfinished}, and a lens record sent to a '
@@ -1340,10 +1311,10 @@ def register(document):
         # A stored qualification may hold NaN (a score that could not be
         # computed); a record is sent with null in its place. Both are read
         # that way here, so the same qualification is never called different.
-        known = {entry.qualificationID: _finite(asdict(entry)) for entry in existing.qualifications}
+        known = {entry.qualificationID: strict(asdict(entry))[0] for entry in existing.qualifications}
         added = []
         for entry in record.qualifications:
-            sent = _finite(asdict(entry))
+            sent = strict(asdict(entry))[0]
             if entry.qualificationID not in known:
                 added.append(entry)
                 known[entry.qualificationID] = sent      # the same entry twice in one record is added once
