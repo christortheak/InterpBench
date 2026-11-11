@@ -5972,15 +5972,17 @@ extension ClusterClient {
     }
 
     /// A lens-library answer: a refusal becomes the engine's own sentence,
-    /// code, and repair; anything else is checked as usual.
+    /// code, and repair. Any other answer that is not a success (a failure,
+    /// or a token problem) is the error every route gives, with no more of
+    /// its body than a refusal shows.
     private func lensLibraryAnswer(_ data: Data, _ response: URLResponse) throws -> Data {
-        if let http = response as? HTTPURLResponse,
-            let refusal = Self.lensLibraryRefusal(status: http.statusCode, data: data)
-        {
-            throw refusal
-        }
-        try validate(response: response, data: data)
-        return data
+        guard let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) else { return data }
+        if let refusal = Self.lensLibraryRefusal(status: http.statusCode, data: data) { throw refusal }
+        let text = String(data: data, encoding: .utf8)
+            ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+        throw ClientError.badResponse(
+            http.statusCode,
+            String(String.UnicodeScalarView(text.unicodeScalars.prefix(LensLibrary.refusalTextLimit))))
     }
 
     /// How long a lens-library call waits for its answer. The calls that

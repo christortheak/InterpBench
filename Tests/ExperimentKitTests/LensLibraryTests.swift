@@ -722,14 +722,17 @@ import Testing
         let lens = try Lens()
         defer { lens.remove() }
         let site = Site()
-        site.trouble["part"] = .answer(status, Data(#"{"detail": "Forbidden"}"#.utf8))
+        // A long body (a proxy's page, say): no more of it is shown than of a refusal's.
+        let page = #"{"detail": "Forbidden"}"# + String(repeating: " ", count: 3 * LensLibrary.refusalTextLimit)
+        site.trouble["part"] = .answer(status, Data(page.utf8))
         do {
             _ = try await LensLibraryRemote.push(
                 Self.lensID, client: site.client(), root: lens.root, bridge: Bridge(lens).run)
             Issue.record("a part the server will not take must stop the push")
         } catch let error as ClusterClient.ClientError {
-            guard case .badResponse(let code, _) = error else { Issue.record("\(error)"); return }
-            #expect(code == status)
+            guard case .badResponse(let code, let text) = error else { Issue.record("\(error)"); return }
+            #expect(code == status && text.hasPrefix(#"{"detail": "Forbidden"}"#))
+            #expect(text.unicodeScalars.count == LensLibrary.refusalTextLimit)
         }
         #expect(site.sent("POST", containing: "complete").isEmpty && site.registered.isEmpty)
     }
