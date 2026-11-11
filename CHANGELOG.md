@@ -12,6 +12,114 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A site keeps each lens once, and a request can refer to it** (public
+  issues #13 and #14). The converted file of a lens for a large model is
+  several gigabytes. A managed request carried that file in its archive, so
+  the archive could be larger than a site accepts in one upload (#13), and
+  every request left another copy of the lens on the site (#14).
+  - **The site's lens library.** An engine can keep converted lens files
+    outside any workspace, once each, filed under the file's own SHA-256
+    (a lens record's `converted.sha256`). `GET /api/capabilities` reports
+    it as `lensLibrary` (`available` and `partMaxBytes`). New routes under
+    `/api/lens-library/` say what the library holds, receive a lens in
+    parts, check the whole file before it is kept, take a file that is
+    already on the site, and register a lens's record in the engine's lens
+    store. An entry is created once and never edited, and there is no
+    delete verb. The library is a cache of bytes. The workspace stays the
+    source of a lens, with its record and its qualifications, and anything
+    a site holds can be sent again.
+  - **Sent once, in parts.** `steerlab-cli remote lens-push <lensID>`
+    (`steerlab runner lens-push` on the Python client) verifies the lens's
+    converted file against the hash its import recorded, then sends it in
+    parts that follow its layers. Each part is checked against its own
+    hash, no part is larger than the engine's `partMaxBytes` (its upload
+    limit, and never more than 256 MiB), and the site hashes the whole file
+    before it keeps it. The verb then registers the lens's record on the
+    site, where a record the site already has gains any qualification it
+    lacks. Run again after an interruption, it sends only what the site
+    still lacks. When the site already holds the bytes, nothing is
+    uploaded, and the record is still registered. `lens-status <lensID>`
+    says whether the site holds the lens and has its record, and only
+    reads.
+  - **A site that moves large files with its own tool.** With `lens-push
+    <lensID> --adopt <path on the site>`, the site checks a copy that its
+    own transfer tool placed beneath the engine's run root, and keeps it.
+    Nothing is uploaded, and the copy is left as it is.
+  - **A request refers to its lens.** `science input-plan` and `science
+    package` take `--lens-reference` on both clients. The lens's converted
+    file is still verified on the researcher's machine. It is then left out
+    of the archive, and the plan and the archive name it by its hash
+    (`libraryLenses`). The engine refuses to stage or admit the request
+    unless its library holds every lens named, hashes the library's file
+    once on the queued job, and reads the lens from the library and from
+    nowhere else. A lens the site does not hold is refused by name
+    (`lensNotInLibrary`), with the repair: send the lens with `lens-push`,
+    then stage the request again. A request packaged without the flag has
+    the plan and the archive it had before, byte for byte, and runs on any
+    engine.
+  - **One lens, one name.** A custom lens is named from the files that were
+    reviewed (`custom-lens-` and part of their hash). The same import gives
+    the same lens ID in any workspace and on any machine, and importing the
+    same files again finds the lens that is there instead of making
+    another. A repeated import puts back a converted file that is missing,
+    and refuses, without overwriting anything, when that file is there with
+    other bytes. A lens imported before this release keeps the name it has,
+    and is found by its files. An SAE decoder import still gets a fresh ID
+    each time.
+  - **A lens in a second workspace.** `science lens-copy <lensID> --from
+    <workspace directory>` copies a lens into the current workspace under
+    the same name and record. It reviews first, and writes only with the
+    digest the review shows. On macOS the copy is a clone that uses no
+    extra disk space, where the file system allows one.
+  - **Where a site keeps its library.** A site profile names the folder as
+    `constraints.storageRoots.lensLibrary`, which sets
+    `STEERLAB_LENS_LIBRARY_ROOT` for the engine and the jobs it starts.
+    Name permanent storage with room for several gigabytes per lens, not
+    scratch that is purged. With no folder declared, only an
+    engine in the runner role that runs its work on its own machine, such
+    as `steerlab runner serve`, has a library, beside its own records. A
+    workbench engine, a deployment that runs its work through Slurm, and an
+    engine inside a scheduler job have none until a folder is declared,
+    because an engine never guesses a folder on cluster storage. `profile
+    validate` says whether a declared folder can be written.
+  - **A lens fitted on the site stays there.** When a `jlens-fit` or
+    `jlens-fit-merge` job ends on an engine with a library, the engine
+    converts the fit as an import would and keeps those bytes, so that a
+    `lens-push` of the imported fit finds them there and uploads nothing.
+    A fitting round keeps its merged lens, not its shards. Only the bytes are kept. Importing the fit
+    is still the researcher's reviewed step, and that import is what gives
+    the lens its record. The job's result says whether the lens was kept
+    (`lensLibrary`), and a failure to keep it never fails the fit.
+  - **On the engine's own workspace.** An engine that was sent a lens holds
+    its record and no import receipt. Importing the same files in that
+    engine's workspace finds that lens: it writes nothing, makes no second
+    copy of the bytes the library holds, and leaves the site's record as it
+    is.
+  - **Uploads.** The Mac streams an upload from its file and no longer
+    reads the whole archive into memory. An upload now waits up to an hour
+    for the engine's answer, on both clients. An upload that the engine
+    refuses as too large says that a lens can be sent once with `lens-push`
+    and referred to with `--lens-reference`.
+  - **Engines with no library.** Both clients read `lensLibrary.available`
+    first. Where it is not true, they refuse `lens-push`, and the upload of
+    a request that refers to its lens, before anything is sent, and say why
+    in the same words.
+  - **Upgrade notes.** An engine from before this release has no lens
+    library, so package requests without `--lens-reference` until the
+    engine is updated. A cluster site has no library until its profile
+    declares a permanent `lensLibrary` folder (not purged scratch) and its
+    engine is started again with the environment rendered from that
+    profile.
+  - **Known limitations.** `steerlab run` retries its upload once after a
+    transport error, so an engine that never answers now costs two uploads
+    and up to two hours before the command fails. A finished fit's
+    `nextStep` still says "add this fit to the lens library" for importing
+    the fit into a workspace; "lens library" otherwise means a site's. On
+    an engine whose run root is not `<root>/runs`, a managed request that
+    was not staged still reads lenses from `<root>/runs/jlens-lenses/`, and
+    so does not see a record that `lens-push` registered. A staged request
+    carries its lens's record and is not affected.
+
 ## [0.9.23] — 2026-11-09
 
 - **Panels pass on what a seat says, not what it thinks** (public issue #15).

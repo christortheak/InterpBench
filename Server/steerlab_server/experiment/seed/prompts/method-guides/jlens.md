@@ -679,8 +679,14 @@ holds. With `--lens-reference`, the input plan lists the lens under
 still verified on your machine before the request is packaged, and again on the
 node. A site with no lens library refuses a request that refers to its lens,
 and both clients say so before they upload one: package without the flag
-there. Your workspace stays the source of the lens: anything a site holds can
-be sent again.
+there. A cluster site has a lens library once its profile names a
+`lensLibrary` folder, which should be permanent storage and not scratch that
+is purged. A local runner started with `steerlab runner serve` keeps one of its
+own. An engine that serves your own workspace has none unless a folder was
+declared for it, because its lenses are already in that workspace. If a site
+answers `lensNotInLibrary`, it has a library that does not hold this lens:
+send the lens with `lens-push`, then stage the request again. Your workspace
+stays the source of the lens: anything a site holds can be sent again.
 
 Review states, before anything is submitted:
 

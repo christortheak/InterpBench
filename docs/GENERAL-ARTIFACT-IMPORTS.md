@@ -126,15 +126,35 @@ therefore also finds a lens imported before this rule, which keeps the random ID
 it was given. A different description (a different intended use, say) or a
 different config file is a different lens with its own name.
 
+One lens has no receipt: a lens that was sent to a site. `lens-push` registers
+the lens's record in the engine's lens store, under the lens's own name, and
+writes no receipt, because an import is what writes one. Importing the same
+files in that engine's workspace still finds that lens. A folder under the name
+these files give a lens (the name is a hash over every reviewed file), whose
+record names that lens and agrees with the plan as above, is the lens even with
+no receipt. Under any other name a lens needs its receipt, and a receipt that
+is there must list these files whatever the folder is called.
+
 The lens that is found is checked before the import answers:
 
 - Its converted file is in place and has the SHA-256 its record names: the import
   returns the lens with `existing: true` and `changed: false`, and writes nothing.
-- Its converted file is missing: the import converts the reviewed sources again
-  and puts the file back when it has the SHA-256 the record names (`existing:
-  true`, `changed: true`, `restored: true`). Nothing else in the lens folder
-  changes. This is what "import the lens again" does when a lens verb refuses a
-  lens whose file is gone.
+- Its converted file is not in the workspace, and the import runs on an engine
+  whose lens library holds that file under the hash the record names: the lens
+  is whole. That is where a site keeps a lens's bytes, once, and everything that
+  reads the lens on that engine reads them there. The import returns the lens
+  with `existing: true` and `changed: false`, puts nothing back, and makes no
+  second copy. The import does not hash the library's file. The library checked
+  the whole file against that hash when it took it, and a study's readout and a
+  queued request each hash what they read, as they do a file in the workspace.
+  A machine with no lens library, which is every researcher's own machine
+  unless one was declared, never takes this path.
+- Its converted file is missing, and no lens library on this machine holds it:
+  the import converts the reviewed sources again and puts the file back when it
+  has the SHA-256 the record names (`existing: true`, `changed: true`,
+  `restored: true`). Nothing else in the lens folder changes. This is what
+  "import the lens again" does when a lens verb refuses a lens whose file is
+  gone.
 - Its converted file is there with other bytes, or its record names no converted
   file: the import refuses, names the lens, and says what to move aside. It never
   overwrites a file.
@@ -208,16 +228,62 @@ stays its source. Two verbs take it elsewhere without minting another lens:
   not answer one of its reads it says so and to run it again. A request
   packaged with `science package
   --lens-reference` then refers to the site's copy and leaves the converted file
-  out. On a site that forbids HTTP transfer, copy the converted file there with
-  the site's own tool and run `lens-push` with `--adopt <path on the site>`.
+  out. On a site that forbids HTTP transfer, copy the converted file beneath the
+  engine's run root with the site's own tool and run `lens-push` with `--adopt
+  <the path of that copy on the site>`: the site checks the copy against the
+  lens's hash, keeps it, and leaves the copy as it is.
 
-A cluster site keeps its library in the folder its profile names as
-`constraints.storageRoots.lensLibrary` (rendered as `STEERLAB_LENS_LIBRARY_ROOT`).
-A cluster engine whose profile names no such folder has no library, because an
-engine never guesses a folder on cluster storage; neither has an engine from
-before the library. Both clients read the engine's `lensLibrary.available`
-capability and, where it is not true, refuse `lens-push` and the upload of a
-request that refers to its lens before sending anything.
+### The site's lens library
+
+The site's lens library is the engine's own store of converted lens files,
+outside any workspace: one folder per file, named by the file's SHA-256 (the
+`converted.sha256` of a lens record). It holds bytes and nothing else. A lens's
+record and its qualifications live in workspaces (and, once `lens-push` has
+registered the lens, in the engine's own lens store), and results live in
+workspaces. The workspace a lens was imported in stays its source: anything the
+library holds can be sent again with `lens-push`. An entry is created once and never edited,
+and no verb deletes one. A workspace's own `runs/jlens-lenses/` is not a lens
+library; it is where that workspace's lenses live.
+
+Where the library is:
+
+- **A cluster site** keeps it in the folder its profile names as the storage
+  role `constraints.storageRoots.lensLibrary`, beside the other declared roles
+  (`archive`, `asset`, and `nodeCache`). The role is rendered into the site's
+  environment as `STEERLAB_LENS_LIBRARY_ROOT`, and the engine passes it to the
+  jobs it starts. Name permanent storage that the engine's account can write,
+  with room for several gigabytes per lens (about 6.6 GB for a 27B model's).
+  Do not name scratch storage that the site purges: a purged entry costs
+  nothing but another `lens-push`, yet every request that refers to the lens
+  is refused until it is sent again. `profile validate` says whether the
+  declared folder can be written.
+- **Nothing is guessed.** A profile with no `lensLibrary` role renders no
+  variable, and a deployment that runs its work through Slurm, or an engine
+  inside a scheduler job, then has no library. An engine never picks a folder
+  on cluster storage for itself, because only the site knows that storage's
+  quotas and purge rules.
+- **A runner on its own machine** (`steerlab runner serve`, or any engine in the
+  runner role that runs its work locally) keeps a library beside its own
+  records, at `<metadata root>/lens-library`, with nothing declared.
+- **A workbench engine** (the default role, which serves a researcher's own
+  workspace) has none unless `STEERLAB_LENS_LIBRARY_ROOT` names a folder. Its
+  lenses already live in the workspace it serves.
+- **An engine from before the lens library** has none.
+
+Both clients read the engine's `lensLibrary.available` capability first. Where
+it is not true, they refuse `lens-push`, and the upload of a request that refers
+to its lens, before sending anything. Package such a request without
+`--lens-reference`, and it carries its lens as before.
+
+A lens that is fitted on a site stays there. When a `jlens-fit` or
+`jlens-fit-merge` job ends on an engine with a library, the engine converts the
+fit as an import would and keeps those bytes (a fitting round keeps its merged
+lens, not its shards). It keeps bytes only: importing the fit is still your
+reviewed step, and the import is what gives the lens its record. After that
+import, `lens-push` looks for the lens on the site by the hash of its converted
+file. It finds the bytes the site kept, uploads nothing, and registers the
+record. If your machine converted the fit to different bytes, the hashes differ
+and the lens is sent like any other.
 
 ## Intended use and large files
 

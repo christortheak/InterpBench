@@ -664,6 +664,7 @@ directory when you want the engines to share one tree.
 | `STEERLAB_ASSET_ROOT` | Python | none | Inherited into Slurm children. Unset on `cluster` is a `warn`. |
 | `STEERLAB_ARCHIVE_ROOT` | Python | none | Archive location. |
 | `STEERLAB_NODE_CACHE_ROOT` | Python | none | Becomes a Slurm child's default `HF_HOME`. |
+| `STEERLAB_LENS_LIBRARY_ROOT` | Python | `<metadata root>/lens-library` on a runner-role engine that runs its work on its own machine (`steerlab runner serve`); none on a workbench-role engine, on a Slurm deployment, or inside a scheduler job | The site's lens library: where the engine keeps converted lens files, once each, under their SHA-256, outside any workspace (`lens-push`, `--lens-reference`). A site profile sets it from `constraints.storageRoots.lensLibrary`. Name permanent storage with room for several gigabytes per lens, never scratch that is purged. Set and empty means none. `profile validate` says whether a declared folder can be written, and `lensLibrary.available` in the capabilities is true only when it can. |
 | `STEERLAB_JOBS_DB` | Python | `<metadata root>/jobs.sqlite` | Job store path. |
 | `STEERLAB_WORKSPACE_PARENT` | Python | none | When set, `/api/workspace/switch` may only select roots beneath it. |
 
@@ -823,7 +824,7 @@ reached.
 | `STEERLAB_SESSION_PROBE_LAPSE_SECONDS` | `180` | |
 | `STEERLAB_SESSION_STARTING_DIAGNOSIS_SECONDS` | `180` | |
 | `STEERLAB_SSE_HEARTBEAT_SECONDS` | `15` | |
-| `STEERLAB_MAX_UPLOAD_BYTES` | 4 GiB | Read per request, so it is tunable without a restart. |
+| `STEERLAB_MAX_UPLOAD_BYTES` | 4 GiB | Read per request, so it is tunable without a restart. Also the most one part of a lens sent with `lens-push` may hold, up to 256 MiB (`lensLibrary.partMaxBytes`), so a lens of any size can be sent whatever this limit is. |
 
 ### 2.6 Slurm
 
