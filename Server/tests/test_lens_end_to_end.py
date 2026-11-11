@@ -675,6 +675,13 @@ def test_a_record_with_a_nan_in_a_qualification_is_sent_and_the_sites_record_hol
     assert len(strict_loads(record_file(engine.root, lens_id).read_bytes())['qualifications']) == 1
     code, answered = status(world, engine, root, lens_id)
     assert code == 0 and answered['result']['response']['siteRecord'] == 'registered'
+    # A site that holds the NaN itself (the same qualification was made there, and the engine writes one as it
+    # is) reads its own record the way the client sends one, so the two are still the same qualification.
+    record_file(engine.root, lens_id).write_bytes(record_file(root, lens_id).read_bytes())
+    assert b'NaN' in record_file(engine.root, lens_id).read_bytes()
+    code, same = push(world, engine, root, lens_id)
+    assert code == 0 and same['result']['response']['recordChanged'] is False, same
+    assert record_file(engine.root, lens_id).read_bytes() == record_file(root, lens_id).read_bytes()
 
 
 # --- 8. the engine's refusals reach the researcher as the engine gave them -------
