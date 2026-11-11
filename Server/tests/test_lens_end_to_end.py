@@ -342,21 +342,27 @@ def test_a_lens_is_sent_once_in_parts_and_the_site_holds_it_and_its_record(world
     assert {path: path.stat().st_mtime_ns for path in stamp} == stamp
 
 
-def test_a_runner_keeps_a_library_of_its_own_and_does_not_show_its_records(world):
-    """A runner-role engine with nothing declared keeps a library beside its records. It serves no workbench
-    route, so lens-status cannot say whether it has the record, and says so."""
+def test_a_runner_keeps_a_library_of_its_own_and_says_whether_it_has_the_record(world):
+    """A runner-role engine with nothing declared keeps a library beside its records. A runner is where a push
+    registers a lens's record, so it answers the read of that one record, and lens-status says what it has.
+    The listing of every lens stays a workbench's."""
     root, lens_id, _ = world.researcher()
     engine = world.engine(role='runner', library=None)
     sha = digest(converted(root, lens_id).read_bytes())
+    code, before = status(world, engine, root, lens_id)
+    assert code == 0 and (before['result']['response']['held'], before['result']['response']['siteRecord']) == (False, 'absent')
     code, pushed = push(world, engine, root, lens_id)
     assert code == 0 and pushed['result']['response']['uploadedParts'] == 4, pushed
     assert (engine.entry(sha) / 'jacobians.safetensors').read_bytes() == converted(root, lens_id).read_bytes()
     assert json.loads(record_file(engine.root, lens_id).read_bytes())['lensID'] == lens_id
     code, answered = status(world, engine, root, lens_id)
     assert code == 0 and answered['result']['response']['held'] is True
-    assert answered['result']['response']['siteRecord'] == 'unknown'
-    assert answered['message'] == (f"The site's lens library holds lens {lens_id}; this engine does not show its "
-                                   'lens records here, so whether it has the record is not known.')
+    assert answered['result']['response']['siteRecord'] == 'registered'
+    assert answered['message'] == f"The site's lens library holds lens {lens_id}; the site has its record."
+    # The one record is all a runner shows: its catalog of lenses is refused, as every workbench route is.
+    assert engine.get(f'/api/jlens/lenses/{lens_id}').json()['converted']['sha256'] == sha
+    listing = engine.get('/api/jlens/lenses')
+    assert listing.status_code == 403 and listing.json()['detail']['code'] == 'workbench_required'
 
 
 # --- 2. a request that refers to its lens runs on the library's bytes ------------

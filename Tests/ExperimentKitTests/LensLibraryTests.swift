@@ -1206,7 +1206,7 @@ import Testing
         site.registered[Self.lensID]?["converted"] = ["sha256": String(repeating: "f", count: 64)]
         #expect(try await LensLibraryRemote.status(
             Self.lensID, client: client, root: lens.root, bridge: bridge.run).siteRecord == "different")
-        site.servesRecords = false          // a runner that serves no lens records
+        site.servesRecords = false          // a runner from before it answered this read
         #expect(try await LensLibraryRemote.status(
             Self.lensID, client: client, root: lens.root, bridge: bridge.run).siteRecord == "unknown")
 

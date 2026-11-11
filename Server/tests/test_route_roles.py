@@ -161,18 +161,8 @@ _ADAPTER_ROUTES = (
     ("POST", "/api/lens-library/{sha}/complete"),
     ("POST", "/api/lens-library/register"),
     ("POST", "/api/lens-library/adopt"),
-)
-
-#: The one route the adapter reads that a runner does not answer.
-#: `lens-status` asks an engine for its record of a lens, which is a
-#: workbench's lens catalog. A runner refuses the read (403), and the adapter
-#: then reports that the record is not known there, instead of failing
-#: (``lens_transfer.status``; ``test_lens_end_to_end.py`` runs it against a
-#: real runner-role engine). Nothing on the upload -> submit -> jobs ->
-#: evidence path, and nothing a push does, depends on it. A route listed here
-#: must be a read, and must be one the census gives to the workbench: if it
-#: is ever censused `runner` or `both`, it belongs in the table above.
-_ADAPTER_WORKBENCH_READS = (
+    # `lens-status` reads the engine's record of one lens back. A runner
+    # answers it, because a runner is where a push registers that record.
     ("GET", "/api/jlens/lenses/{lens_id}"),
 )
 
@@ -201,16 +191,14 @@ def test_every_route_the_client_adapter_uses_is_runner_reachable(method, templat
         "thing it exists for.")
 
 
-@pytest.mark.parametrize("method,template", _ADAPTER_WORKBENCH_READS)
-def test_a_workbench_route_the_adapter_reads_is_a_read_the_census_declares(method, template):
-    assert method == "GET", f"{method} {template}: the adapter may only READ a route a runner refuses"
-    assert f"{method} {template}" in BY_KEY, f"{method} {template} is not in the census at all"
-    assert BY_KEY[f"{method} {template}"].role is Role.WORKBENCH and not is_runner_reachable(method, template), (
-        f"{method} {template} is runner-reachable now: list it in _ADAPTER_ROUTES, and let lens-status "
-        "say what a runner's record is")
-    # The adapter must take a runner's refusal of this read for "not known", not for a failure.
-    from steerlab_server.client import lens_transfer
-    assert lens_transfer._RECORD_CLAUSES["unknown"].startswith("this engine does not show its lens records here")
+def test_a_runner_answers_the_read_of_one_lens_record_and_not_the_catalog():
+    """`lens-status` reads an engine's record of one lens back, and a runner
+    is where a push registers it. The listing of every lens stays the
+    workbench's catalog."""
+    assert BY_KEY["GET /api/jlens/lenses/{lens_id}"].role is Role.BOTH
+    assert is_runner_reachable("GET", "/api/jlens/lenses/{lens_id}")
+    assert BY_KEY["GET /api/jlens/lenses"].role is Role.WORKBENCH
+    assert not is_runner_reachable("GET", "/api/jlens/lenses")
 
 
 def test_the_adapters_endpoint_scan_finds_nothing_undeclared():
@@ -222,7 +210,7 @@ def test_the_adapters_endpoint_scan_finds_nothing_undeclared():
     """
     source = _RUNNER_SOURCE.read_text(encoding="utf-8")
     found = {_shape(m) for m in re.findall(r'"(/api/[^"]*)"', source)}
-    known = {_shape(template) for _, template in _ADAPTER_ROUTES + _ADAPTER_WORKBENCH_READS}
+    known = {_shape(template) for _, template in _ADAPTER_ROUTES}
     # A family-prefix test selects the verification timeout; it is not a route.
     # Exempt only literals actually passed to startswith, and require that the
     # prefix already contains declared endpoints. Exact request paths still gate.
@@ -236,8 +224,7 @@ def test_the_adapters_endpoint_scan_finds_nothing_undeclared():
     assert not unknown, (
         "The client adapter speaks /api paths that _ADAPTER_ROUTES does not "
         f"list: {unknown}. Add them there (with their method) so the census "
-        "check above covers them. Only a read that a runner refuses, and that "
-        "the adapter survives, goes in _ADAPTER_WORKBENCH_READS.")
+        "check above covers them.")
     # …and nothing in the list is fiction either.
     absent = sorted(known - found)
     assert not absent, (

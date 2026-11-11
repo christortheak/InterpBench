@@ -6096,7 +6096,7 @@ extension ClusterClient {
     /// The site workspace's record of one lens (`GET /api/jlens/lenses/{id}`).
     /// `hashes` is the record's two hashes, or nil when the site has no such
     /// lens. `known` is false when this server does not show its records to
-    /// this client (a runner serves no workbench route).
+    /// this client (a runner from before it answered this read refuses it).
     func siteLensRecord(_ lensID: String) async throws
         -> (known: Bool, hashes: (converted: String?, tensor: String?)?)
     {

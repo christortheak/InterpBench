@@ -408,8 +408,10 @@ CENSUS: tuple[RouteRole, ...] = (
     # ── J-lens: interactive interpretability tooling ───────────────────────
     _r("GET", "/api/jlens/lenses", W,
        "Imported-lens catalog, read-only. Catalog browsing."),
-    _r("GET", "/api/jlens/lenses/{lens_id}", W,
-       "One lens's record. Catalog browsing."),
+    _r("GET", "/api/jlens/lenses/{lens_id}", B,
+       "One lens's record, read-only. A runner is where a lens sent once is "
+       "registered (`POST /api/lens-library/register`), so `lens-status` reads "
+       "the record back there. The catalog listing above stays the workbench's."),
     _r("POST", "/api/jlens/lenses/acquire", W,
        "Fetches a lens into the HF cache. A cache fetch in shape, but the "
        "only consumer is the J-lens workbench — no batch verb needs a lens."),

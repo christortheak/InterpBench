@@ -627,7 +627,7 @@ def test_status_says_what_the_site_holds_and_changes_nothing(tmp_path):
         assert (after['held'], after['siteRecord'], after['changed']) == (True, 'registered', False)
         site.registered[lens_id]['converted']['sha256'] = 'f' * 64
         assert lens_transfer.status(client, root, lens_id)['siteRecord'] == 'different'
-        site.records = False                         # a runner that serves no lens records
+        site.records = False                         # a runner from before it answered this read
         assert lens_transfer.status(client, root, lens_id)['siteRecord'] == 'unknown'
     with Site(library=None).client() as client:
         old = lens_transfer.status(client, root, lens_id)
